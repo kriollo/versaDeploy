@@ -1,0 +1,72 @@
+project: "my-app"
+
+environments:
+  production:
+    ssh:
+      host: "prod.example.com"
+      user: "deploy"
+      key_path: "~/.ssh/deploy_key"
+      port: 22
+    
+    remote_path: "/var/www/app"
+    
+    builds:
+      php:
+        enabled: true
+        composer_command: "composer install --no-dev --optimize-autoloader --classmap-authoritative"
+      
+      go:
+        enabled: true
+        target_os: "linux"
+        target_arch: "amd64"
+        binary_name: "api-server"
+        build_flags: "-ldflags='-s -w'"
+      
+      frontend:
+        enabled: true
+        compile_command: "./compiler.sh {file}"
+        npm_command: "npm ci --only=production"
+    
+    post_deploy:
+      - "php /var/www/app/current/app/clear-cache.php"
+      - "curl -f http://localhost/health || exit 1"
+    
+    route_files:
+      - "app/routes.php"
+    
+    ignored_paths:
+      - ".git"
+      - "tests"
+      - "node_modules/.cache"
+      - "vendor/bin"
+
+  staging:
+    ssh:
+      host: "staging.example.com"
+      user: "deploy"
+      key_path: "~/.ssh/deploy_key"
+    
+    remote_path: "/var/www/staging"
+    
+    builds:
+      php:
+        enabled: true
+        composer_command: "composer install --no-dev"
+      
+      go:
+        enabled: true
+        target_os: "linux"
+        target_arch: "amd64"
+        binary_name: "api-server"
+      
+      frontend:
+        enabled: true
+        compile_command: "./compiler.sh {file}"
+        npm_command: "npm ci"
+    
+    post_deploy:
+      - "php /var/www/staging/current/app/clear-cache.php"
+    
+    ignored_paths:
+      - ".git"
+      - "tests"

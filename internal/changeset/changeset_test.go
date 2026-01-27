@@ -1,0 +1,126 @@
+package changeset
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/user/versaDeploy/internal/state"
+)
+
+func TestHashFile(t *testing.T) {
+	// Create a temporary file
+	tmpFile := filepath.Join(t.TempDir(), "test.txt")
+	content := []byte("hello world")
+	if err := os.WriteFile(tmpFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Calculate hash
+	hash, err := hashFile(tmpFile)
+	if err != nil {
+		t.Fatalf("hashFile failed: %v", err)
+	}
+
+	// Expected SHA256 for "hello world"
+	expected := "sha256:b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+	if hash != expected {
+		t.Errorf("expected hash %s, got %s", expected, hash)
+	}
+}
+
+func TestDetector_ShouldIgnore(t *testing.T) {
+	ignored := []string{".git", "vendor", "node_modules/cache"}
+	d := NewDetector("", ignored, nil, nil)
+
+	tests := []struct {
+		path   string
+		expect bool
+	}{
+		{".git/config", true},
+		{"vendor/autoload.php", true},
+		{"node_modules/cache/file.js", true},
+		{"app/Controller.php", false},
+		{"public/index.php", false},
+	}
+
+	for _, tt := range tests {
+		if got := d.shouldIgnore(tt.path); got != tt.expect {
+			t.Errorf("shouldIgnore(%s) = %v; want %v", tt.path, got, tt.expect)
+		}
+	}
+}
+
+func TestDetector_Detect(t *testing.T) {
+	repoDir := t.TempDir()
+
+	// Create some files
+	files := map[string]string{
+		"app/main.php":     "<?php echo 'hello';",
+		"go.mod":           "module test",
+		"main.go":          "package main",
+		"package.json":     "{}",
+		"public/app.js":    "console.log('hi');",
+		".git/config":      "hidden",
+		"ignored/file.txt": "ignored",
+	}
+
+	for path, content := range files {
+		fullPath := filepath.Join(repoDir, path)
+		os.MkdirAll(filepath.Dir(fullPath), 0755)
+		os.WriteFile(fullPath, []byte(content), 0644)
+	}
+
+	ignored := []string{".git", "ignored"}
+	routes := []string{"app/routes.php"}
+
+	// Test first deployment (no previous lock)
+	detector := NewDetector(repoDir, ignored, routes, nil)
+	cs, err := detector.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !cs.HasChanges() {
+		t.Error("expected changes for initial deploy")
+	}
+
+	if len(cs.PHPFiles) != 1 || cs.PHPFiles[0] != "app/main.php" {
+		t.Errorf("expected 1 PHP file app/main.php, got %v", cs.PHPFiles)
+	}
+
+	if !cs.GoModChanged {
+		t.Error("expected go.mod changed")
+	}
+
+	// Test second deployment with some changes
+	previousLock := &state.DeployLock{
+		LastDeploy: state.DeployInfo{
+			FileHashes: map[string]string{
+				"app/main.php":  cs.AllFileHashes["app/main.php"],
+				"main.go":       cs.AllFileHashes["main.go"],
+				"package.json":  cs.AllFileHashes["package.json"],
+				"public/app.js": "old-hash", // Changed
+			},
+			GoModHash: cs.GoModHash, // Not changed
+		},
+	}
+
+	detector = NewDetector(repoDir, ignored, routes, previousLock)
+	cs2, err := detector.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cs2.PHPFiles) != 0 {
+		t.Errorf("expected 0 PHP files to change, got %v", cs2.PHPFiles)
+	}
+
+	if len(cs2.FrontendFiles) != 1 || cs2.FrontendFiles[0] != "public/app.js" {
+		t.Errorf("expected 1 frontend file public/app.js to change, got %v", cs2.FrontendFiles)
+	}
+
+	if cs2.GoModChanged {
+		t.Error("expected go.mod NOT changed")
+	}
+}

@@ -1,0 +1,40 @@
+# Binaries
+/versa
+/versa.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Output of go build
+/bin/
+/dist/
+
+# Go workspace file
+go.work
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Deployment artifacts
+/artifact/
+deploy.lock
