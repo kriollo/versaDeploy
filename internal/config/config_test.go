@@ -33,21 +33,58 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Missing Project Name",
+			name: "Missing Remote Path",
 			config: Config{
+				Project: "test",
 				Environments: map[string]Environment{
-					"prod": {},
+					"prod": {
+						SSH: SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+					},
 				},
 			},
 			wantErr: true,
 		},
 		{
-			name: "Missing Environment SSH Host",
+			name: "Invalid Remote Path",
 			config: Config{
 				Project: "test",
 				Environments: map[string]Environment{
 					"prod": {
-						SSH: SSHConfig{User: "u", KeyPath: "k"},
+						SSH:        SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+						RemotePath: "relative/path",
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "No Build Types Enabled",
+			config: Config{
+				Project: "test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:        SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+						RemotePath: "/var/www",
+						Builds:     BuildsConfig{},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Frontend Missing Placeholder",
+			config: Config{
+				Project: "test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:        SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+						RemotePath: "/var/www",
+						Builds: BuildsConfig{
+							Frontend: FrontendBuildConfig{
+								Enabled:        true,
+								CompileCommand: "no-placeholder",
+							},
+						},
 					},
 				},
 			},
@@ -116,5 +153,40 @@ environments:
 	env, _ := cfg.GetEnvironment("staging")
 	if env.SSH.Host != "staging.local" {
 		t.Errorf("expected host staging.local, got %s", env.SSH.Host)
+	}
+
+	// Verify new fields
+	yamlContentWithNewFields := `
+project: "new-test"
+environments:
+  prod:
+    ssh:
+      host: "prod.site"
+      user: "root"
+      key_path: "${HOME}/.ssh/id_rsa"
+      use_ssh_agent: true
+    remote_path: "/var/www"
+    hook_timeout: 600
+    builds:
+      go:
+        enabled: true
+        target_os: "linux"
+        target_arch: "amd64"
+        binary_name: "test-app"
+`
+	tmpConfig2 := filepath.Join(t.TempDir(), "deploy_new.yml")
+	os.WriteFile(tmpConfig2, []byte(yamlContentWithNewFields), 0644)
+
+	cfg2, err := Load(tmpConfig2)
+	if err != nil {
+		t.Fatalf("Load() with new fields error = %v", err)
+	}
+
+	prodEnv, _ := cfg2.GetEnvironment("prod")
+	if prodEnv.SSH.UseSSHAgent != true {
+		t.Error("expected UseSSHAgent to be true")
+	}
+	if prodEnv.HookTimeout != 600 {
+		t.Errorf("expected HookTimeout 600, got %d", prodEnv.HookTimeout)
 	}
 }

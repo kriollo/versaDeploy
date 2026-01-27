@@ -276,6 +276,7 @@ Remote Server Structure:
 ### Phase 15: Error Handling & Validation ✅
 
 - [x] Validate deploy.yml on load (fail fast if malformed)
+- [x] Validate local build tools (composer, go, npm/pnpm) availability
 - [x] Fail if deploy.lock missing and `--initial-deploy` not set
 - [x] Fail if SSH connection fails with clear error (and implement host key verification)
 - [x] Fail if build commands exit non-zero
@@ -492,11 +493,10 @@ versa status production                     # Estado actual
 
 **Próximos Pasos Sugeridos (Opcionales):**
 
-1. Escribir tests unitarios para changeset detection
-2. Agregar tests de integración con servidor SSH mock
-3. Implementar lógica de retry para conexiones
-4. Optimización de performance para árboles de archivos grandes
-5. Añadir métricas y telemetría
+1. ✅ **Soporte para SSH Agent**: Implementado.
+2. ✅ **Timeouts Configurables**: Implementado (`hook_timeout`).
+3. ✅ **Visualización de Progreso**: Implementado con barra de progreso.
+4. ✅ **Compresión Gzip**: Implementado, reduciendo drásticamente el tiempo de upload.
 
 **Notas de Seguridad:**
 
@@ -504,7 +504,7 @@ versa status production                     # Estado actual
 - ✅ Clave SSH debe tener permisos 0600
 - ✅ Sin prompts interactivos (BatchMode=yes)
 - ✅ Sin secretos en código fuente
-- ⚠️ TODO: Agregar verificación de host key SSH (actualmente usa InsecureIgnoreHostKey)
+- ✅ Verificación de host key SSH implementada (soporte para known_hosts)
 
 **Arquitectura de Deployment:**
 

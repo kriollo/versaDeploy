@@ -141,6 +141,75 @@ var statusCmd = &cobra.Command{
 	},
 }
 
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize a new versaDeploy configuration",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if _, err := os.Stat("deploy.yml"); err == nil {
+			return fmt.Errorf("deploy.yml already exists")
+		}
+
+		content := `project: "my-versa-project"
+
+environments:
+  production:
+    ssh:
+      host: "server.example.com"
+      user: "deploy"
+      key_path: "~/.ssh/id_rsa"
+      port: 22
+      known_hosts_file: "~/.ssh/known_hosts"
+      use_ssh_agent: false
+    
+    remote_path: "/var/www/app"
+    
+    # Timeout for each post_deploy hook in seconds (optional, default: 300)
+    hook_timeout: 300
+    
+    # Files that trigger route cache regeneration
+    route_files:
+      - "app/routes.php"
+    
+    # Paths to ignore for SHA256 tracking
+    ignored_paths:
+      - ".git"
+      - "tests"
+      - "var/cache"
+      - "node_modules/.cache"
+    
+    builds:
+      php:
+        enabled: true
+        composer_command: "composer install --no-dev --optimize-autoloader"
+      
+      go:
+        enabled: false
+        target_os: "linux"
+        target_arch: "amd64"
+        binary_name: "app"
+      
+      frontend:
+        enabled: true
+        npm_command: "npm ci" # Can be changed to "pnpm install" or "yarn install"
+        compile_command: "npm run prod"
+    
+    # Hooks to run on remote server after symlink switch
+    post_deploy:
+      - "php current/versa cache:clear"
+      - "php current/versa routes:dump"
+      - "php current/versa twig:clear-cache"
+`
+		err := os.WriteFile("deploy.yml", []byte(content), 0644)
+		if err != nil {
+			return fmt.Errorf("failed to create deploy.yml: %w", err)
+		}
+
+		fmt.Println("🚀 Initialized versaDeploy! Created deploy.yml.")
+		fmt.Println("Edit deploy.yml to match your server details and then run: versa deploy production --initial-deploy")
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "deploy.yml", "Path to configuration file")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "Verbose output")
@@ -153,6 +222,7 @@ func init() {
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(rollbackCmd)
 	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(initCmd)
 }
 
 func main() {

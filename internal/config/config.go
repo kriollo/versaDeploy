@@ -19,12 +19,13 @@ type Config struct {
 
 // Environment represents a single deployment environment
 type Environment struct {
-	SSH        SSHConfig    `yaml:"ssh"`
-	RemotePath string       `yaml:"remote_path"`
-	Builds     BuildsConfig `yaml:"builds"`
-	PostDeploy []string     `yaml:"post_deploy"`
-	Ignored    []string     `yaml:"ignored_paths"`
-	RouteFiles []string     `yaml:"route_files"` // Files that trigger route cache regeneration
+	SSH         SSHConfig    `yaml:"ssh"`
+	RemotePath  string       `yaml:"remote_path"`
+	Builds      BuildsConfig `yaml:"builds"`
+	PostDeploy  []string     `yaml:"post_deploy"`
+	Ignored     []string     `yaml:"ignored_paths"`
+	RouteFiles  []string     `yaml:"route_files"`  // Files that trigger route cache regeneration
+	HookTimeout int          `yaml:"hook_timeout"` // Timeout for post-deploy hooks in seconds
 }
 
 // SSHConfig holds SSH connection details
@@ -34,6 +35,7 @@ type SSHConfig struct {
 	KeyPath        string `yaml:"key_path"`
 	Port           int    `yaml:"port"`             // Default: 22
 	KnownHostsFile string `yaml:"known_hosts_file"` // Optional: path to known_hosts file
+	UseSSHAgent    bool   `yaml:"use_ssh_agent"`    // Optional: use SSH agent for authentication
 }
 
 // BuildsConfig holds build configuration for each language

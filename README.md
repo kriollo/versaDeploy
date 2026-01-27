@@ -22,71 +22,37 @@ Or download pre-built binaries from releases.
 
 ## Quick Start
 
-### 1. Create `deploy.yml` in your project root
+### 1. Initialize your project
 
-```yaml
-project: "my-app"
+Run the following command in your project root to create a template `deploy.yml`:
 
-environments:
-  production:
-    ssh:
-      host: "prod.example.com"
-      user: "deploy"
-      key_path: "~/.ssh/deploy_key"
-      port: 22
-
-    remote_path: "/var/www/app"
-
-    builds:
-      php:
-        enabled: true
-        composer_command: "composer install --no-dev --optimize-autoloader --classmap-authoritative"
-
-      go:
-        enabled: true
-        target_os: "linux"
-        target_arch: "amd64"
-        binary_name: "api-server"
-        build_flags: "-ldflags='-s -w'"
-
-      frontend:
-        enabled: true
-        compile_command: "./compiler.sh {file}"
-        npm_command: "npm ci --only=production"
-
-    post_deploy:
-      - "php /var/www/app/current/app/clear-cache.php"
-      - "curl -f http://localhost/health || exit 1"
-
-    route_files:
-      - "app/routes.php"
-
-    ignored_paths:
-      - ".git"
-      - "tests"
-      - "node_modules/.cache"
-      - "vendor/bin"
+```bash
+versa init
 ```
 
-### 2. First Deployment
+### 2. Configure `deploy.yml`
+
+Edit the generated `deploy.yml` with your server and build details.
+
+### 3. First Deployment
 
 ```bash
 versa deploy production --initial-deploy
 ```
 
-### 3. Subsequent Deployments
+### 4. Subsequent Deployments
 
 ```bash
 versa deploy production
 ```
 
-### 4. Rollback
+### 5. Rollback
 
 ```bash
 versa rollback production
 ```
 
-### 5. Check Status
+### 6. Check Status
 
 ```bash
 versa status production
@@ -210,6 +176,14 @@ route_files:
 ```
 
 ## CLI Commands
+
+### Init
+
+Initialize a new `deploy.yml` with a production-ready template.
+
+```bash
+versa init
+```
 
 ### Deploy
 

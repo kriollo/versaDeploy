@@ -3,7 +3,10 @@ package deployer
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/user/versaDeploy/internal/artifact"
 	"github.com/user/versaDeploy/internal/builder"
@@ -50,6 +53,11 @@ func NewDeployer(cfg *config.Config, envName, repoPath string, dryRun, initialDe
 // Deploy executes the full deployment workflow
 func (d *Deployer) Deploy() error {
 	d.log.Info("Starting deployment to %s", d.envName)
+
+	// Step 0: Validate local tools
+	if err := d.validateLocalTools(); err != nil {
+		return err
+	}
 
 	// Step 1: Validate repository
 	if err := git.ValidateRepository(d.repoPath); err != nil {
@@ -193,10 +201,30 @@ func (d *Deployer) Deploy() error {
 		}
 	}
 
-	// Upload to staging
-	if err := sshClient.UploadDirectory(artifactDir, stagingDir); err != nil {
+	// Step 10: Compress and upload to staging
+	d.log.Info("Compressing and uploading release...")
+	archiveName := fmt.Sprintf("%s.tar.gz", releaseVersion)
+	localArchive := filepath.Join(os.TempDir(), archiveName)
+	remoteArchive := filepath.ToSlash(filepath.Join(d.env.RemotePath, archiveName))
+
+	g := artifact.NewGenerator(artifactDir, releaseVersion, commitHash)
+	if err := g.Compress(localArchive); err != nil {
+		return fmt.Errorf("failed to compress release: %w", err)
+	}
+	defer os.Remove(localArchive)
+
+	if err := sshClient.UploadFileWithProgress(localArchive, remoteArchive); err != nil {
 		return err
 	}
+
+	// Extract on remote
+	if err := sshClient.ExtractArchive(remoteArchive, stagingDir); err != nil {
+		sshClient.ExecuteCommand(fmt.Sprintf("rm -f %s", remoteArchive))
+		return err
+	}
+
+	// Cleanup remote archive
+	sshClient.ExecuteCommand(fmt.Sprintf("rm -f %s", remoteArchive))
 
 	// Move staging to final (atomic)
 	if _, err := sshClient.ExecuteCommand(fmt.Sprintf("mv %s %s", stagingDir, finalDir)); err != nil {
@@ -217,9 +245,14 @@ func (d *Deployer) Deploy() error {
 	// Step 13: Execute post-deploy hooks
 	if len(d.env.PostDeploy) > 0 {
 		d.log.Info("Running post-deploy hooks...")
+		hookTimeout := time.Duration(d.env.HookTimeout) * time.Second
+		if hookTimeout <= 0 {
+			hookTimeout = 300 * time.Second // Default 5 minutes
+		}
+
 		for _, hook := range d.env.PostDeploy {
-			d.log.Info("Executing: %s", hook)
-			output, err := sshClient.ExecuteCommand(hook)
+			d.log.Info("Executing: %s (timeout: %v)", hook, hookTimeout)
+			output, err := sshClient.ExecuteCommandWithTimeout(hook, hookTimeout)
 			if err != nil {
 				d.log.Error("Post-deploy hook failed: %s", output)
 				// Rollback on hook failure
@@ -407,4 +440,65 @@ func (d *Deployer) calculateDirectorySize(dirPath string) (int64, error) {
 		return nil
 	})
 	return size, err
+}
+
+// validateLocalTools checks if necessary build tools are available on the system
+func (d *Deployer) validateLocalTools() error {
+	// Check PHP tools
+	if d.env.Builds.PHP.Enabled {
+		cmd := "composer"
+		if d.env.Builds.PHP.ComposerCommand != "" {
+			parts := strings.Fields(d.env.Builds.PHP.ComposerCommand)
+			if len(parts) > 0 {
+				cmd = parts[0]
+			}
+		}
+		if _, err := exec.LookPath(cmd); err != nil {
+			return verserrors.New(verserrors.CodeBuildFailed,
+				fmt.Sprintf("PHP build tool '%s' not found", cmd),
+				fmt.Sprintf("Install %s or ensure it is in your PATH. If you use a custom command, check your deploy.yml.", cmd), nil)
+		}
+	}
+
+	// Check Go tools
+	if d.env.Builds.Go.Enabled {
+		if _, err := exec.LookPath("go"); err != nil {
+			return verserrors.New(verserrors.CodeBuildFailed,
+				"Go compiler not found",
+				"Install Go (https://golang.org/dl/) and ensure it is in your PATH.", nil)
+		}
+	}
+
+	// Check Frontend tools
+	if d.env.Builds.Frontend.Enabled {
+		tools := []string{}
+		if d.env.Builds.Frontend.NPMCommand != "" {
+			parts := strings.Fields(d.env.Builds.Frontend.NPMCommand)
+			if len(parts) > 0 {
+				tools = append(tools, parts[0])
+			}
+		}
+		if d.env.Builds.Frontend.CompileCommand != "" {
+			parts := strings.Fields(d.env.Builds.Frontend.CompileCommand)
+			if len(parts) > 0 {
+				// Don't check placeholders or relative scripts starting with ./
+				// unless we want to be very strict.
+				// For now let's check standard tools.
+				cmd := parts[0]
+				if !strings.HasPrefix(cmd, "./") && !strings.HasPrefix(cmd, ".\\") {
+					tools = append(tools, cmd)
+				}
+			}
+		}
+
+		for _, tool := range tools {
+			if _, err := exec.LookPath(tool); err != nil {
+				return verserrors.New(verserrors.CodeBuildFailed,
+					fmt.Sprintf("Frontend build tool '%s' not found", tool),
+					fmt.Sprintf("Install %s (npm, pnpm, yarn, etc.) and ensure it is in your PATH.", tool), nil)
+			}
+		}
+	}
+
+	return nil
 }

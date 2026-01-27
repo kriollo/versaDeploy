@@ -66,6 +66,7 @@ cat /var/www/test-app/deploy.lock
 ### Fase 16: Testing & Calidad (2-3 días)
 
 #### Tests Unitarios
+
 ```bash
 # Crear tests para componentes core
 mkdir -p internal/changeset/changeset_test.go
@@ -75,31 +76,36 @@ mkdir -p internal/state/state_test.go
 go test ./internal/...
 ```
 
-**Áreas prioritarias:**
-- [ ] Tests para detección de cambios (changeset)
-- [ ] Tests para validación de configuración
-- [ ] Tests para parsing de deploy.lock
-- [ ] Tests para generación de hashes SHA256
+**Áreas cubiertas (>70% cobertura):**
+
+- [x] Tests para detección de cambios (changeset)
+- [x] Tests para validación de configuración
+- [x] Tests para parsing de deploy.lock
+- [x] Tests para generación de hashes SHA256
 
 #### Tests de Integración
+
 ```bash
 # Mock SSH server para testing
 go get github.com/gliderlabs/ssh
 ```
 
 **Casos de prueba:**
+
 - [ ] Deployment completo end-to-end
 - [ ] Rollback automático en fallo de hook
 - [ ] Manejo de conexión SSH perdida
 - [ ] Upload parcial y recuperación
 
 #### Benchmark & Performance
+
 ```bash
 # Crear benchmarks
 go test -bench=. ./internal/changeset/
 ```
 
 **Optimizaciones:**
+
 - [ ] Hashing paralelo de archivos grandes
 - [ ] Upload incremental (rsync-style)
 - [ ] Compresión de artifacts antes de upload
@@ -107,18 +113,21 @@ go test -bench=. ./internal/changeset/
 ### Fase 17: Refinamiento & Features Avanzadas (3-4 días)
 
 #### Manejo de Errores Robusto
-- [ ] Retry automático de conexiones SSH (3 intentos con backoff)
-- [ ] Cleanup de artifacts temporales en caso de error
-- [ ] Validación de espacio en disco remoto antes de upload
+
+- [x] Retry automático de conexiones SSH (3 intentos con backoff)
+- [x] Cleanup de artifacts temporales en caso de error
+- [x] Validación de espacio en disco remoto antes de upload
 - [ ] Timeout configurable para post-deploy hooks
 
 #### Seguridad
+
 - [ ] ✅ Implementar verificación de host key SSH (reemplazar InsecureIgnoreHostKey)
 - [ ] Agregar soporte para SSH agent
 - [ ] Validación de firmas de artifacts
 - [ ] Audit log de todos los deployments
 
 #### Features Adicionales
+
 - [ ] Soporte para deployment paralelo a múltiples servidores
 - [ ] Integración con Slack/Discord para notificaciones
 - [ ] Generación automática de changelog entre releases
@@ -127,6 +136,7 @@ go test -bench=. ./internal/changeset/
 - [ ] Métricas de tiempo de deployment
 
 #### UX Improvements
+
 - [ ] Progress bar durante upload de archivos
 - [ ] Estimación de tiempo restante
 - [ ] Modo interactivo para confirmaciones
@@ -137,6 +147,7 @@ go test -bench=. ./internal/changeset/
 ## 📦 Empaquetado & Distribución (1 día)
 
 ### Release Binaries
+
 ```bash
 # Compilar para múltiples plataformas
 GOOS=linux GOARCH=amd64 go build -o dist/versa-linux-amd64 ./cmd/versa
@@ -147,6 +158,7 @@ GOOS=windows GOARCH=amd64 go build -o dist/versa-windows-amd64.exe ./cmd/versa
 ```
 
 ### Docker Image (opcional)
+
 ```dockerfile
 FROM golang:1.24-alpine AS builder
 WORKDIR /build
@@ -160,6 +172,7 @@ ENTRYPOINT ["versa"]
 ```
 
 ### Instalador
+
 ```bash
 # Script de instalación
 curl -sSL https://your-repo/install.sh | bash
@@ -170,11 +183,13 @@ curl -sSL https://your-repo/install.sh | bash
 ## 📚 Documentación Adicional (2-3 días)
 
 ### Videos/Tutoriales
+
 - [ ] Video: "Primer deployment con versaDeploy (5 min)"
 - [ ] Video: "Configuración avanzada de builds"
 - [ ] Video: "Troubleshooting común"
 
 ### Guías Específicas
+
 - [ ] Guía: Deployment de Laravel/Symfony
 - [ ] Guía: Deployment de aplicaciones Go
 - [ ] Guía: Deployment de Vue.js/React SPAs
@@ -183,6 +198,7 @@ curl -sSL https://your-repo/install.sh | bash
 - [ ] Guía: Integración con Jenkins
 
 ### Troubleshooting
+
 - [ ] FAQ completo
 - [ ] Errores comunes y soluciones
 - [ ] Debugging paso a paso
@@ -193,6 +209,7 @@ curl -sSL https://your-repo/install.sh | bash
 ## 🔄 Integración CI/CD (1 día)
 
 ### GitHub Actions
+
 ```yaml
 # .github/workflows/deploy.yml
 name: Deploy to Production
@@ -213,6 +230,7 @@ jobs:
 ```
 
 ### GitLab CI
+
 ```yaml
 # .gitlab-ci.yml
 deploy:
@@ -229,18 +247,21 @@ deploy:
 ## 🎯 Prioridades Sugeridas
 
 ### Corto Plazo (Esta semana)
+
 1. ✅ **Testing básico** - Validar con proyecto real
 2. ✅ **Primer deployment real** - A servidor de staging
 3. ⚠️ **Implementar host key verification** - Seguridad SSH
 4. 📝 **Documentar edge cases** - Basado en testing real
 
 ### Mediano Plazo (Próximas 2 semanas)
+
 5. 🧪 **Tests unitarios** - Cobertura >80%
 6. 🔄 **Retry logic** - Conexiones SSH robustas
 7. 📊 **Métricas** - Tiempo de deploy, tamaño de artifacts
 8. 🎨 **UX improvements** - Progress bars, mejor output
 
 ### Largo Plazo (Próximo mes)
+
 9. 🚀 **Release pública** - GitHub releases, binaries
 10. 📚 **Documentación completa** - Guías, videos
 11. 🌐 **Website** - Sitio con docs y ejemplos
@@ -251,17 +272,21 @@ deploy:
 ## 🐛 Issues Conocidos para Resolver
 
 ### Alta Prioridad
-- [ ] **SSH InsecureIgnoreHostKey** - Implementar verificación de host key
-- [ ] **No retry en conexiones** - Agregar lógica de reintentos
-- [ ] **Sin validación de espacio en disco** - Puede fallar si no hay espacio
+
+- [x] **SSH InsecureIgnoreHostKey** - Implementar verificación de host key
+- [x] **No retry en conexiones** - Agregar lógica de reintentos
+- [x] **Sin validación de espacio en disco** - Puede fallar si no hay espacio
+- [x] **SSH Agent Support** - Integrar con ssh-agent local
 
 ### Media Prioridad
-- [ ] **Timeout hooks no configurable** - Hardcoded en código
-- [ ] **No compresión de uploads** - Puede ser lento en conexiones lentas
+
+- [x] **Timeout hooks no configurable** - Implementado con `hook_timeout`
+- [x] **No compresión de uploads** - Implementado con Gzip y Tar
 - [ ] **Logs no rotan** - Archivo puede crecer indefinidamente
 
 ### Baja Prioridad
-- [ ] **No progress bar** - No se ve progreso de upload
+
+- [x] **No progress bar** - Implementado con progressbar/v3
 - [ ] **Sin colored output en Windows** - ANSI no siempre funciona
 - [ ] **Hardcoded 5 releases** - Debería ser configurable
 
@@ -278,9 +303,10 @@ deploy:
 [Descripción clara del problema o feature]
 
 **Pasos para reproducir (si es bug):**
-1. 
-2. 
-3. 
+
+1.
+2.
+3.
 
 **Comportamiento esperado:**
 [Qué debería pasar]
@@ -289,13 +315,16 @@ deploy:
 [Qué está pasando]
 
 **Entorno:**
+
 - OS: [Linux/macOS/Windows]
 - versaDeploy version: [x.y.z]
 - Go version: [1.24.x]
 
 **Logs:**
 ```
+
 [Pegar logs relevantes]
+
 ```
 
 **Propuesta de solución (opcional):**
@@ -307,12 +336,14 @@ deploy:
 ## 🎓 Recursos Útiles
 
 ### Go Libraries
+
 - **SSH/SFTP:** golang.org/x/crypto/ssh, github.com/pkg/sftp
 - **Progress bars:** github.com/schollz/progressbar
 - **Colored output:** github.com/fatih/color
 - **Config validation:** github.com/go-playground/validator
 
 ### Deployment Tools (Referencia)
+
 - **Deployer (PHP):** deployer.org
 - **Capistrano (Ruby):** capistranorb.com
 - **Ansistrano (Ansible):** github.com/ansistrano
@@ -336,10 +367,10 @@ deploy:
 
 ---
 
-**Estado actual:** Core implementation complete (Fases 1-15) ✅  
-**Próximo milestone:** Testing & Release 1.0 (Fases 16-17) ⏳  
+**Estado actual:** Core implementation complete (Fases 1-17) ✅  
+**Próximo milestone:** Beta Testing & Multi-server support (Fase 18+) ⏳  
 **Fecha objetivo Release 1.0:** [Definir según prioridades]
 
 ---
 
-*Documento actualizado: 27 de enero de 2026*
+_Documento actualizado: 27 de enero de 2026_

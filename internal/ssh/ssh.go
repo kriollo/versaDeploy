@@ -1,15 +1,19 @@
 package ssh
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
+	"github.com/schollz/progressbar/v3"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/user/versaDeploy/internal/config"
@@ -25,24 +29,45 @@ type Client struct {
 
 // NewClient creates a new SSH client
 func NewClient(cfg *config.SSHConfig) (*Client, error) {
-	// Read private key
-	keyData, err := os.ReadFile(cfg.KeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read SSH key: %w", err)
+	authMethods := []ssh.AuthMethod{}
+
+	// Support SSH Agent
+	if cfg.UseSSHAgent {
+		sock := os.Getenv("SSH_AUTH_SOCK")
+		if sock != "" {
+			if agentConn, err := net.Dial("unix", sock); err == nil {
+				authMethods = append(authMethods, ssh.PublicKeysCallback(agent.NewClient(agentConn).Signers))
+			}
+		}
 	}
 
-	// Parse private key
-	signer, err := ssh.ParsePrivateKey(keyData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse SSH key: %w", err)
+	// Try reading private key if path is provided
+	if cfg.KeyPath != "" {
+		keyData, err := os.ReadFile(cfg.KeyPath)
+		if err != nil {
+			if len(authMethods) == 0 {
+				return nil, fmt.Errorf("failed to read SSH key: %w", err)
+			}
+		} else {
+			signer, err := ssh.ParsePrivateKey(keyData)
+			if err != nil {
+				if len(authMethods) == 0 {
+					return nil, fmt.Errorf("failed to parse SSH key: %w", err)
+				}
+			} else {
+				authMethods = append(authMethods, ssh.PublicKeys(signer))
+			}
+		}
+	}
+
+	if len(authMethods) == 0 {
+		return nil, fmt.Errorf("no valid SSH authentication methods found (check key_path or use_ssh_agent)")
 	}
 
 	// Configure SSH client
 	sshConfig := &ssh.ClientConfig{
-		User: cfg.User,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
+		User:            cfg.User,
+		Auth:            authMethods,
 		HostKeyCallback: createHostKeyCallback(cfg),
 		Timeout:         10 * time.Second,
 	}
@@ -50,6 +75,7 @@ func NewClient(cfg *config.SSHConfig) (*Client, error) {
 	// Connect with retry logic
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	var sshClient *ssh.Client
+	var err error
 
 	maxRetries := 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -187,20 +213,98 @@ func (c *Client) FileExists(remotePath string) (bool, error) {
 	return true, nil
 }
 
+// UploadFileWithProgress uploads a single file with a progress bar
+func (c *Client) UploadFileWithProgress(localPath, remotePath string) error {
+	localFile, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open local file: %w", err)
+	}
+	defer localFile.Close()
+
+	info, err := localFile.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat local file: %w", err)
+	}
+
+	remoteFile, err := c.sftpClient.Create(remotePath)
+	if err != nil {
+		return fmt.Errorf("failed to create remote file: %w", err)
+	}
+	defer remoteFile.Close()
+
+	bar := progressbar.DefaultBytes(
+		info.Size(),
+		fmt.Sprintf("Uploading %s", filepath.Base(localPath)),
+	)
+
+	_, err = io.Copy(io.MultiWriter(remoteFile, bar), localFile)
+	if err != nil {
+		return fmt.Errorf("failed to upload file: %w", err)
+	}
+
+	return nil
+}
+
+// ExtractArchive extracts a tar.gz archive on the remote server
+func (c *Client) ExtractArchive(archivePath, targetDir string) error {
+	// Create target directory if it doesn't exist
+	_, err := c.ExecuteCommand(fmt.Sprintf("mkdir -p %s", targetDir))
+	if err != nil {
+		return fmt.Errorf("failed to create target directory: %w", err)
+	}
+
+	// Extract
+	cmd := fmt.Sprintf("tar -xzf %s -C %s", archivePath, targetDir)
+	output, err := c.ExecuteCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to extract archive: %w (output: %s)", err, output)
+	}
+
+	return nil
+}
+
 // ExecuteCommand executes a command on the remote server
 func (c *Client) ExecuteCommand(cmd string) (string, error) {
+	return c.ExecuteCommandWithTimeout(cmd, 0)
+}
+
+// ExecuteCommandWithTimeout executes a command with a specific timeout
+func (c *Client) ExecuteCommandWithTimeout(cmd string, timeout time.Duration) (string, error) {
 	session, err := c.sshClient.NewSession()
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
 	}
 	defer session.Close()
 
-	output, err := session.CombinedOutput(cmd)
-	if err != nil {
-		return string(output), fmt.Errorf("command failed: %w", err)
+	var b bytes.Buffer
+	session.Stdout = &b
+	session.Stderr = &b
+
+	if err := session.Start(cmd); err != nil {
+		return "", fmt.Errorf("failed to start command: %w", err)
 	}
 
-	return string(output), nil
+	if timeout <= 0 {
+		err := session.Wait()
+		return b.String(), err
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- session.Wait()
+	}()
+
+	select {
+	case <-time.After(timeout):
+		session.Signal(ssh.SIGKILL)
+		session.Close()
+		return b.String(), fmt.Errorf("command timed out after %v", timeout)
+	case err := <-done:
+		if err != nil {
+			return b.String(), fmt.Errorf("command failed: %w", err)
+		}
+		return b.String(), nil
+	}
 }
 
 // ListReleases lists all release directories on the remote server
