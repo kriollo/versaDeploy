@@ -134,6 +134,103 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "Go Missing BinaryName",
+			config: Config{
+				Project: "test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:        SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+						RemotePath: "/var/www",
+						Builds: BuildsConfig{
+							Go: GoBuildConfig{
+								Enabled:    true,
+								TargetOS:   "linux",
+								TargetArch: "amd64",
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Frontend Missing NPMCommand (has default)",
+			config: Config{
+				Project: "test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:        SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+						RemotePath: "/var/www",
+						Builds: BuildsConfig{
+							Frontend: FrontendBuildConfig{
+								Enabled:        true,
+								CompileCommand: "npm run {file}",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "SSH Key Not Found",
+			config: Config{
+				Project: "test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:        SSHConfig{Host: "h", User: "u", KeyPath: "non-existent-key"},
+						RemotePath: "/var/www",
+						Builds:     BuildsConfig{PHP: PHPBuildConfig{Enabled: true}},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Missing SSH Host",
+			config: Config{
+				Project: "test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:        SSHConfig{User: "u", KeyPath: "k"},
+						RemotePath: "/var/www",
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Missing SSH User",
+			config: Config{
+				Project: "test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:        SSHConfig{Host: "h", KeyPath: "k"},
+						RemotePath: "/var/www",
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Frontend Missing CompileCommand",
+			config: Config{
+				Project: "test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:        SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+						RemotePath: "/var/www",
+						Builds: BuildsConfig{
+							Frontend: FrontendBuildConfig{
+								Enabled: true,
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -161,6 +258,16 @@ func TestLoad_Fail(t *testing.T) {
 	_, err := Load("non-existent.yml")
 	if err == nil {
 		t.Error("expected error for non-existent file")
+	}
+}
+
+func TestLoad_InvalidYAML(t *testing.T) {
+	tmpConfig := filepath.Join(t.TempDir(), "invalid.yml")
+	os.WriteFile(tmpConfig, []byte("invalid: yaml: :"), 0644)
+
+	_, err := Load(tmpConfig)
+	if err == nil {
+		t.Error("expected error for invalid YAML")
 	}
 }
 
@@ -308,14 +415,27 @@ func TestConfig_GetEnvironment(t *testing.T) {
 }
 
 func TestInterpolateEnvVars(t *testing.T) {
-	os.Setenv("TEST_VAR", "value")
-	defer os.Unsetenv("TEST_VAR")
+	os.Setenv("VAR1", "val1")
+	os.Setenv("VAR2", "val2")
+	defer os.Unsetenv("VAR1")
+	defer os.Unsetenv("VAR2")
 
-	input := "prefix-${TEST_VAR}-suffix"
-	expected := "prefix-value-suffix"
-	got := interpolateEnvVars(input)
-	if got != expected {
-		t.Errorf("expected %s, got %s", expected, got)
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"${VAR1}", "val1"},
+		{"$VAR1", "val1"},
+		{"${VAR1}-${VAR2}", "val1-val2"},
+		{"no-vars", "no-vars"},
+		{"${MISSING}", ""},
+	}
+
+	for _, tt := range tests {
+		got := interpolateEnvVars(tt.input)
+		if got != tt.expected {
+			t.Errorf("interpolateEnvVars(%s) = %s, want %s", tt.input, got, tt.expected)
+		}
 	}
 }
 

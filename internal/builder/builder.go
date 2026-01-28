@@ -210,7 +210,22 @@ func (b *Builder) buildFrontend() error {
 		b.result.NPMUpdated = true
 	}
 
-	// Compile changed frontend files
+	// If compile_command doesn't contain {file}, run it once if any frontend files changed
+	if !strings.Contains(b.config.Builds.Frontend.CompileCommand, "{file}") {
+		if len(b.changeset.FrontendFiles) > 0 {
+			fmt.Println("→ Compiling frontend (global)...")
+			cmd := exec.Command("bash", "-c", b.config.Builds.Frontend.CompileCommand)
+			cmd.Dir = b.repoPath
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				return verserrors.New(verserrors.CodeBuildFailed, "Frontend compile failed", "Check your build command.", fmt.Errorf("%w: %s", err, string(output)))
+			}
+			b.result.FrontendCompiled = len(b.changeset.FrontendFiles)
+		}
+		return nil
+	}
+
+	// Compile changed frontend files individually
 	for _, file := range b.changeset.FrontendFiles {
 		fmt.Printf("→ Compiling %s...\n", file)
 

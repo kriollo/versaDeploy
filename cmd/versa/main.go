@@ -9,6 +9,7 @@ import (
 	"github.com/user/versaDeploy/internal/deployer"
 	verserrors "github.com/user/versaDeploy/internal/errors"
 	"github.com/user/versaDeploy/internal/logger"
+	"github.com/user/versaDeploy/internal/ssh"
 )
 
 var (
@@ -25,7 +26,14 @@ var rootCmd = &cobra.Command{
 - Detects changes via SHA256 hashing
 - Builds artifacts selectively outside production
 - Deploys atomically using symlink switching
-- Supports instant rollback`,
+- Supports instant rollback
+
+Available Commands:
+  deploy      Deploy to specified environment
+  rollback    Rollback to previous release
+  status      Show deployment status
+  ssh-test    Test SSH connection to environment
+  init        Initialize a new versaDeploy configuration`,
 }
 
 var deployCmd = &cobra.Command{
@@ -141,6 +149,68 @@ var statusCmd = &cobra.Command{
 	},
 }
 
+var sshTestCmd = &cobra.Command{
+	Use:   "ssh-test [environment]",
+	Short: "Test SSH connection to specified environment",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		env := args[0]
+
+		// Initialize logger
+		log, err := logger.NewLogger(logFile, verbose, debug)
+		if err != nil {
+			return fmt.Errorf("failed to initialize logger: %w", err)
+		}
+		defer log.Close()
+
+		// Load configuration
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		// Find environment config
+		envCfg, err := cfg.GetEnvironment(env)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("🔍 Testing SSH connection to %s (%s)...\n", env, envCfg.SSH.User+"@"+envCfg.SSH.Host)
+
+		client, err := ssh.NewClient(&envCfg.SSH)
+		if err != nil {
+			return fmt.Errorf("❌ SSH connection failed: %w", err)
+		}
+		defer client.Close()
+
+		fmt.Println("✅ SSH connection established successfully!")
+
+		// Test command execution
+		fmt.Println("🔍 Testing command execution...")
+		output, err := client.ExecuteCommand("uname -a")
+		if err != nil {
+			// Fallback for Windows or systems without uname
+			output, _ = client.ExecuteCommand("whoami")
+		}
+		if output != "" {
+			fmt.Printf("✅ Remote system response: %s", output)
+		}
+
+		// Test SFTP
+		fmt.Println("🔍 Testing SFTP subsystem...")
+		exists, err := client.FileExists(".")
+		if err != nil {
+			return fmt.Errorf("❌ SFTP test failed: %w", err)
+		}
+		if exists {
+			fmt.Println("✅ SFTP subsystem working.")
+		}
+
+		fmt.Println("\n✨ SSH connection test passed!")
+		return nil
+	},
+}
+
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize a new versaDeploy configuration",
@@ -191,7 +261,7 @@ environments:
       frontend:
         enabled: true
         npm_command: "npm ci" # Can be changed to "pnpm install" or "yarn install"
-        compile_command: "npm run prod"
+        compile_command: "npm run prod" # Use {file} if you want to compile files individually
     
     # Hooks to run on remote server after symlink switch
     post_deploy:
@@ -222,6 +292,7 @@ func init() {
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(rollbackCmd)
 	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(sshTestCmd)
 	rootCmd.AddCommand(initCmd)
 }
 

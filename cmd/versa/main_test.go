@@ -29,8 +29,51 @@ func TestInitCommand(t *testing.T) {
 	}
 
 	// Running again should fail
-	err = initCmd.RunE(initCmd, []string{})
-	if err == nil {
+	if err := initCmd.RunE(initCmd, []string{}); err == nil {
 		t.Error("versa init should fail if deploy.yml already exists")
+	}
+}
+
+func TestDeployCommand_ConfigNotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	origWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origWd)
+
+	err := deployCmd.RunE(deployCmd, []string{"prod"})
+	if err == nil {
+		t.Error("expected failure when deploy.yml is missing")
+	}
+}
+
+func TestDeployCommand_WrongArgs(t *testing.T) {
+	rootCmd.SetArgs([]string{"deploy"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Error("expected failure for missing environment argument")
+	}
+}
+
+func TestRollbackCommand(t *testing.T) {
+	rootCmd.SetArgs([]string{"rollback"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Error("expected failure for missing environment argument")
+	}
+}
+
+func TestStatusCommand(t *testing.T) {
+	rootCmd.SetArgs([]string{"status"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Error("expected failure for missing environment argument")
+	}
+}
+
+func TestSSHTestCommand(t *testing.T) {
+	rootCmd.SetArgs([]string{"ssh-test"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Error("expected failure for missing environment argument")
 	}
 }

@@ -192,9 +192,6 @@ func (e *Environment) Validate(envName string) error {
 		if e.Builds.Frontend.CompileCommand == "" {
 			return fmt.Errorf("environment %s: frontend.compile_command is required when frontend builds are enabled", envName)
 		}
-		if !strings.Contains(e.Builds.Frontend.CompileCommand, "{file}") {
-			return fmt.Errorf("environment %s: frontend.compile_command must contain {file} placeholder", envName)
-		}
 		if e.Builds.Frontend.NPMCommand == "" {
 			e.Builds.Frontend.NPMCommand = "npm ci --only=production"
 		}

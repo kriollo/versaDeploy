@@ -180,3 +180,16 @@ func TestBuilder_Build_DisabledComponents(t *testing.T) {
 		t.Error("expected no changes in result")
 	}
 }
+
+func TestBuilder_Build_Fail(t *testing.T) {
+	repoDir := t.TempDir()
+	// Create a file where a directory should be
+	artifactDir := filepath.Join(t.TempDir(), "blocked")
+	os.WriteFile(artifactDir, []byte("blocked"), 0644)
+
+	b := NewBuilder(repoDir, artifactDir, &config.Environment{}, &changeset.ChangeSet{})
+	_, err := b.Build()
+	if err == nil {
+		t.Error("expected error when artifact structure cannot be created")
+	}
+}
