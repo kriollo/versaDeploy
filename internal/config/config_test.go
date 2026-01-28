@@ -33,6 +33,15 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "Missing Project Name",
+			config: Config{
+				Environments: map[string]Environment{
+					"prod": {},
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "Missing Remote Path",
 			config: Config{
 				Project: "test",
@@ -90,6 +99,41 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "Go Missing target_os",
+			config: Config{
+				Project: "test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:        SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+						RemotePath: "/var/www",
+						Builds: BuildsConfig{
+							Go: GoBuildConfig{Enabled: true},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Go Missing target_arch",
+			config: Config{
+				Project: "test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:        SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+						RemotePath: "/var/www",
+						Builds: BuildsConfig{
+							Go: GoBuildConfig{
+								Enabled:  true,
+								TargetOS: "linux",
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -110,6 +154,57 @@ func TestConfig_Validate(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLoad_Fail(t *testing.T) {
+	_, err := Load("non-existent.yml")
+	if err == nil {
+		t.Error("expected error for non-existent file")
+	}
+}
+
+func TestConfig_Validate_MultipleEnvs(t *testing.T) {
+	cfg := Config{
+		Project: "test",
+		Environments: map[string]Environment{
+			"prod": {
+				SSH:        SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+				RemotePath: "/var/www",
+				Builds:     BuildsConfig{PHP: PHPBuildConfig{Enabled: true}},
+			},
+			"staging": {
+				SSH:        SSHConfig{Host: "h2", User: "u2", KeyPath: "k2"},
+				RemotePath: "/var/www/staging",
+				Builds:     BuildsConfig{PHP: PHPBuildConfig{Enabled: true}},
+			},
+		},
+	}
+
+	// Create keys
+	tmpDir := t.TempDir()
+	k1 := filepath.Join(tmpDir, "k1")
+	k2 := filepath.Join(tmpDir, "k2")
+	os.WriteFile(k1, []byte("f"), 0600)
+	os.WriteFile(k2, []byte("f"), 0600)
+
+	e1 := cfg.Environments["prod"]
+	e1.SSH.KeyPath = k1
+	cfg.Environments["prod"] = e1
+
+	e2 := cfg.Environments["staging"]
+	e2.SSH.KeyPath = k2
+	cfg.Environments["staging"] = e2
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate failed for multi-env: %v", err)
+	}
+}
+
+func TestConfig_Validate_NoEnvs(t *testing.T) {
+	cfg := Config{Project: "test"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for no environments")
 	}
 }
 
@@ -188,5 +283,79 @@ environments:
 	}
 	if prodEnv.HookTimeout != 600 {
 		t.Errorf("expected HookTimeout 600, got %d", prodEnv.HookTimeout)
+	}
+}
+
+func TestConfig_GetEnvironment(t *testing.T) {
+	cfg := Config{
+		Environments: map[string]Environment{
+			"prod": {RemotePath: "/var/www"},
+		},
+	}
+
+	env, err := cfg.GetEnvironment("prod")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if env.RemotePath != "/var/www" {
+		t.Errorf("expected /var/www, got %s", env.RemotePath)
+	}
+
+	_, err = cfg.GetEnvironment("non-existent")
+	if err == nil {
+		t.Error("expected error for non-existent environment")
+	}
+}
+
+func TestInterpolateEnvVars(t *testing.T) {
+	os.Setenv("TEST_VAR", "value")
+	defer os.Unsetenv("TEST_VAR")
+
+	input := "prefix-${TEST_VAR}-suffix"
+	expected := "prefix-value-suffix"
+	got := interpolateEnvVars(input)
+	if got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
+	}
+}
+
+func TestConfig_Validate_Defaults(t *testing.T) {
+	cfg := Config{
+		Project: "test",
+		Environments: map[string]Environment{
+			"prod": {
+				SSH: SSHConfig{
+					Host:    "host",
+					User:    "user",
+					KeyPath: "temp_key",
+				},
+				RemotePath: "/var/www",
+				Builds: BuildsConfig{
+					PHP: PHPBuildConfig{Enabled: true},
+				},
+			},
+		},
+	}
+
+	// Create temp key
+	keyPath := filepath.Join(t.TempDir(), "id_rsa")
+	os.WriteFile(keyPath, []byte("fake"), 0600)
+	env := cfg.Environments["prod"]
+	env.SSH.KeyPath = keyPath
+	cfg.Environments["prod"] = env
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+
+	updatedEnv := cfg.Environments["prod"]
+	if updatedEnv.SSH.Port != 22 {
+		t.Errorf("expected default port 22, got %d", updatedEnv.SSH.Port)
+	}
+	if updatedEnv.Builds.PHP.ComposerCommand == "" {
+		t.Error("expected default composer command to be set")
+	}
+	if len(updatedEnv.Ignored) == 0 {
+		t.Error("expected default ignored paths to be set")
 	}
 }

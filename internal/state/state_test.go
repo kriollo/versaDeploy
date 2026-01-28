@@ -48,3 +48,24 @@ func TestIsFirstDeploy(t *testing.T) {
 		t.Error("lock with hashes should NOT be first deploy")
 	}
 }
+
+func TestParse_Errors(t *testing.T) {
+	// Empty data
+	_, err := Parse([]byte(""))
+	if err == nil {
+		t.Error("expected error for empty data")
+	}
+
+	// Invalid JSON
+	_, err = Parse([]byte("{invalid"))
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+
+	// Wrong version
+	badVersion := `{"version": "0.1", "last_deploy": {}}`
+	_, err = Parse([]byte(badVersion))
+	if err == nil {
+		t.Error("expected error for unsupported version")
+	}
+}

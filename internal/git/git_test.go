@@ -89,3 +89,40 @@ func TestClone(t *testing.T) {
 		t.Error("cloned repo is missing file.txt")
 	}
 }
+
+func TestClone_WithRef(t *testing.T) {
+	repoDir := setupGitRepo(t)
+
+	// Create a branch
+	cmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature")
+	cmd.Run()
+	os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("feature"), 0644)
+	cmd = exec.Command("git", "-C", repoDir, "add", "feature.txt")
+	cmd.Run()
+	cmd = exec.Command("git", "-C", repoDir, "commit", "-m", "feature commit")
+	cmd.Run()
+
+	tmpDir, err := Clone(repoDir, "feature")
+	if err != nil {
+		t.Fatalf("Clone(feature) error = %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if _, err := os.Stat(filepath.Join(tmpDir, "feature.txt")); os.IsNotExist(err) {
+		t.Error("cloned repo with branch feature is missing feature.txt")
+	}
+}
+
+func TestClone_Fail(t *testing.T) {
+	_, err := Clone("/invalid/path", "")
+	if err == nil {
+		t.Error("expected error for invalid repo path")
+	}
+}
+
+func TestGetCurrentCommit_Fail(t *testing.T) {
+	_, err := GetCurrentCommit("/invalid/path")
+	if err == nil {
+		t.Error("expected error for invalid repo path")
+	}
+}

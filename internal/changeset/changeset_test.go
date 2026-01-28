@@ -123,4 +123,51 @@ func TestDetector_Detect(t *testing.T) {
 	if cs2.GoModChanged {
 		t.Error("expected go.mod NOT changed")
 	}
+
+	// Test case for Composer and routes
+	os.WriteFile(filepath.Join(repoDir, "composer.json"), []byte("{}"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "app/routes.php"), []byte("<?php"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "app/view.twig"), []byte("twig"), 0644)
+
+	detector = NewDetector(repoDir, ignored, routes, cs2.AllFileHashesAsLock()) // Use previous hashes
+	cs3, err := detector.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !cs3.ComposerChanged {
+		t.Error("expected composer.json changed")
+	}
+	if !cs3.RoutesChanged {
+		t.Error("expected routes changed")
+	}
+	if len(cs3.TwigFiles) != 1 || cs3.TwigFiles[0] != "app/view.twig" {
+		t.Error("expected twig file changed")
+	}
+}
+
+func (cs *ChangeSet) AllFileHashesAsLock() *state.DeployLock {
+	return &state.DeployLock{
+		LastDeploy: state.DeployInfo{
+			FileHashes:      cs.AllFileHashes,
+			GoModHash:       cs.GoModHash,
+			ComposerHash:    cs.ComposerHash,
+			PackageJSONHash: cs.PackageHash,
+		},
+	}
+}
+
+func TestHashFile_Fail(t *testing.T) {
+	_, err := hashFile("non-existent")
+	if err == nil {
+		t.Error("expected error for non-existent file")
+	}
+}
+
+func TestDetector_Detect_Fail(t *testing.T) {
+	d := NewDetector("/non/existent/path", nil, nil, nil)
+	_, err := d.Detect()
+	if err == nil {
+		t.Error("expected error for non-existent repo path")
+	}
 }

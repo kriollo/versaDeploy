@@ -99,10 +99,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("at least one environment must be defined")
 	}
 
-	for envName, env := range c.Environments {
+	for envName := range c.Environments {
+		env := c.Environments[envName]
 		if err := env.Validate(envName); err != nil {
 			return err
 		}
+		c.Environments[envName] = env
 	}
 
 	return nil
