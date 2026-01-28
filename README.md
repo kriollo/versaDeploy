@@ -1,376 +1,70 @@
 # versaDeploy
 
-A production-grade deployment engine written in Go that deploys PHP, Go, and Vue.js projects with **zero compilation in production**.
+A production-grade deployment engine written in Go that deploys PHP, Go, and Frontend projects with **zero compilation in production**.
 
-## Features
+versaDeploy is designed for developers who want **deterministic, atomic deployments** from their local machines (Windows/Linux) or CI/CD environments to Linux servers.
 
-✅ **Deterministic deployments** - SHA256 change detection, no heuristics  
-✅ **Selective builds** - Only rebuild what changed (PHP/Go/Frontend)  
-✅ **Atomic deployments** - Instant symlink switching, zero downtime  
-✅ **Instant rollback** - Revert to previous release in <1 second  
-✅ **No production compilation** - All builds happen locally/CI  
-✅ **SSH-based** - Secure key-based authentication
+## 🚀 Key Features
 
-## Installation
+- ✅ **Deterministic deployments** - SHA256 change detection ensures only changed files are uploaded.
+- ✅ **Selective builds** - Only rebuild what changed (PHP/Go/Frontend).
+- ✅ **Atomic deployments** - Instant symlink switching for zero downtime.
+- ✅ **Multi-Platform Support** - Run from Windows or Linux local dev environments.
+- ✅ **No remote compilation** - Keep your production server clean; all builds happen locally or in CI.
+- ✅ **Secure** - Built-in SSH/SFTP support with key-based authentication.
+
+## 📖 Documentation
+
+- 📖 **[QUICKSTART.md](QUICKSTART.md)** - Get up and running in 5 minutes.
+- ⚙️ **[DEPLOY.md](DEPLOY.md)** - Detailed reference for `deploy.yml` configuration (Every field explained).
+- 🔧 **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Solutions for common errors.
+- 📚 **[INDEX.md](INDEX.md)** - Documentation index.
+
+## 🛠️ Installation
 
 ```bash
+# Build from source
 go build -o versa ./cmd/versa/main.go
+
+# Add to your PATH (Linux example)
 sudo mv versa /usr/local/bin/
 ```
 
-Or download pre-built binaries from releases.
+## 🏗️ How It Works
 
-## Quick Start
+versaDeploy orchestrates the deployment from your **local machine** to the **remote server**:
 
-### 1. Initialize your project
+1. **Detection**: Calculates SHA256 hashes of your local files.
+2. **Comparison**: Compares local hashes with the `deploy.lock` from the remote server.
+3. **Build**:
+   - Executes `composer install` if PHP dependencies changed.
+   - Cross-compiles Go binaries for the target OS/Arch.
+   - Runs your frontend compiler (e.g., npm/vite) for modified assets.
+4. **Upload**: Packages changed files and uploads them via SFTP to a new release directory.
+5. **Switch**: Atomically updates the `current` symlink on the server.
+6. **Cleanup**: Keeps a retention history of your last 5 releases.
 
-Run the following command in your project root to create a template `deploy.yml`:
+## 💻 Environment Support
 
-```bash
-versa init
-```
+### Local (Developer Machine / CI)
 
-### 2. Configure `deploy.yml`
+- **Windows**: Full support via `cmd.exe` or PowerShell.
+- **Linux / macOS**: Full support via standard shell.
 
-Edit the generated `deploy.yml` with your server and build details.
+### Remote (Production / Staging Server)
 
-### 3. First Deployment
+- **Linux**: Primary target for deployments and post-deploy hooks.
 
-```bash
-versa deploy production --initial-deploy
-```
-
-### 4. Subsequent Deployments
-
-```bash
-versa deploy production
-```
-
-### 5. Rollback
+## 🧪 Testing
 
 ```bash
-versa rollback production
-```
-
-### 6. Check Status
-
-```bash
-versa status production
-```
-
-## How It Works
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Local Machine (Build Environment)                          │
-├─────────────────────────────────────────────────────────────┤
-│ 1. Clone repo to clean temp directory                       │
-│ 2. Fetch deploy.lock from remote server                     │
-│ 3. Calculate SHA256 hashes → ChangeSet                      │
-│ 4. Selective builds:                                        │
-│    • PHP: composer install + copy vendor/                   │
-│    • Go: GOOS=linux GOARCH=amd64 go build                   │
-│    • Frontend: ./compiler.sh {file}                         │
-│ 5. Generate release artifact with manifest.json             │
-│ 6. Upload artifact via SFTP                                 │
-│ 7. Atomic symlink switch on remote                          │
-│ 8. Execute post-deploy hooks                                │
-│ 9. Update deploy.lock on remote                             │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│ Remote Server (Production)                                  │
-├─────────────────────────────────────────────────────────────┤
-│ /var/www/app/                                               │
-│ ├── releases/                                               │
-│ │   ├── 20260127-120000/                                    │
-│ │   ├── 20260127-130000/                                    │
-│ │   └── 20260127-140000/  ← New release                     │
-│ ├── current → releases/20260127-140000/  ← Atomic switch    │
-│ └── deploy.lock                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Change Detection Rules
-
-### PHP
-
-- **composer.json changed** → Run `composer install`, copy vendor/
-- **.php files changed** → Copy to artifact
-- **.twig files changed** → Copy to artifact + mark Twig cache cleanup
-
-### Go
-
-- **go.mod or .go files changed** → Cross-compile binary for target OS/ARCH
-
-### Frontend
-
-- **package.json changed** → Run `npm ci`, copy node_modules/
-- **.js/.vue/.ts files changed** → Execute custom compiler per file
-
-## Configuration Reference
-
-### SSH Configuration
-
-```yaml
-ssh:
-  host: "example.com" # Required
-  user: "deploy" # Required
-  key_path: "~/.ssh/id_rsa" # Required (must be 0600 permissions)
-  port: 22 # Optional (default: 22)
-  known_hosts_file: "~/.ssh/known_hosts" # Optional (defaults to ~/.ssh/known_hosts)
-```
-
-### Build Configuration
-
-#### PHP
-
-```yaml
-builds:
-  php:
-    enabled: true
-    composer_command: "composer install --no-dev --optimize-autoloader"
-```
-
-#### Go
-
-```yaml
-builds:
-  go:
-    enabled: true
-    target_os: "linux" # Required: linux, darwin, windows
-    target_arch: "amd64" # Required: amd64, arm64, 386
-    binary_name: "app" # Required: output binary name
-    build_flags: "-tags prod" # Optional: additional go build flags
-```
-
-#### Frontend
-
-```yaml
-builds:
-  frontend:
-    enabled: true
-    compile_command: "./build.sh {file}" # {file} is replaced with relative path
-    npm_command: "npm ci --only=production"
-```
-
-### Post-Deploy Hooks
-
-Commands executed after successful deployment. **Automatic rollback on failure**.
-
-```yaml
-post_deploy:
-  - "php artisan cache:clear"
-  - "curl -f http://localhost/health"
-  - "systemctl reload php-fpm"
-```
-
-### Route Files
-
-Files that trigger route cache regeneration when changed:
-
-```yaml
-route_files:
-  - "app/routes.php"
-  - "config/routes.yml"
-```
-
-## CLI Commands
-
-### Init
-
-Initialize a new `deploy.yml` with a production-ready template.
-
-```bash
-versa init
-```
-
-### Deploy
-
-```bash
-versa deploy <environment> [flags]
-
-Flags:
-  --dry-run          Show changes without deploying
-  --initial-deploy   Required for first deployment
-  --config PATH      Config file path (default: deploy.yml)
-  --verbose          Verbose output
-  --debug            Debug mode
-  --log-file PATH    Write logs to file
-```
-
-### Rollback
-
-```bash
-versa rollback <environment> [flags]
-```
-
-### Status
-
-```bash
-versa status <environment> [flags]
-```
-
-## Security
-
-- ✅ SSH key-based authentication only (no passwords)
-- ✅ SSH key must have 0600 permissions
-- ✅ No interactive prompts (BatchMode=yes)
-- ✅ No secrets committed to source code
-
-## Release Management
-
-- **Naming**: Timestamp format `YYYYMMDD-HHMMSS` (e.g., `20260127-120000`)
-- **Retention**: Keeps last 5 releases automatically
-- **Atomic switching**: Two-step symlink creation prevents race conditions
-
-## Error Handling
-
-versaDeploy fails fast with clear error messages:
-
-```bash
-# No deploy.lock on first deploy
-❌ deploy.lock not found - use --initial-deploy flag
-
-# Uncommitted changes
-❌ Working directory has uncommitted changes - commit or stash first
-
-# SSH key permissions
-❌ SSH key has insecure permissions 0644 (should be 0600)
-
-# Build failure
-❌ composer install failed: [output]
-
-# Post-deploy hook failure
-❌ Post-deploy hook failed (rolled back): healthcheck returned 1
-```
-
-## Troubleshooting
-
-### Build fails locally
-
-```bash
-# Test build commands manually
-composer install --no-dev
-GOOS=linux GOARCH=amd64 go build -o bin/app
-./compiler.sh src/app.js
-```
-
-### Upload fails
-
-```bash
-# Test SSH connection
-ssh -i ~/.ssh/deploy_key deploy@prod.example.com
-
-# Check permissions
-ls -la ~/.ssh/deploy_key  # Should be -rw------- (0600)
-```
-
-### Post-deploy hook fails
-
-```bash
-# Test hooks manually on server
-ssh deploy@prod.example.com "cd /var/www/app/current && php artisan cache:clear"
-```
-
-## Advanced Usage
-
-### Multiple Environments
-
-```yaml
-environments:
-  staging:
-    ssh:
-      host: "staging.example.com"
-      user: "deploy"
-      key_path: "~/.ssh/staging_key"
-    remote_path: "/var/www/staging"
-    # ... config ...
-
-  production:
-    ssh:
-      host: "prod.example.com"
-      user: "deploy"
-      key_path: "~/.ssh/prod_key"
-    remote_path: "/var/www/production"
-    # ... config ...
-```
-
-```bash
-versa deploy staging
-versa deploy production
-```
-
-### Environment Variables in Config
-
-```yaml
-ssh:
-  host: "${DEPLOY_HOST}"
-  user: "${DEPLOY_USER}"
-  key_path: "${SSH_KEY_PATH}"
-```
-
-### Custom Compiler Example
-
-```bash
-#!/bin/bash
-# compiler.sh
-FILE=$1
-OUTPUT="public/$(basename $FILE .vue).js"
-
-# Custom Vue compiler
-vue-compiler "$FILE" > "$OUTPUT"
-
-# Rewrite imports
-sed -i 's|from "vue"|from "./node_modules/vue/dist/vue.esm.js"|g' "$OUTPUT"
-```
-
-## Non-Goals
-
-versaDeploy is **NOT**:
-
-- ❌ A CI/CD pipeline (invoke it FROM CI)
-- ❌ A bundler/tree-shaker (use your custom tools)
-- ❌ A container orchestrator
-- ❌ A blue-green deployment system
-
-## Testing
-
-versaDeploy includes comprehensive unit tests for core components:
-
-```bash
-# Run all tests
-go test ./...
-
-# Run tests with coverage
+# Run all unit tests
 go test ./... -cover
-
-# Run tests verbosely
-go test ./... -v
-
-# Run specific package tests
-go test ./internal/changeset/...
-go test ./internal/config/...
-go test ./internal/state/...
 ```
 
-### Test Coverage
+## ⚖️ License
 
-- ✅ **ChangeSet Detection** - SHA256 hashing, file categorization, ignore patterns
-- ✅ **Config Validation** - YAML parsing, SSH key validation, environment variables
-- ✅ **State Management** - deploy.lock parsing, serialization, version checking
-
-## License
-
-MIT
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `go test ./...`
-5. Submit a pull request
+MIT - See [LICENSE](LICENSE) for details.
 
 ---
 

@@ -31,7 +31,7 @@ func TestHashFile(t *testing.T) {
 
 func TestDetector_ShouldIgnore(t *testing.T) {
 	ignored := []string{".git", "vendor", "node_modules/cache"}
-	d := NewDetector("", ignored, nil, nil)
+	d := NewDetector("", ignored, nil, "", "", "", nil)
 
 	tests := []struct {
 		path   string
@@ -75,7 +75,7 @@ func TestDetector_Detect(t *testing.T) {
 	routes := []string{"app/routes.php"}
 
 	// Test first deployment (no previous lock)
-	detector := NewDetector(repoDir, ignored, routes, nil)
+	detector := NewDetector(repoDir, ignored, routes, "", "", "", nil)
 	cs, err := detector.Detect()
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestDetector_Detect(t *testing.T) {
 		},
 	}
 
-	detector = NewDetector(repoDir, ignored, routes, previousLock)
+	detector = NewDetector(repoDir, ignored, routes, "", "", "", previousLock)
 	cs2, err := detector.Detect()
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestDetector_Detect(t *testing.T) {
 	os.WriteFile(filepath.Join(repoDir, "app/routes.php"), []byte("<?php"), 0644)
 	os.WriteFile(filepath.Join(repoDir, "app/view.twig"), []byte("twig"), 0644)
 
-	detector = NewDetector(repoDir, ignored, routes, cs2.AllFileHashesAsLock()) // Use previous hashes
+	detector = NewDetector(repoDir, ignored, routes, "", "", "", cs2.AllFileHashesAsLock()) // Use previous hashes
 	cs3, err := detector.Detect()
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestHashFile_Fail(t *testing.T) {
 }
 
 func TestDetector_Detect_Fail(t *testing.T) {
-	d := NewDetector("/non/existent/path", nil, nil, nil)
+	d := NewDetector("/non/existent/path", nil, nil, "", "", "", nil)
 	_, err := d.Detect()
 	if err == nil {
 		t.Error("expected error for non-existent repo path")

@@ -3,6 +3,7 @@ package builder
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/user/versaDeploy/internal/changeset"
@@ -191,5 +192,78 @@ func TestBuilder_Build_Fail(t *testing.T) {
 	_, err := b.Build()
 	if err == nil {
 		t.Error("expected error when artifact structure cannot be created")
+	}
+}
+func TestBuilder_Build_Subdirectories(t *testing.T) {
+	repoDir := t.TempDir()
+	artifactDir := t.TempDir()
+
+	// Create structure: api/composer.json
+	os.MkdirAll(filepath.Join(repoDir, "api"), 0755)
+	os.WriteFile(filepath.Join(repoDir, "api/composer.json"), []byte("{}"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "api/index.php"), []byte("<?php"), 0644)
+
+	var mockCmd string
+	if runtime.GOOS == "windows" {
+		// Commands are run in ProjectRoot, so we use relative paths
+		mockCmd = "mkdir vendor && echo . > vendor\\autoload.php"
+	} else {
+		mockCmd = "mkdir -p vendor && touch vendor/autoload.php"
+	}
+
+	cfg := &config.Environment{
+		Builds: config.BuildsConfig{
+			PHP: config.PHPBuildConfig{
+				Enabled:     true,
+				ProjectRoot: "api",
+				// Mock command that creates vendor
+				ComposerCommand: mockCmd,
+			},
+		},
+	}
+
+	cs := &changeset.ChangeSet{
+		ComposerChanged: true,
+		PHPFiles:        []string{"api/index.php"},
+	}
+
+	b := NewBuilder(repoDir, artifactDir, cfg, cs)
+	_, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	// Verify vendor copied from subdirectory
+	if _, err := os.Stat(filepath.Join(artifactDir, "vendor/autoload.php")); os.IsNotExist(err) {
+		t.Error("vendor/autoload.php not copied from subdirectory")
+	}
+
+	// Verify PHP file copied
+	if _, err := os.Stat(filepath.Join(artifactDir, "app/api/index.php")); os.IsNotExist(err) {
+		t.Error("api/index.php not copied to artifact")
+	}
+}
+
+func TestBuilder_CopyOtherFiles(t *testing.T) {
+	repoDir := t.TempDir()
+	artifactDir := t.TempDir()
+
+	os.MkdirAll(filepath.Join(repoDir, "public/images"), 0755)
+	os.WriteFile(filepath.Join(repoDir, "public/images/logo.png"), []byte("png"), 0644)
+
+	cs := &changeset.ChangeSet{
+		OtherFiles: []string{"public/images/logo.png"},
+	}
+
+	b := NewBuilder(repoDir, artifactDir, &config.Environment{}, cs)
+	b.createArtifactStructure()
+
+	err := b.copyOtherFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(artifactDir, "app/public/images/logo.png")); os.IsNotExist(err) {
+		t.Error("logo.png not copied to artifact")
 	}
 }

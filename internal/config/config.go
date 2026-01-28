@@ -48,21 +48,24 @@ type BuildsConfig struct {
 // PHPBuildConfig holds PHP build settings
 type PHPBuildConfig struct {
 	Enabled         bool   `yaml:"enabled"`
+	ProjectRoot     string `yaml:"root"` // Subdirectory for composer.json
 	ComposerCommand string `yaml:"composer_command"`
 }
 
 // GoBuildConfig holds Go build settings
 type GoBuildConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	TargetOS   string `yaml:"target_os"`
-	TargetArch string `yaml:"target_arch"`
-	BinaryName string `yaml:"binary_name"`
-	BuildFlags string `yaml:"build_flags"` // Optional additional flags
+	Enabled     bool   `yaml:"enabled"`
+	ProjectRoot string `yaml:"root"` // Subdirectory for go.mod
+	TargetOS    string `yaml:"target_os"`
+	TargetArch  string `yaml:"target_arch"`
+	BinaryName  string `yaml:"binary_name"`
+	BuildFlags  string `yaml:"build_flags"` // Optional additional flags
 }
 
 // FrontendBuildConfig holds frontend build settings
 type FrontendBuildConfig struct {
 	Enabled        bool   `yaml:"enabled"`
+	ProjectRoot    string `yaml:"root"`            // Subdirectory for package.json
 	CompileCommand string `yaml:"compile_command"` // {file} placeholder
 	NPMCommand     string `yaml:"npm_command"`
 }

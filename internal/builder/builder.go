@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/user/versaDeploy/internal/changeset"
@@ -71,6 +72,11 @@ func (b *Builder) Build() (*BuildResult, error) {
 		}
 	}
 
+	// Copy other changed files
+	if err := b.copyOtherFiles(); err != nil {
+		return nil, fmt.Errorf("failed to copy other files: %w", err)
+	}
+
 	return b.result, nil
 }
 
@@ -98,18 +104,18 @@ func (b *Builder) buildPHP() error {
 	// Run composer if composer.json changed
 	if b.changeset.ComposerChanged {
 		fmt.Println("→ Running composer install...")
-		cmd := exec.Command("bash", "-c", b.config.Builds.PHP.ComposerCommand)
-		cmd.Dir = b.repoPath
-		output, err := cmd.CombinedOutput()
+		output, err := b.executeCommand(b.config.Builds.PHP.ComposerCommand, filepath.Join(b.repoPath, b.config.Builds.PHP.ProjectRoot))
 		if err != nil {
 			return verserrors.New(verserrors.CodeBuildFailed, "Composer command failed", "Check your composer.json and ensure all dependencies are available locally.", fmt.Errorf("%w: %s", err, string(output)))
 		}
 
 		// Copy vendor directory
-		vendorSrc := filepath.Join(b.repoPath, "vendor")
+		vendorSrc := filepath.Join(b.repoPath, b.config.Builds.PHP.ProjectRoot, "vendor")
 		vendorDst := filepath.Join(b.artifactDir, "vendor")
-		if err := copyDir(vendorSrc, vendorDst); err != nil {
-			return fmt.Errorf("failed to copy vendor directory: %w", err)
+		if _, err := os.Stat(vendorSrc); err == nil {
+			if err := copyDir(vendorSrc, vendorDst); err != nil {
+				return fmt.Errorf("failed to copy vendor directory: %w", err)
+			}
 		}
 
 		b.result.ComposerUpdated = true
@@ -172,9 +178,7 @@ func (b *Builder) buildGo() error {
 		buildCmd = fmt.Sprintf("GOOS=%s GOARCH=%s go build %s -o %s", goCfg.TargetOS, goCfg.TargetArch, goCfg.BuildFlags, binaryPath)
 	}
 
-	cmd := exec.Command("bash", "-c", buildCmd)
-	cmd.Dir = b.repoPath
-	output, err := cmd.CombinedOutput()
+	output, err := b.executeCommand(buildCmd, filepath.Join(b.repoPath, b.config.Builds.Go.ProjectRoot))
 	if err != nil {
 		return verserrors.New(verserrors.CodeBuildFailed, "Go build failed", "Check your Go code for compilation errors and ensure all dependencies are resolved.", fmt.Errorf("%w: %s", err, string(output)))
 	}
@@ -193,18 +197,18 @@ func (b *Builder) buildFrontend() error {
 	// Run npm if package.json changed
 	if b.changeset.PackageChanged {
 		fmt.Println("→ Running npm ci...")
-		cmd := exec.Command("bash", "-c", b.config.Builds.Frontend.NPMCommand)
-		cmd.Dir = b.repoPath
-		output, err := cmd.CombinedOutput()
+		output, err := b.executeCommand(b.config.Builds.Frontend.NPMCommand, filepath.Join(b.repoPath, b.config.Builds.Frontend.ProjectRoot))
 		if err != nil {
 			return verserrors.New(verserrors.CodeBuildFailed, "NPM command failed", "Check your package.json and ensure npm/node is installed correctly.", fmt.Errorf("%w: %s", err, string(output)))
 		}
 
 		// Copy node_modules directory
-		nodeModulesSrc := filepath.Join(b.repoPath, "node_modules")
+		nodeModulesSrc := filepath.Join(b.repoPath, b.config.Builds.Frontend.ProjectRoot, "node_modules")
 		nodeModulesDst := filepath.Join(b.artifactDir, "node_modules")
-		if err := copyDir(nodeModulesSrc, nodeModulesDst); err != nil {
-			return fmt.Errorf("failed to copy node_modules: %w", err)
+		if _, err := os.Stat(nodeModulesSrc); err == nil {
+			if err := copyDir(nodeModulesSrc, nodeModulesDst); err != nil {
+				return fmt.Errorf("failed to copy node_modules: %w", err)
+			}
 		}
 
 		b.result.NPMUpdated = true
@@ -214,9 +218,7 @@ func (b *Builder) buildFrontend() error {
 	if !strings.Contains(b.config.Builds.Frontend.CompileCommand, "{file}") {
 		if len(b.changeset.FrontendFiles) > 0 {
 			fmt.Println("→ Compiling frontend (global)...")
-			cmd := exec.Command("bash", "-c", b.config.Builds.Frontend.CompileCommand)
-			cmd.Dir = b.repoPath
-			output, err := cmd.CombinedOutput()
+			output, err := b.executeCommand(b.config.Builds.Frontend.CompileCommand, filepath.Join(b.repoPath, b.config.Builds.Frontend.ProjectRoot))
 			if err != nil {
 				return verserrors.New(verserrors.CodeBuildFailed, "Frontend compile failed", "Check your build command.", fmt.Errorf("%w: %s", err, string(output)))
 			}
@@ -232,9 +234,7 @@ func (b *Builder) buildFrontend() error {
 		// Replace {file} placeholder in compile command
 		compileCmd := strings.Replace(b.config.Builds.Frontend.CompileCommand, "{file}", file, -1)
 
-		cmd := exec.Command("bash", "-c", compileCmd)
-		cmd.Dir = b.repoPath
-		output, err := cmd.CombinedOutput()
+		output, err := b.executeCommand(compileCmd, filepath.Join(b.repoPath, b.config.Builds.Frontend.ProjectRoot))
 		if err != nil {
 			return verserrors.New(verserrors.CodeBuildFailed, fmt.Sprintf("Compile failed for %s", file), "Check your custom compiler command and ensure it's correct for this file type.", fmt.Errorf("%w: %s", err, string(output)))
 		}
@@ -260,6 +260,42 @@ func (b *Builder) buildFrontend() error {
 	}
 
 	return nil
+}
+
+// copyOtherFiles copies files that don't fall into specific categories
+func (b *Builder) copyOtherFiles() error {
+	for _, file := range b.changeset.OtherFiles {
+		src := filepath.Join(b.repoPath, file)
+		dst := filepath.Join(b.artifactDir, "app", file)
+
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return err
+		}
+
+		if err := copyFile(src, dst); err != nil {
+			return fmt.Errorf("failed to copy other file %s: %w", file, err)
+		}
+	}
+	return nil
+}
+
+// executeCommand runs a command in a shell based on the current OS
+func (b *Builder) executeCommand(command, dir string) ([]byte, error) {
+	var shell, flag string
+	if runtime.GOOS == "windows" {
+		shell = os.Getenv("COMSPEC")
+		if shell == "" {
+			shell = "cmd.exe"
+		}
+		flag = "/c"
+	} else {
+		shell = "sh"
+		flag = "-c"
+	}
+
+	cmd := exec.Command(shell, flag, command)
+	cmd.Dir = dir
+	return cmd.CombinedOutput()
 }
 
 // copyFile copies a single file

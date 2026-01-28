@@ -21,6 +21,7 @@ type ChangeSet struct {
 	PackageChanged  bool
 	GoModChanged    bool
 	RoutesChanged   bool
+	OtherFiles      []string          // Files not categorized as PHP, Go, or Frontend
 	AllFileHashes   map[string]string // All current file hashes
 	ComposerHash    string
 	PackageHash     string
@@ -32,15 +33,21 @@ type Detector struct {
 	repoPath     string
 	ignoredPaths []string
 	routeFiles   []string
+	phpRoot      string
+	goRoot       string
+	frontendRoot string
 	previousLock *state.DeployLock
 }
 
 // NewDetector creates a new change detector
-func NewDetector(repoPath string, ignoredPaths, routeFiles []string, previousLock *state.DeployLock) *Detector {
+func NewDetector(repoPath string, ignoredPaths, routeFiles []string, phpRoot, goRoot, frontendRoot string, previousLock *state.DeployLock) *Detector {
 	return &Detector{
 		repoPath:     repoPath,
 		ignoredPaths: ignoredPaths,
 		routeFiles:   routeFiles,
+		phpRoot:      phpRoot,
+		goRoot:       goRoot,
+		frontendRoot: frontendRoot,
 		previousLock: previousLock,
 	}
 }
@@ -52,6 +59,7 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 		TwigFiles:     []string{},
 		GoFiles:       []string{},
 		FrontendFiles: []string{},
+		OtherFiles:    []string{},
 		AllFileHashes: make(map[string]string),
 	}
 
@@ -107,6 +115,8 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 				cs.GoFiles = append(cs.GoFiles, relPath)
 			case ".js", ".vue", ".ts", ".jsx", ".tsx", ".css", ".scss", ".less":
 				cs.FrontendFiles = append(cs.FrontendFiles, relPath)
+			default:
+				cs.OtherFiles = append(cs.OtherFiles, relPath)
 			}
 
 			// Check if route file changed
@@ -126,21 +136,33 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 	}
 
 	// Check dependency files
-	cs.ComposerHash = cs.AllFileHashes["composer.json"]
+	composerPath := filepath.ToSlash(filepath.Join(d.phpRoot, "composer.json"))
+	if strings.HasPrefix(composerPath, "./") {
+		composerPath = composerPath[2:]
+	}
+	cs.ComposerHash = cs.AllFileHashes[composerPath]
 	if d.previousLock != nil {
 		cs.ComposerChanged = cs.ComposerHash != "" && cs.ComposerHash != d.previousLock.LastDeploy.ComposerHash
 	} else {
 		cs.ComposerChanged = cs.ComposerHash != ""
 	}
 
-	cs.PackageHash = cs.AllFileHashes["package.json"]
+	packagePath := filepath.ToSlash(filepath.Join(d.frontendRoot, "package.json"))
+	if strings.HasPrefix(packagePath, "./") {
+		packagePath = packagePath[2:]
+	}
+	cs.PackageHash = cs.AllFileHashes[packagePath]
 	if d.previousLock != nil {
 		cs.PackageChanged = cs.PackageHash != "" && cs.PackageHash != d.previousLock.LastDeploy.PackageJSONHash
 	} else {
 		cs.PackageChanged = cs.PackageHash != ""
 	}
 
-	cs.GoModHash = cs.AllFileHashes["go.mod"]
+	goModPath := filepath.ToSlash(filepath.Join(d.goRoot, "go.mod"))
+	if strings.HasPrefix(goModPath, "./") {
+		goModPath = goModPath[2:]
+	}
+	cs.GoModHash = cs.AllFileHashes[goModPath]
 	if d.previousLock != nil {
 		cs.GoModChanged = cs.GoModHash != "" && cs.GoModHash != d.previousLock.LastDeploy.GoModHash
 	} else {
@@ -198,6 +220,7 @@ func (cs *ChangeSet) HasChanges() bool {
 		len(cs.TwigFiles) > 0 ||
 		len(cs.GoFiles) > 0 ||
 		len(cs.FrontendFiles) > 0 ||
+		len(cs.OtherFiles) > 0 ||
 		cs.ComposerChanged ||
 		cs.PackageChanged ||
 		cs.GoModChanged
