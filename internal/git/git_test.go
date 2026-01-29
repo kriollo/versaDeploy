@@ -10,21 +10,22 @@ import (
 func setupGitRepo(t *testing.T) string {
 	repoDir := t.TempDir()
 
+	gitPath := resolveGitPath()
 	runCmd := func(name string, args ...string) {
-		cmd := exec.Command(name, args...)
+		cmd := exec.Command(gitPath, args...)
 		cmd.Dir = repoDir
 		if err := cmd.Run(); err != nil {
 			t.Fatalf("failed to run %s %v: %v", name, args, err)
 		}
 	}
 
-	runCmd("git", "init")
-	runCmd("git", "config", "user.email", "test@example.com")
-	runCmd("git", "config", "user.name", "Test User")
+	runCmd(gitPath, "init")
+	runCmd(gitPath, "config", "user.email", "test@example.com")
+	runCmd(gitPath, "config", "user.name", "Test User")
 
 	os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("hello"), 0644)
-	runCmd("git", "add", "file.txt")
-	runCmd("git", "commit", "-m", "initial commit")
+	runCmd(gitPath, "add", "file.txt")
+	runCmd(gitPath, "commit", "-m", "initial commit")
 
 	return repoDir
 }
@@ -92,14 +93,15 @@ func TestClone(t *testing.T) {
 
 func TestClone_WithRef(t *testing.T) {
 	repoDir := setupGitRepo(t)
+	gitPath := resolveGitPath()
 
 	// Create a branch
-	cmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature")
+	cmd := exec.Command(gitPath, "-C", repoDir, "checkout", "-b", "feature")
 	cmd.Run()
 	os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("feature"), 0644)
-	cmd = exec.Command("git", "-C", repoDir, "add", "feature.txt")
+	cmd = exec.Command(gitPath, "-C", repoDir, "add", "feature.txt")
 	cmd.Run()
-	cmd = exec.Command("git", "-C", repoDir, "commit", "-m", "feature commit")
+	cmd = exec.Command(gitPath, "-C", repoDir, "commit", "-m", "feature commit")
 	cmd.Run()
 
 	tmpDir, err := Clone(repoDir, "feature")

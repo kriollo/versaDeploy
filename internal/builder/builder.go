@@ -2,6 +2,7 @@ package builder
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,54 +47,107 @@ func NewBuilder(repoPath, artifactDir string, cfg *config.Environment, cs *chang
 
 // Build executes all necessary builds based on the changeset
 func (b *Builder) Build() (*BuildResult, error) {
-	// Create artifact directory structure
-	if err := b.createArtifactStructure(); err != nil {
-		return nil, err
+	// Step 1: Copy entire repository to app/ directory (including ignored paths for build)
+	fmt.Println("→ Copying project files to artifact...")
+	if err := b.copyEntireRepo(); err != nil {
+		return nil, fmt.Errorf("failed to copy repository: %w", err)
 	}
 
-	// Build PHP
+	// Step 2: Build PHP (runs composer, updates vendor in place)
 	if b.config.Builds.PHP.Enabled {
 		if err := b.buildPHP(); err != nil {
 			return nil, fmt.Errorf("php build failed: %w", err)
 		}
 	}
 
-	// Build Go
+	// Step 3: Build Go (creates binary)
 	if b.config.Builds.Go.Enabled {
 		if err := b.buildGo(); err != nil {
 			return nil, fmt.Errorf("go build failed: %w", err)
 		}
 	}
 
-	// Build Frontend
+	// Step 4: Build Frontend (runs npm, compiles, updates node_modules)
 	if b.config.Builds.Frontend.Enabled {
 		if err := b.buildFrontend(); err != nil {
 			return nil, fmt.Errorf("frontend build failed: %w", err)
 		}
 	}
 
-	// Copy other changed files
-	if err := b.copyOtherFiles(); err != nil {
-		return nil, fmt.Errorf("failed to copy other files: %w", err)
+	// Step 5: Cleanup ignored paths after builds complete
+	fmt.Println("→ Cleaning up build-time dependencies...")
+	if err := b.cleanupIgnoredPaths(); err != nil {
+		return nil, fmt.Errorf("failed to cleanup ignored paths: %w", err)
 	}
 
 	return b.result, nil
 }
 
-// createArtifactStructure creates the artifact directory layout
-func (b *Builder) createArtifactStructure() error {
-	dirs := []string{
-		filepath.Join(b.artifactDir, "app"),
-		filepath.Join(b.artifactDir, "vendor"),
-		filepath.Join(b.artifactDir, "node_modules"),
-		filepath.Join(b.artifactDir, "public"),
-		filepath.Join(b.artifactDir, "bin"),
+// copyEntireRepo copies the entire repository to app/ directory (including ignored paths for build)
+func (b *Builder) copyEntireRepo() error {
+	appDir := filepath.Join(b.artifactDir, "app")
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		return fmt.Errorf("failed to create app directory: %w", err)
 	}
 
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	// Walk through the repository and copy EVERYTHING (we'll cleanup ignored paths after build)
+	return filepath.Walk(b.repoPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
+
+		// Get relative path from repo root
+		relPath, err := filepath.Rel(b.repoPath, path)
+		if err != nil {
+			return err
+		}
+
+		// Skip root directory itself
+		if relPath == "." {
+			return nil
+		}
+
+		// Skip .git directory (always ignore)
+		if strings.HasPrefix(relPath, ".git") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Destination path in artifact
+		dstPath := filepath.Join(appDir, relPath)
+
+		if info.IsDir() {
+			return os.MkdirAll(dstPath, info.Mode())
+		}
+
+		return copyFile(path, dstPath)
+	})
+}
+
+// cleanupIgnoredPaths removes ignored paths from artifact after builds complete
+func (b *Builder) cleanupIgnoredPaths() error {
+	appDir := filepath.Join(b.artifactDir, "app")
+
+	for _, ignored := range b.config.Ignored {
+		// Skip .git as it's already not copied
+		if ignored == ".git" {
+			continue
+		}
+
+		ignoredPath := filepath.Join(appDir, ignored)
+
+		// Check if path exists
+		if _, err := os.Stat(ignoredPath); os.IsNotExist(err) {
+			continue // Path doesn't exist, skip
+		}
+
+		// Remove the path
+		if err := os.RemoveAll(ignoredPath); err != nil {
+			return fmt.Errorf("failed to remove ignored path %s: %w", ignored, err)
+		}
+		fmt.Printf("   Removed: %s\n", ignored)
 	}
 
 	return nil
@@ -104,59 +158,25 @@ func (b *Builder) buildPHP() error {
 	// Run composer if composer.json changed
 	if b.changeset.ComposerChanged {
 		fmt.Println("→ Running composer install...")
-		output, err := b.executeCommand(b.config.Builds.PHP.ComposerCommand, filepath.Join(b.repoPath, b.config.Builds.PHP.ProjectRoot))
+
+		// Run composer in the artifact's app directory
+		composerDir := filepath.Join(b.artifactDir, "app", b.config.Builds.PHP.ProjectRoot)
+		fmt.Printf("   Working directory: app/%s\n", b.config.Builds.PHP.ProjectRoot)
+
+		output, err := b.executeCommand(b.config.Builds.PHP.ComposerCommand, composerDir)
 		if err != nil {
+			fmt.Printf("   Composer output:\n%s\n", string(output))
 			return verserrors.New(verserrors.CodeBuildFailed, "Composer command failed", "Check your composer.json and ensure all dependencies are available locally.", fmt.Errorf("%w: %s", err, string(output)))
 		}
-
-		// Copy vendor directory
-		vendorSrc := filepath.Join(b.repoPath, b.config.Builds.PHP.ProjectRoot, "vendor")
-		vendorDst := filepath.Join(b.artifactDir, "vendor")
-		if _, err := os.Stat(vendorSrc); err == nil {
-			if err := copyDir(vendorSrc, vendorDst); err != nil {
-				return fmt.Errorf("failed to copy vendor directory: %w", err)
-			}
-		}
+		fmt.Println("   ✓ Composer install completed")
 
 		b.result.ComposerUpdated = true
 	}
 
-	// Copy changed PHP files
-	for _, file := range b.changeset.PHPFiles {
-		src := filepath.Join(b.repoPath, file)
-		dst := filepath.Join(b.artifactDir, "app", file)
-
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			return err
-		}
-
-		if err := copyFile(src, dst); err != nil {
-			return fmt.Errorf("failed to copy %s: %w", file, err)
-		}
-
-		b.result.PHPFilesChanged++
-	}
-
-	// Copy changed Twig files
-	for _, file := range b.changeset.TwigFiles {
-		src := filepath.Join(b.repoPath, file)
-		dst := filepath.Join(b.artifactDir, "app", file)
-
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			return err
-		}
-
-		if err := copyFile(src, dst); err != nil {
-			return fmt.Errorf("failed to copy %s: %w", file, err)
-		}
-
-		b.result.TwigCacheCleanup = true
-	}
-
-	// Mark route cache regeneration if needed
-	if b.changeset.RoutesChanged {
-		b.result.RouteCacheRegenerate = true
-	}
+	// Count PHP files (already copied by copyEntireRepo)
+	b.result.PHPFilesChanged = len(b.changeset.PHPFiles)
+	b.result.TwigCacheCleanup = len(b.changeset.TwigFiles) > 0
+	b.result.RouteCacheRegenerate = b.changeset.RoutesChanged
 
 	return nil
 }
@@ -196,20 +216,18 @@ func (b *Builder) buildGo() error {
 func (b *Builder) buildFrontend() error {
 	// Run npm if package.json changed
 	if b.changeset.PackageChanged {
-		fmt.Println("→ Running npm ci...")
-		output, err := b.executeCommand(b.config.Builds.Frontend.NPMCommand, filepath.Join(b.repoPath, b.config.Builds.Frontend.ProjectRoot))
+		fmt.Println("→ Running npm install...")
+
+		// Run npm in the artifact's app directory
+		npmDir := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot)
+		fmt.Printf("   Working directory: app/%s\n", b.config.Builds.Frontend.ProjectRoot)
+
+		output, err := b.executeCommand(b.config.Builds.Frontend.NPMCommand, npmDir)
 		if err != nil {
+			fmt.Printf("   NPM output:\n%s\n", string(output))
 			return verserrors.New(verserrors.CodeBuildFailed, "NPM command failed", "Check your package.json and ensure npm/node is installed correctly.", fmt.Errorf("%w: %s", err, string(output)))
 		}
-
-		// Copy node_modules directory
-		nodeModulesSrc := filepath.Join(b.repoPath, b.config.Builds.Frontend.ProjectRoot, "node_modules")
-		nodeModulesDst := filepath.Join(b.artifactDir, "node_modules")
-		if _, err := os.Stat(nodeModulesSrc); err == nil {
-			if err := copyDir(nodeModulesSrc, nodeModulesDst); err != nil {
-				return fmt.Errorf("failed to copy node_modules: %w", err)
-			}
-		}
+		fmt.Println("   ✓ NPM install completed")
 
 		b.result.NPMUpdated = true
 	}
@@ -218,12 +236,27 @@ func (b *Builder) buildFrontend() error {
 	if !strings.Contains(b.config.Builds.Frontend.CompileCommand, "{file}") {
 		if len(b.changeset.FrontendFiles) > 0 {
 			fmt.Println("→ Compiling frontend (global)...")
-			output, err := b.executeCommand(b.config.Builds.Frontend.CompileCommand, filepath.Join(b.repoPath, b.config.Builds.Frontend.ProjectRoot))
+
+			// Run compile in the artifact's app directory
+			compileDir := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot)
+			fmt.Printf("   Working directory: app/%s\n", b.config.Builds.Frontend.ProjectRoot)
+			fmt.Printf("   Command: %s\n", b.config.Builds.Frontend.CompileCommand)
+
+			output, err := b.executeCommand(b.config.Builds.Frontend.CompileCommand, compileDir)
 			if err != nil {
+				fmt.Printf("   Compilation output:\n%s\n", string(output))
 				return verserrors.New(verserrors.CodeBuildFailed, "Frontend compile failed", "Check your build command.", fmt.Errorf("%w: %s", err, string(output)))
 			}
+			fmt.Printf("   Compilation output:\n%s\n", string(output))
+			fmt.Println("   ✓ Frontend compilation completed")
 			b.result.FrontendCompiled = len(b.changeset.FrontendFiles)
 		}
+
+		// Cleanup dev dependencies if enabled
+		if err := b.cleanupDevDependencies(); err != nil {
+			return err
+		}
+
 		return nil
 	}
 
@@ -233,49 +266,59 @@ func (b *Builder) buildFrontend() error {
 
 		// Replace {file} placeholder in compile command
 		compileCmd := strings.Replace(b.config.Builds.Frontend.CompileCommand, "{file}", file, -1)
+		compileDir := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot)
+		fmt.Printf("   Command: %s\n", compileCmd)
 
-		output, err := b.executeCommand(compileCmd, filepath.Join(b.repoPath, b.config.Builds.Frontend.ProjectRoot))
+		output, err := b.executeCommand(compileCmd, compileDir)
 		if err != nil {
+			fmt.Printf("   Compilation output:\n%s\n", string(output))
 			return verserrors.New(verserrors.CodeBuildFailed, fmt.Sprintf("Compile failed for %s", file), "Check your custom compiler command and ensure it's correct for this file type.", fmt.Errorf("%w: %s", err, string(output)))
 		}
-
-		// Copy compiled output to artifact (assuming it's in public/)
-		// This is a simplification - actual output path may vary
-		src := filepath.Join(b.repoPath, "public", filepath.Base(file))
-		dst := filepath.Join(b.artifactDir, "public", filepath.Base(file))
-
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			return err
-		}
-
-		if err := copyFile(src, dst); err != nil {
-			// If file doesn't exist in public/, try the original location
-			src = filepath.Join(b.repoPath, file)
-			if err := copyFile(src, dst); err != nil {
-				return fmt.Errorf("failed to copy compiled %s: %w", file, err)
-			}
-		}
+		fmt.Printf("   ✓ Compiled successfully\n")
 
 		b.result.FrontendCompiled++
+	}
+
+	// Cleanup dev dependencies if enabled
+	if err := b.cleanupDevDependencies(); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-// copyOtherFiles copies files that don't fall into specific categories
-func (b *Builder) copyOtherFiles() error {
-	for _, file := range b.changeset.OtherFiles {
-		src := filepath.Join(b.repoPath, file)
-		dst := filepath.Join(b.artifactDir, "app", file)
-
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			return err
-		}
-
-		if err := copyFile(src, dst); err != nil {
-			return fmt.Errorf("failed to copy other file %s: %w", file, err)
-		}
+// cleanupDevDependencies removes dev dependencies and reinstalls production-only packages
+func (b *Builder) cleanupDevDependencies() error {
+	if !b.config.Builds.Frontend.CleanupDevDeps {
+		return nil // Feature not enabled
 	}
+
+	if !b.changeset.PackageChanged {
+		return nil // No package changes, skip cleanup
+	}
+
+	fmt.Println("→ Cleaning up dev dependencies...")
+
+	// Remove node_modules from artifact
+	nodeModulesDst := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot, "node_modules")
+	if err := os.RemoveAll(nodeModulesDst); err != nil {
+		return fmt.Errorf("failed to remove node_modules from artifact: %w", err)
+	}
+
+	// Run production install in the artifact
+	fmt.Println("→ Installing production dependencies only...")
+	productionDir := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot)
+	fmt.Printf("   Working directory: app/%s\n", b.config.Builds.Frontend.ProjectRoot)
+	fmt.Printf("   Command: %s\n", b.config.Builds.Frontend.ProductionCommand)
+
+	output, err := b.executeCommand(b.config.Builds.Frontend.ProductionCommand, productionDir)
+	if err != nil {
+		fmt.Printf("   Production install output:\n%s\n", string(output))
+		return verserrors.New(verserrors.CodeBuildFailed, "Production install failed", "Check your production_command configuration.", fmt.Errorf("%w: %s", err, string(output)))
+	}
+	fmt.Println("   ✓ Production dependencies installed")
+
+	fmt.Println("→ Dev dependencies cleaned up successfully")
 	return nil
 }
 
@@ -298,39 +341,109 @@ func (b *Builder) executeCommand(command, dir string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-// copyFile copies a single file
+// copyFile copies a single file using io.Copy for efficiency and reliability
 func copyFile(src, dst string) error {
-	input, err := os.ReadFile(src)
+	info, err := os.Lstat(src)
 	if err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(dst, input, 0644); err != nil {
+	// Double check it's a regular file. We should NEVER try to read directories as files.
+	// This prevents "Función incorrecta" errors on Windows for junctions/reparse points.
+	if !info.Mode().IsRegular() {
+		// If it's a symlink that made it here, evaluate it
+		if info.Mode()&os.ModeSymlink != 0 {
+			realPath, err := filepath.EvalSymlinks(src)
+			if err != nil {
+				return nil // Skip if broken
+			}
+			return copyFile(realPath, dst)
+		}
+		return nil // Skip non-regular files
+	}
+
+	sourceFile, err := os.Open(src)
+	if err != nil {
 		return err
 	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	if err != nil {
+		return err
+	}
+
+	// Copy permissions
+	os.Chmod(dst, info.Mode())
 
 	return nil
 }
 
-// copyDir recursively copies a directory
+// copyDir recursively copies a directory, flattening symlinks for the artifact
 func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+	// Root directory creation
+	srcInfo, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		info, err := entry.Info()
 		if err != nil {
-			return err
+			continue
 		}
 
-		// Get relative path
-		relPath, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
+		// Handle Symlinks/Junctions by following them (flattening)
+		if info.Mode()&os.ModeSymlink != 0 || (runtime.GOOS == "windows" && (info.Mode()&os.ModeDevice != 0)) {
+			realPath, err := filepath.EvalSymlinks(srcPath)
+			if err != nil {
+				continue
+			}
 
-		targetPath := filepath.Join(dst, relPath)
+			realInfo, err := os.Stat(realPath)
+			if err != nil {
+				continue
+			}
+
+			if realInfo.IsDir() {
+				if err := copyDir(realPath, dstPath); err != nil {
+					return err
+				}
+			} else {
+				if err := copyFile(realPath, dstPath); err != nil {
+					return err
+				}
+			}
+			continue
+		}
 
 		if info.IsDir() {
-			return os.MkdirAll(targetPath, info.Mode())
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
 		}
+	}
 
-		return copyFile(path, targetPath)
-	})
+	return nil
 }

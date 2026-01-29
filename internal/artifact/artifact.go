@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/user/versaDeploy/internal/builder"
@@ -119,18 +120,14 @@ func (g *Generator) Compress(archivePath string) error {
 	tw := tar.NewWriter(gw)
 	defer tw.Close()
 
-	return filepath.Walk(g.artifactDir, func(path string, info os.FileInfo, err error) error {
+	return filepath.WalkDir(g.artifactDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return err
+			// Skip entries that cause errors (like unreadable symlinks)
+			fmt.Printf("[WARN] Skipping path (error): %s - %v\n", path, err)
+			return nil
 		}
 
-		// Create header
-		header, err := tar.FileInfoHeader(info, info.Name())
-		if err != nil {
-			return err
-		}
-
-		// Update name to relative path
+		// Get relative path
 		relPath, err := filepath.Rel(g.artifactDir, path)
 		if err != nil {
 			return err
@@ -140,25 +137,88 @@ func (g *Generator) Compress(archivePath string) error {
 			return nil
 		}
 
-		header.Name = filepath.ToSlash(relPath)
-
-		// Write header
-		if err := tw.WriteHeader(header); err != nil {
-			return err
-		}
-
-		if info.IsDir() {
+		// Get file info
+		info, err := d.Info()
+		if err != nil {
+			fmt.Printf("[WARN] Skipping (cannot get info): %s - %v\n", relPath, err)
 			return nil
 		}
 
-		// Write file content
-		f, err := os.Open(path)
-		if err != nil {
-			return err
+		// Create header manually to avoid Windows file mode issues
+		header := &tar.Header{
+			Name:    filepath.ToSlash(relPath),
+			ModTime: info.ModTime(),
+			Size:    info.Size(),
 		}
-		defer f.Close()
 
-		_, err = io.Copy(tw, f)
-		return err
+		// Handle symlinks, junctions and reparse points
+		isSymlink := info.Mode()&os.ModeSymlink != 0
+
+		// Detailed check for Windows Junctions (which often appear as Dir | Irregular)
+		if !isSymlink && info.Mode()&os.ModeIrregular != 0 {
+			// Try to read as link anyway to see if it's a junction
+			if _, err := os.Readlink(path); err == nil {
+				isSymlink = true
+			}
+		}
+
+		if isSymlink {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				// On Windows, symlinks/junctions may not be readable
+				// Or they might be dangling (pointing to the ignored .pnpm)
+				fmt.Printf("[WARN] Skipping dangling/unreadable link: %s\n", relPath)
+				return nil
+			}
+
+			// Convert absolute targets (common on Windows junctions) to relative targets
+			// so they work correctly when extracted on a different system/path.
+			if filepath.IsAbs(linkTarget) {
+				// Check if the target is inside our artifact directory
+				// Use filepath.Dir(path) as the source for the relative jump
+				if relTarget, err := filepath.Rel(g.artifactDir, linkTarget); err == nil {
+					// Check if it's actually inside (doesn't start with ..)
+					if !strings.HasPrefix(relTarget, ".."+string(filepath.Separator)) && relTarget != ".." {
+						// Calculate relative path from the link directory to the target
+						if portableTarget, err := filepath.Rel(filepath.Dir(path), linkTarget); err == nil {
+							linkTarget = portableTarget
+						}
+					}
+				}
+			}
+
+			header.Typeflag = tar.TypeSymlink
+			header.Linkname = filepath.ToSlash(linkTarget)
+			header.Size = 0
+		} else if info.IsDir() {
+			header.Typeflag = tar.TypeDir
+			header.Mode = 0755 // rwxr-xr-x
+		} else {
+			header.Typeflag = tar.TypeReg
+			header.Mode = 0644 // rw-r--r--
+		}
+
+		// Write header
+		if err := tw.WriteHeader(header); err != nil {
+			return fmt.Errorf("failed to write header for %s: %w", relPath, err)
+		}
+
+		// Only write content for regular files
+		if header.Typeflag == tar.TypeReg {
+			f, err := os.Open(path)
+			if err != nil {
+				// Final safety check for files that disappeared or are locked
+				fmt.Printf("[WARN] Skipping file (cannot open): %s - %v\n", relPath, err)
+				return nil
+			}
+			defer f.Close()
+
+			_, err = io.Copy(tw, f)
+			if err != nil {
+				return fmt.Errorf("failed to copy content for %s: %w", relPath, err)
+			}
+		}
+
+		return nil
 	})
 }

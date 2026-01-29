@@ -226,11 +226,15 @@ func (d *Deployer) Deploy() error {
 	// Cleanup remote archive
 	sshClient.ExecuteCommand(fmt.Sprintf("rm -f %s", remoteArchive))
 
-	// Move staging to final (atomic)
 	if _, err := sshClient.ExecuteCommand(fmt.Sprintf("mv %s %s", stagingDir, finalDir)); err != nil {
 		// Cleanup staging on failure
 		sshClient.ExecuteCommand(fmt.Sprintf("rm -rf %s", stagingDir))
 		return fmt.Errorf("failed to finalize release: %w", err)
+	}
+
+	// Step 11.5: Handle shared paths
+	if err := d.handleSharedPaths(sshClient, finalDir); err != nil {
+		return err
 	}
 
 	// Step 12: Atomic symlink switch
@@ -251,8 +255,12 @@ func (d *Deployer) Deploy() error {
 		}
 
 		for _, hook := range d.env.PostDeploy {
-			d.log.Info("Executing: %s (timeout: %v)", hook, hookTimeout)
-			output, err := sshClient.ExecuteCommandWithTimeout(hook, hookTimeout)
+			// Wrap the hook to run within the newly deployed 'app' directory
+			appPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "current", "app"))
+			wrappedHook := fmt.Sprintf("cd %s && %s", appPath, hook)
+
+			d.log.Info("Executing: %s (in %s)", hook, appPath)
+			output, err := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
 			if err != nil {
 				d.log.Error("Post-deploy hook failed: %s", output)
 				// Rollback on hook failure
@@ -498,6 +506,51 @@ func (d *Deployer) validateLocalTools() error {
 					fmt.Sprintf("Install %s (npm, pnpm, yarn, etc.) and ensure it is in your PATH.", tool), nil)
 			}
 		}
+	}
+
+	return nil
+}
+
+// handleSharedPaths manages symbolic links for persistent directories
+func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) error {
+	if len(d.env.SharedPaths) == 0 {
+		return nil
+	}
+
+	d.log.Info("Linking shared directories...")
+	sharedBase := filepath.ToSlash(filepath.Join(d.env.RemotePath, "shared"))
+
+	// Ensure shared directory exists
+	sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p %s", sharedBase))
+
+	for _, path := range d.env.SharedPaths {
+		// Clean the path to avoid directory traversal or trailing slashes
+		cleanPath := filepath.ToSlash(filepath.Clean(path))
+		if strings.HasPrefix(cleanPath, "../") || cleanPath == ".." {
+			continue // Security: don't allow escaping release dir
+		}
+
+		// Path in release (e.g. app/storage)
+		releasePath := filepath.ToSlash(filepath.Join(releaseDir, cleanPath))
+		// Path in shared (e.g. shared/app/storage)
+		sharedPath := filepath.ToSlash(filepath.Join(sharedBase, cleanPath))
+
+		// 1. Ensure shared target exists
+		sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p %s", sharedPath))
+
+		// 2. Remove directory in release if it exists to make room for symlink
+		sshClient.ExecuteCommand(fmt.Sprintf("rm -rf %s", releasePath))
+
+		// 3. Create parent directory in release if needed
+		sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p %s", filepath.Dir(releasePath)))
+
+		// 4. Create symlink (use absolute path for shared target to be safe)
+		// We use ln -sf directly for shared paths as they don't need the atomic switch logic of 'current'
+		cmd := fmt.Sprintf("ln -sfn %s %s", sharedPath, releasePath)
+		if _, err := sshClient.ExecuteCommand(cmd); err != nil {
+			return fmt.Errorf("failed to link shared path %s: %w", cleanPath, err)
+		}
+		d.log.Info("  Linked: %s -> %s", cleanPath, sharedPath)
 	}
 
 	return nil

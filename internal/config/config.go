@@ -24,6 +24,7 @@ type Environment struct {
 	Builds      BuildsConfig `yaml:"builds"`
 	PostDeploy  []string     `yaml:"post_deploy"`
 	Ignored     []string     `yaml:"ignored_paths"`
+	SharedPaths []string     `yaml:"shared_paths"` // Paths to persist between releases (e.g. storage, uploads)
 	RouteFiles  []string     `yaml:"route_files"`  // Files that trigger route cache regeneration
 	HookTimeout int          `yaml:"hook_timeout"` // Timeout for post-deploy hooks in seconds
 }
@@ -64,10 +65,12 @@ type GoBuildConfig struct {
 
 // FrontendBuildConfig holds frontend build settings
 type FrontendBuildConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	ProjectRoot    string `yaml:"root"`            // Subdirectory for package.json
-	CompileCommand string `yaml:"compile_command"` // {file} placeholder
-	NPMCommand     string `yaml:"npm_command"`
+	Enabled           bool   `yaml:"enabled"`
+	ProjectRoot       string `yaml:"root"`            // Subdirectory for package.json
+	CompileCommand    string `yaml:"compile_command"` // {file} placeholder
+	NPMCommand        string `yaml:"npm_command"`
+	CleanupDevDeps    bool   `yaml:"cleanup_dev_deps"`   // Remove dev deps after build
+	ProductionCommand string `yaml:"production_command"` // Command for production-only install
 }
 
 // Load reads and parses deploy.yml
@@ -197,6 +200,10 @@ func (e *Environment) Validate(envName string) error {
 		}
 		if e.Builds.Frontend.NPMCommand == "" {
 			e.Builds.Frontend.NPMCommand = "npm ci --only=production"
+		}
+		// Set default production command if cleanup is enabled
+		if e.Builds.Frontend.CleanupDevDeps && e.Builds.Frontend.ProductionCommand == "" {
+			e.Builds.Frontend.ProductionCommand = "pnpm install --production"
 		}
 	}
 

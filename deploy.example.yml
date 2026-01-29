@@ -10,38 +10,46 @@ environments:
 
     remote_path: "/var/www/app"
 
+    # Paths to persist between releases (persistent storage, uploads, etc.)
+    # These will be symlinked to a persistent 'shared/' directory
+    shared_paths:
+      - "app/public/uploads"
+      - "app/storage/logs"
+
     builds:
       php:
         enabled: true
         root: "api"
-        composer_command: "composer install --no-dev --optimize-autoloader --classmap-authoritative"
+        composer_command: "composer install --no-dev --optimize-autoloader"
 
       go:
-        enabled: true
+        enabled: false
         root: "cmd/api"
         target_os: "linux"
         target_arch: "amd64"
         binary_name: "api-server"
-        build_flags: "-ldflags='-s -w'"
 
       frontend:
         enabled: true
         root: "theme"
-        compile_command: "./compiler.sh {file}"
-        npm_command: "npm ci --only=production"
+        compile_command: "npm run build"
+        npm_command: "pnpm install"
+        cleanup_dev_deps: true
+        production_command: "pnpm install --production"
 
+    # Hooks to run on remote server after symlink switch
+    # These run automatically inside the 'app/' directory of the new release
     post_deploy:
-      - "php /var/www/app/current/app/clear-cache.php"
-      - "curl -f http://localhost/health || exit 1"
-
-    route_files:
-      - "app/routes.php"
+      - "php versaCLI cache:clear"
+      - "php versaCLI routes:compile"
 
     ignored_paths:
       - ".git"
+      - "deploy.yml"
+      - ".vscode"
+      - "src"
       - "tests"
       - "node_modules/.cache"
-      - "vendor/bin"
 
   staging:
     ssh:

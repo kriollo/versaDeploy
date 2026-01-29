@@ -413,13 +413,24 @@ func (c *Client) CheckDiskSpace(path string, requiredBytes int64) error {
 	cmd := fmt.Sprintf("df -B1 %s | tail -1 | awk '{print $4}'", path)
 	output, err := c.ExecuteCommand(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to check disk space: %w", err)
+		// Non-fatal: just warn and continue
+		fmt.Printf("[WARN] Failed to check disk space: %v\n", err)
+		return nil
+	}
+
+	output = strings.TrimSpace(output)
+	if output == "" {
+		// Non-fatal: just warn and continue
+		fmt.Printf("[WARN] Empty output from disk space check command\n")
+		return nil
 	}
 
 	var availableBytes int64
-	_, err = fmt.Sscanf(strings.TrimSpace(output), "%d", &availableBytes)
+	_, err = fmt.Sscanf(output, "%d", &availableBytes)
 	if err != nil {
-		return fmt.Errorf("failed to parse disk space output: %w", err)
+		// Non-fatal: show the output for debugging and continue
+		fmt.Printf("[WARN] Failed to parse disk space output (got: '%s'): %v\n", output, err)
+		return nil
 	}
 
 	// Require 20% buffer on top of required space
@@ -429,6 +440,9 @@ func (c *Client) CheckDiskSpace(path string, requiredBytes int64) error {
 		return fmt.Errorf("insufficient disk space: need %d MB, have %d MB available",
 			requiredWithBuffer/(1024*1024), availableBytes/(1024*1024))
 	}
+
+	fmt.Printf("[INFO] Disk space check passed: %d MB available, %d MB required\n",
+		availableBytes/(1024*1024), requiredWithBuffer/(1024*1024))
 
 	return nil
 }

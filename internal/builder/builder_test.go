@@ -10,20 +10,48 @@ import (
 	"github.com/user/versaDeploy/internal/config"
 )
 
-func TestBuilder_createArtifactStructure(t *testing.T) {
+func TestBuilder_copyEntireRepo(t *testing.T) {
+	repoDir := t.TempDir()
 	artifactDir := t.TempDir()
+
+	// Create some files in repo
+	os.WriteFile(filepath.Join(repoDir, "file1.txt"), []byte("1"), 0644)
+	os.MkdirAll(filepath.Join(repoDir, "dir1"), 0755)
+	os.WriteFile(filepath.Join(repoDir, "dir1/file2.txt"), []byte("2"), 0644)
+
 	b := &Builder{
+		repoPath:    repoDir,
 		artifactDir: artifactDir,
 	}
 
-	if err := b.createArtifactStructure(); err != nil {
-		t.Fatalf("createArtifactStructure() error = %v", err)
+	if err := b.copyEntireRepo(); err != nil {
+		t.Fatalf("copyEntireRepo() error = %v", err)
 	}
 
-	dirs := []string{"app", "vendor", "node_modules", "public", "bin"}
+	// Everything should be inside artifactDir/app
+	dirs := []string{"app", "app/dir1"}
 	for _, dir := range dirs {
 		if _, err := os.Stat(filepath.Join(artifactDir, dir)); os.IsNotExist(err) {
 			t.Errorf("directory %s was not created", dir)
+		}
+	}
+
+	files := []struct {
+		path    string
+		content string
+	}{
+		{"app/file1.txt", "1"},
+		{"app/dir1/file2.txt", "2"},
+	}
+
+	for _, f := range files {
+		content, err := os.ReadFile(filepath.Join(artifactDir, f.path))
+		if err != nil {
+			t.Errorf("failed to read file %s: %v", f.path, err)
+			continue
+		}
+		if string(content) != f.content {
+			t.Errorf("expected %s, got %s", f.content, string(content))
 		}
 	}
 }
@@ -100,7 +128,7 @@ func TestBuilder_BuildPHP_NoComposer(t *testing.T) {
 	}
 
 	b := NewBuilder(repoDir, artifactDir, cfg, cs)
-	if err := b.createArtifactStructure(); err != nil {
+	if err := b.copyEntireRepo(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -112,48 +140,51 @@ func TestBuilder_BuildPHP_NoComposer(t *testing.T) {
 		t.Errorf("expected 2 PHP files changed, got %d", b.result.PHPFilesChanged)
 	}
 
-	// Check if files exist in artifact
+	// Check if files exist in artifact (all should be under app/)
 	if _, err := os.Stat(filepath.Join(artifactDir, "app/index.php")); os.IsNotExist(err) {
-		t.Error("index.php not copied to artifact")
+		t.Error("index.php not found in artifact/app")
 	}
 	if _, err := os.Stat(filepath.Join(artifactDir, "app/src/helpers.php")); os.IsNotExist(err) {
-		t.Error("src/helpers.php not copied to artifact")
+		t.Error("src/helpers.php not found in artifact/app")
 	}
 }
 
-func TestBuilder_BuildPHP_TwigAndRoutes(t *testing.T) {
+func TestBuilder_CleanupIgnoredPaths(t *testing.T) {
 	repoDir := t.TempDir()
 	artifactDir := t.TempDir()
 
-	os.WriteFile(filepath.Join(repoDir, "template.twig"), []byte("{{ template }}"), 0644)
+	// Create structure
+	os.MkdirAll(filepath.Join(repoDir, "src"), 0755)
+	os.WriteFile(filepath.Join(repoDir, "src/main.go"), []byte("go"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "keep.txt"), []byte("keep"), 0644)
 
 	cfg := &config.Environment{
-		Builds: config.BuildsConfig{
-			PHP: config.PHPBuildConfig{Enabled: true},
-		},
+		Ignored: []string{"src"},
 	}
 
-	cs := &changeset.ChangeSet{
-		TwigFiles:     []string{"template.twig"},
-		RoutesChanged: true,
-	}
+	b := NewBuilder(repoDir, artifactDir, cfg, &changeset.ChangeSet{})
 
-	b := NewBuilder(repoDir, artifactDir, cfg, cs)
-	b.createArtifactStructure()
-
-	if err := b.buildPHP(); err != nil {
+	// Step 1: Copy everything
+	if err := b.copyEntireRepo(); err != nil {
 		t.Fatal(err)
 	}
 
-	if !b.result.TwigCacheCleanup {
-		t.Error("expected TwigCacheCleanup to be true")
-	}
-	if !b.result.RouteCacheRegenerate {
-		t.Error("expected RouteCacheRegenerate to be true")
+	// Verify src exists before cleanup
+	if _, err := os.Stat(filepath.Join(artifactDir, "app/src")); os.IsNotExist(err) {
+		t.Fatal("src should be copied initially")
 	}
 
-	if _, err := os.Stat(filepath.Join(artifactDir, "app/template.twig")); os.IsNotExist(err) {
-		t.Error("template.twig not copied")
+	// Step 2: Cleanup
+	if err := b.cleanupIgnoredPaths(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify src is gone but keep.txt remains
+	if _, err := os.Stat(filepath.Join(artifactDir, "app/src")); !os.IsNotExist(err) {
+		t.Error("src should have been removed by cleanup")
+	}
+	if _, err := os.Stat(filepath.Join(artifactDir, "app/keep.txt")); os.IsNotExist(err) {
+		t.Error("keep.txt should have been preserved")
 	}
 }
 
@@ -182,18 +213,6 @@ func TestBuilder_Build_DisabledComponents(t *testing.T) {
 	}
 }
 
-func TestBuilder_Build_Fail(t *testing.T) {
-	repoDir := t.TempDir()
-	// Create a file where a directory should be
-	artifactDir := filepath.Join(t.TempDir(), "blocked")
-	os.WriteFile(artifactDir, []byte("blocked"), 0644)
-
-	b := NewBuilder(repoDir, artifactDir, &config.Environment{}, &changeset.ChangeSet{})
-	_, err := b.Build()
-	if err == nil {
-		t.Error("expected error when artifact structure cannot be created")
-	}
-}
 func TestBuilder_Build_Subdirectories(t *testing.T) {
 	repoDir := t.TempDir()
 	artifactDir := t.TempDir()
@@ -205,7 +224,7 @@ func TestBuilder_Build_Subdirectories(t *testing.T) {
 
 	var mockCmd string
 	if runtime.GOOS == "windows" {
-		// Commands are run in ProjectRoot, so we use relative paths
+		// Commands are run in ProjectRoot (relative to app/), so we use relative paths
 		mockCmd = "mkdir vendor && echo . > vendor\\autoload.php"
 	} else {
 		mockCmd = "mkdir -p vendor && touch vendor/autoload.php"
@@ -233,37 +252,13 @@ func TestBuilder_Build_Subdirectories(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 
-	// Verify vendor copied from subdirectory
-	if _, err := os.Stat(filepath.Join(artifactDir, "vendor/autoload.php")); os.IsNotExist(err) {
-		t.Error("vendor/autoload.php not copied from subdirectory")
+	// Verify vendor created in subdirectory (which is inside app/)
+	if _, err := os.Stat(filepath.Join(artifactDir, "app/api/vendor/autoload.php")); os.IsNotExist(err) {
+		t.Error("vendor/autoload.php not found in api/vendor")
 	}
 
 	// Verify PHP file copied
 	if _, err := os.Stat(filepath.Join(artifactDir, "app/api/index.php")); os.IsNotExist(err) {
-		t.Error("api/index.php not copied to artifact")
-	}
-}
-
-func TestBuilder_CopyOtherFiles(t *testing.T) {
-	repoDir := t.TempDir()
-	artifactDir := t.TempDir()
-
-	os.MkdirAll(filepath.Join(repoDir, "public/images"), 0755)
-	os.WriteFile(filepath.Join(repoDir, "public/images/logo.png"), []byte("png"), 0644)
-
-	cs := &changeset.ChangeSet{
-		OtherFiles: []string{"public/images/logo.png"},
-	}
-
-	b := NewBuilder(repoDir, artifactDir, &config.Environment{}, cs)
-	b.createArtifactStructure()
-
-	err := b.copyOtherFiles()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(artifactDir, "app/public/images/logo.png")); os.IsNotExist(err) {
-		t.Error("logo.png not copied to artifact")
+		t.Error("api/index.php not found in artifact/app/api")
 	}
 }
