@@ -9,7 +9,9 @@ import (
 	"github.com/user/versaDeploy/internal/deployer"
 	verserrors "github.com/user/versaDeploy/internal/errors"
 	"github.com/user/versaDeploy/internal/logger"
+	"github.com/user/versaDeploy/internal/selfupdate"
 	"github.com/user/versaDeploy/internal/ssh"
+	"github.com/user/versaDeploy/internal/version"
 )
 
 var (
@@ -33,7 +35,32 @@ Available Commands:
   rollback    Rollback to previous release
   status      Show deployment status
   ssh-test    Test SSH connection to environment
-  init        Initialize a new versaDeploy configuration`,
+  init        Initialize a new versaDeploy configuration
+  version     Show application version
+  self-update Check and install updates for versaDeploy`,
+}
+
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Show application version",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("versaDeploy %s\n", version.Version)
+	},
+}
+
+var selfUpdateCmd = &cobra.Command{
+	Use:   "self-update",
+	Short: "Check and install updates for versaDeploy",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		log, err := logger.NewLogger(logFile, verbose, debug)
+		if err != nil {
+			return err
+		}
+		defer log.Close()
+
+		updater := selfupdate.NewUpdater(log)
+		return updater.Update()
+	},
 }
 
 var deployCmd = &cobra.Command{
@@ -294,6 +321,8 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(sshTestCmd)
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(selfUpdateCmd)
 }
 
 func main() {
