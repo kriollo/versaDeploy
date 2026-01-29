@@ -7,9 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Tag to release (e.g. v0.9.0-beta). If empty, uses the current push tag."
-        required: false
+        description: "Tag to release (e.g. v0.9.0-beta). Mandatory for manual runs."
+        required: true
         default: ""
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -64,7 +67,8 @@ jobs:
         with:
           files: artifacts/**/*
           tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
-          generate_release_notes: true
+          # Only generate notes automatically on real tag pushes
+          generate_release_notes: ${{ github.event_name == 'push' }}
           draft: false
           prerelease: true
         env:
