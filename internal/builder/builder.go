@@ -214,12 +214,19 @@ func (b *Builder) buildGo() error {
 
 // buildFrontend handles frontend builds
 func (b *Builder) buildFrontend() error {
-	// Run npm if package.json changed
-	if b.changeset.PackageChanged {
-		fmt.Println("→ Running npm install...")
+	// Run npm if package.json changed or if we need to compile but node_modules is missing
+	npmDir := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot)
+	nmPath := filepath.Join(npmDir, "node_modules")
 
-		// Run npm in the artifact's app directory
-		npmDir := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot)
+	needsInstall := b.changeset.PackageChanged
+	if !needsInstall && len(b.changeset.FrontendFiles) > 0 {
+		if _, err := os.Stat(nmPath); os.IsNotExist(err) {
+			needsInstall = true
+		}
+	}
+
+	if needsInstall {
+		fmt.Println("→ Running npm install...")
 		fmt.Printf("   Working directory: app/%s\n", b.config.Builds.Frontend.ProjectRoot)
 
 		output, err := b.executeCommand(b.config.Builds.Frontend.NPMCommand, npmDir)

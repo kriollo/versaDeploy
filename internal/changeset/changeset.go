@@ -69,24 +69,39 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 			return err
 		}
 
-		// Skip directories
-		if info.IsDir() {
-			// Check if this directory should be ignored
-			relPath, _ := filepath.Rel(d.repoPath, path)
-			if d.shouldIgnore(relPath) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
 		// Get relative path
 		relPath, err := filepath.Rel(d.repoPath, path)
 		if err != nil {
 			return err
 		}
+		relPath = filepath.ToSlash(relPath)
 
-		// Skip ignored paths
-		if d.shouldIgnore(relPath) {
+		// 1. Hard-skip truly heavy/metadata directories that we NEVER want to walk
+		if info.IsDir() {
+			if relPath == ".git" || relPath == "node_modules" || relPath == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// 2. For files, determine if we should skip hashing
+		// We only skip if it's in ignoredPaths AND it's NOT a file type that triggers a build
+		ignored := d.shouldIgnore(relPath)
+		ext := strings.ToLower(filepath.Ext(relPath))
+		isCritical := false
+
+		// Check if it's a critical extension that might trigger a build
+		switch ext {
+		case ".php", ".twig", ".go", ".mod", ".sum", ".js", ".ts", ".vue", ".jsx", ".tsx", ".css", ".scss", ".sass", ".less":
+			isCritical = true
+		case ".json":
+			base := filepath.Base(relPath)
+			if base == "composer.json" || base == "package.json" || base == "composer.lock" || base == "package-lock.json" || base == "pnpm-lock.yaml" {
+				isCritical = true
+			}
+		}
+
+		if ignored && !isCritical {
 			return nil
 		}
 
@@ -96,8 +111,6 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 			return fmt.Errorf("failed to hash %s: %w", relPath, err)
 		}
 
-		// Normalize path separators to forward slashes for consistency
-		relPath = filepath.ToSlash(relPath)
 		cs.AllFileHashes[relPath] = hash
 
 		// Check if file changed
@@ -105,7 +118,6 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 
 		// Categorize changed files by extension
 		if changed {
-			ext := strings.ToLower(filepath.Ext(relPath))
 			switch ext {
 			case ".php":
 				cs.PHPFiles = append(cs.PHPFiles, relPath)

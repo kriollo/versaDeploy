@@ -231,6 +231,32 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "Config with Advanced Fields",
+			config: Config{
+				Project: "advanced-test",
+				Environments: map[string]Environment{
+					"prod": {
+						SSH:            SSHConfig{Host: "h", User: "u", KeyPath: "k"},
+						RemotePath:     "/var/www",
+						SharedPaths:    []string{"logs", "uploads"},
+						PreservedPaths: []string{".env"},
+						Builds: BuildsConfig{
+							PHP: PHPBuildConfig{
+								Enabled:       true,
+								ReusablePaths: []string{"vendor", "custom"},
+							},
+							Frontend: FrontendBuildConfig{
+								Enabled:        true,
+								CompileCommand: "npm run build -- {file}",
+								ReusablePaths:  []string{"dist", "node_modules"},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

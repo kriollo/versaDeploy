@@ -19,14 +19,15 @@ type Config struct {
 
 // Environment represents a single deployment environment
 type Environment struct {
-	SSH         SSHConfig    `yaml:"ssh"`
-	RemotePath  string       `yaml:"remote_path"`
-	Builds      BuildsConfig `yaml:"builds"`
-	PostDeploy  []string     `yaml:"post_deploy"`
-	Ignored     []string     `yaml:"ignored_paths"`
-	SharedPaths []string     `yaml:"shared_paths"` // Paths to persist between releases (e.g. storage, uploads)
-	RouteFiles  []string     `yaml:"route_files"`  // Files that trigger route cache regeneration
-	HookTimeout int          `yaml:"hook_timeout"` // Timeout for post-deploy hooks in seconds
+	SSH            SSHConfig    `yaml:"ssh"`
+	RemotePath     string       `yaml:"remote_path"`
+	Builds         BuildsConfig `yaml:"builds"`
+	PostDeploy     []string     `yaml:"post_deploy"`
+	Ignored        []string     `yaml:"ignored_paths"`
+	SharedPaths    []string     `yaml:"shared_paths"`    // Paths to persist between releases (e.g. storage, uploads)
+	PreservedPaths []string     `yaml:"preserved_paths"` // Paths to KEEP from previous release (overwriting artifact)
+	RouteFiles     []string     `yaml:"route_files"`     // Files that trigger route cache regeneration
+	HookTimeout    int          `yaml:"hook_timeout"`    // Timeout for post-deploy hooks in seconds
 }
 
 // SSHConfig holds SSH connection details
@@ -48,9 +49,10 @@ type BuildsConfig struct {
 
 // PHPBuildConfig holds PHP build settings
 type PHPBuildConfig struct {
-	Enabled         bool   `yaml:"enabled"`
-	ProjectRoot     string `yaml:"root"` // Subdirectory for composer.json
-	ComposerCommand string `yaml:"composer_command"`
+	Enabled         bool     `yaml:"enabled"`
+	ProjectRoot     string   `yaml:"root"` // Subdirectory for composer.json
+	ComposerCommand string   `yaml:"composer_command"`
+	ReusablePaths   []string `yaml:"reusable_paths"` // Paths to recover from previous release (e.g. vendor)
 }
 
 // GoBuildConfig holds Go build settings
@@ -65,12 +67,13 @@ type GoBuildConfig struct {
 
 // FrontendBuildConfig holds frontend build settings
 type FrontendBuildConfig struct {
-	Enabled           bool   `yaml:"enabled"`
-	ProjectRoot       string `yaml:"root"`            // Subdirectory for package.json
-	CompileCommand    string `yaml:"compile_command"` // {file} placeholder
-	NPMCommand        string `yaml:"npm_command"`
-	CleanupDevDeps    bool   `yaml:"cleanup_dev_deps"`   // Remove dev deps after build
-	ProductionCommand string `yaml:"production_command"` // Command for production-only install
+	Enabled           bool     `yaml:"enabled"`
+	ProjectRoot       string   `yaml:"root"`            // Subdirectory for package.json
+	CompileCommand    string   `yaml:"compile_command"` // {file} placeholder
+	NPMCommand        string   `yaml:"npm_command"`
+	CleanupDevDeps    bool     `yaml:"cleanup_dev_deps"`   // Remove dev deps after build
+	ProductionCommand string   `yaml:"production_command"` // Command for production-only install
+	ReusablePaths     []string `yaml:"reusable_paths"`     // Paths to recover from previous release (e.g. node_modules, dist)
 }
 
 // Load reads and parses deploy.yml

@@ -146,6 +146,32 @@ func TestDetector_Detect(t *testing.T) {
 	}
 }
 
+func TestDetector_Detect_IgnoredButCritical(t *testing.T) {
+	repoDir := t.TempDir()
+
+	// Create a .vue file in an ignored directory
+	vuePath := filepath.Join(repoDir, "src/components/App.vue")
+	os.MkdirAll(filepath.Dir(vuePath), 0755)
+	os.WriteFile(vuePath, []byte("<template>old</template>"), 0644)
+
+	ignored := []string{"src"} // Entire src folder is ignored
+
+	// First deploy
+	d1 := NewDetector(repoDir, ignored, nil, "", "", "", nil)
+	cs1, _ := d1.Detect()
+
+	// Modify the .vue file
+	os.WriteFile(vuePath, []byte("<template>new</template>"), 0644)
+
+	// Detect changes for second deploy
+	d2 := NewDetector(repoDir, ignored, nil, "", "", "", cs1.AllFileHashesAsLock())
+	cs2, _ := d2.Detect()
+
+	if len(cs2.FrontendFiles) != 1 || cs2.FrontendFiles[0] != "src/components/App.vue" {
+		t.Errorf("expected 1 Frontend file to change despite being in ignored 'src', got %v", cs2.FrontendFiles)
+	}
+}
+
 func (cs *ChangeSet) AllFileHashesAsLock() *state.DeployLock {
 	return &state.DeployLock{
 		LastDeploy: state.DeployInfo{

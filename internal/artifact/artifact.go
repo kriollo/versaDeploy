@@ -192,10 +192,10 @@ func (g *Generator) Compress(archivePath string) error {
 			header.Size = 0
 		} else if info.IsDir() {
 			header.Typeflag = tar.TypeDir
-			header.Mode = 0755 // rwxr-xr-x
+			header.Mode = 0775 // rwxrwxr-x
 		} else {
 			header.Typeflag = tar.TypeReg
-			header.Mode = 0644 // rw-r--r--
+			header.Mode = 0664 // rw-rw-r--
 		}
 
 		// Write header

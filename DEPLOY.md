@@ -30,12 +30,14 @@ Settings for connecting to the remote server.
 
 ### 2. General Environment Settings
 
-| Field           | Type         | Default | Description                                                                              |
-| :-------------- | :----------- | :------ | :--------------------------------------------------------------------------------------- |
-| `remote_path`   | string       | -       | **Required**. Absolute path on the remote server where the application will be deployed. |
-| `hook_timeout`  | int          | `300`   | Timeout in seconds for each `post_deploy` hook.                                          |
-| `route_files`   | list[string] | `[]`    | Files that, if changed, will trigger route cache regeneration flags.                     |
-| `ignored_paths` | list[string] | `[...]` | Paths relative to project root that should be ignored by SHA256 tracking.                |
+| Field             | Type         | Default | Description                                                                                                       |
+| :---------------- | :----------- | :------ | :---------------------------------------------------------------------------------------------------------------- |
+| `remote_path`     | string       | -       | **Required**. Absolute path on the remote server where the application will be deployed.                          |
+| `shared_paths`    | list[string] | `[]`    | Paths that persist across releases (e.g. `storage`, `uploads`). They are symlinked to a central `shared/` folder. |
+| `preserved_paths` | list[string] | `[]`    | Files/folders on the server that **should not be updated** after the first deploy (e.g. `.env`, `config.php`).    |
+| `hook_timeout`    | int          | `300`   | Timeout in seconds for each `post_deploy` hook.                                                                   |
+| `route_files`     | list[string] | `[]`    | Files that, if changed, will trigger specific logic in your hooks via environment variables.                      |
+| `ignored_paths`   | list[string] | `[...]` | Paths relative to project root that should be ignored when creating the artifact.                                 |
 
 ### 3. Build Configurations (`builds`)
 
@@ -43,11 +45,12 @@ versaDeploy supports three build engines: `php`, `go`, and `frontend`.
 
 #### PHP (`php`)
 
-| Field              | Type   | Default                | Description                                                               |
-| :----------------- | :----- | :--------------------- | :------------------------------------------------------------------------ |
-| `enabled`          | bool   | `false`                | Enable PHP build engine.                                                  |
-| `root`             | string | `""`                   | Subdirectory where `composer.json` is located (relative to project root). |
-| `composer_command` | string | `composer install ...` | Command to run for dependency installation.                               |
+| Field              | Type         | Default                | Description                                                                                                   |
+| :----------------- | :----------- | :--------------------- | :------------------------------------------------------------------------------------------------------------ |
+| `enabled`          | bool         | `false`                | Enable PHP build engine.                                                                                      |
+| `root`             | string       | `""`                   | Subdirectory where `composer.json` is located.                                                                |
+| `composer_command` | string       | `composer install ...` | Command to run for dependency installation.                                                                   |
+| `reusable_paths`   | list[string] | `["vendor"]`           | Folders to reuse from the previous release via hardlinks if `composer.json` didn't change (speeds up deploy). |
 
 #### Go (`go`)
 
@@ -62,34 +65,40 @@ versaDeploy supports three build engines: `php`, `go`, and `frontend`.
 
 #### Frontend (`frontend`)
 
-| Field             | Type   | Default      | Description                                                                                                   |
-| :---------------- | :----- | :----------- | :------------------------------------------------------------------------------------------------------------ |
-| `enabled`         | bool   | `false`      | Enable Frontend build engine.                                                                                 |
-| `root`            | string | `""`         | Subdirectory where `package.json` is located.                                                                 |
-| `npm_command`     | string | `npm ci ...` | Command to install dependencies.                                                                              |
-| `compile_command` | string | -            | **Required** if enabled. Command to compile assets. Use `{file}` placeholder for individual file compilation. |
+| Field                | Type         | Default                 | Description                                                                                                    |
+| :------------------- | :----------- | :---------------------- | :------------------------------------------------------------------------------------------------------------- |
+| `enabled`            | bool         | `false`                 | Enable Frontend build engine.                                                                                  |
+| `root`               | string       | `""`                    | Subdirectory where `package.json` is located.                                                                  |
+| `npm_command`        | string       | `npm ci ...`            | Command to install dependencies.                                                                               |
+| `compile_command`    | string       | -                       | **Required** if enabled. Command to compile assets.                                                            |
+| `cleanup_dev_deps`   | bool         | `false`                 | If true, removes `node_modules` after build and runs `production_command`.                                     |
+| `production_command` | string       | `pnpm install --prod`   | Command to install production-only dependencies if `cleanup_dev_deps` is true.                                 |
+| `reusable_paths`     | list[string] | `["node_modules", ...]` | Folders to reuse from previous release if `package.json` didn't change (e.g. `node_modules`, `dist`, `build`). |
 
 ## Post-Deployment Hooks (`post_deploy`)
 
-A list of commands to run on the **remote server** after the symlink has been switched to the new release.
+A list of commands to run on the **remote server** after the release is extracted and before the final symlink switch.
 
-- Commands are executed relative to the `current` directory on the server.
-- If any command fails (non-zero exit code), the deployment is rolled back automatically.
+- Commands are executed relative to the `app` directory of the **new release**.
+- Final activation of the `current` symlink happens **only if all hooks pass**.
+- If a hook fails, the entire deployment is rolled back automatically.
 
 ```yaml
 post_deploy:
+  - "php versaCLI cache:clear"
   - "php artisan migrate --force"
-  - "php artisan config:cache"
 ```
 
 ## Platform Considerations
 
-### Local Development (Windows vs. Linux)
+### Robust Change Detection
 
-- versaDeploy automatically detects if it's running on Windows or Linux and uses the appropriate shell (`cmd.exe` via `COMSPEC` or `sh`).
-- Build commands should ideally be platform-agnostic or use tools available on both (e.g., `npm`, `php`, `go`).
+versaDeploy tracks changes using SHA256 hashes of your files. Even if a folder is in `ignored_paths` (like `src/`), if it contains files with critical extensions (`.vue`, `.ts`, `.php`), changes WILL be detected to trigger a new build and deployment.
 
-### Remote Server (Linux)
+### Reusable Paths & Optimization
 
-- The remote server is expected to be a Linux-based system with SSH/SFTP access.
-- Hooks are executed in a standard shell. Use absolute paths or commands available in the environment's `PATH`.
+To keep deployments fast, versaDeploy uses **Linux Hardlinks** (`cp -al`) to carry over large folders (like `vendor` or `node_modules`) between releases if their configuration hasn't changed. This avoids unnecessary network transfers and dependency re-installs.
+
+### Absolute Symlinks
+
+The `current` symlink and all internal symlinks (for `shared_paths`) use **absolute paths** on the remote server, ensuring they work regardless of how a shell session is initialized.

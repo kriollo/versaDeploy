@@ -1,83 +1,73 @@
-project: "my-app"
+project: "my-versa-app"
 
 environments:
   production:
     ssh:
       host: "prod.example.com"
       user: "deploy"
-      key_path: "~/.ssh/deploy_key"
+      key_path: "~/.ssh/id_rsa"
       port: 22
 
-    remote_path: "/var/www/app"
+    remote_path: "/var/www/my-app"
 
-    # Paths to persist between releases (persistent storage, uploads, etc.)
-    # These will be symlinked to a persistent 'shared/' directory
+    # 1. SHARED PATHS: Persist directories across releases
+    # These will be symlinked to /var/www/my-app/shared/
     shared_paths:
-      - "app/public/uploads"
-      - "app/storage/logs"
+      - "storage/logs"
+      - "public/uploads"
+
+    # 2. PRESERVED PATHS: Keep server-side versions (don't overwrite)
+    # Useful for .env or local-only configurations
+    preserved_paths:
+      - ".env"
+      - "config.php"
 
     builds:
+      # PHP: Composer and dependency reuse
       php:
         enabled: true
         root: "api"
         composer_command: "composer install --no-dev --optimize-autoloader"
+        # Recover from previous release to save bandwidth if composer.json didn't change
+        reusable_paths:
+          - "vendor"
 
+      # Go: Cross-platform compilation
       go:
-        enabled: false
+        enabled: true
         root: "cmd/api"
         target_os: "linux"
         target_arch: "amd64"
         binary_name: "api-server"
 
+      # Frontend: Compilation and automatic dependency cleanup
       frontend:
         enabled: true
         root: "theme"
-        compile_command: "npm run build"
         npm_command: "pnpm install"
-        cleanup_dev_deps: true
-        production_command: "pnpm install --production"
+        compile_command: "pnpm run build"
+        cleanup_dev_deps: true # Remove node_modules after build
+        production_command: "pnpm install --prod"
+        # Reuse previous compiled assets if no frontend files changed
+        reusable_paths:
+          - "node_modules"
+          - "dist"
+          - "public/build"
 
-    # Hooks to run on remote server after symlink switch
-    # These run automatically inside the 'app/' directory of the new release
+    # 3. POST-DEPLOY HOOKS: Run on server before activating release
+    # Executed relative to your 'app/' directory in the new release
     post_deploy:
       - "php versaCLI cache:clear"
-      - "php versaCLI routes:compile"
+      - "php artisan migrate --force"
 
+    # 4. IGNORED PATHS: Skip files/folders during upload/artifact creation
+    # versaDeploy will still track changes in .vue/.ts/.php inside these if needed
     ignored_paths:
       - ".git"
-      - "deploy.yml"
       - ".vscode"
       - "src"
       - "tests"
       - "node_modules/.cache"
 
-  staging:
-    ssh:
-      host: "staging.example.com"
-      user: "deploy"
-      key_path: "~/.ssh/deploy_key"
-
-    remote_path: "/var/www/staging"
-
-    builds:
-      php:
-        enabled: true
-        composer_command: "composer install --no-dev"
-
-      go:
-        enabled: true
-        target_os: "linux"
-        target_arch: "amd64"
-        binary_name: "api-server"
-
-      frontend:
-        enabled: true
-        compile_command: "./compiler.sh {file}"
-        npm_command: "npm ci"
-
-    post_deploy:
-      - "php /var/www/staging/current/app/clear-cache.php"
-
-    ignored_paths:
-      - ".git"
-      - "tests"
+    # Timeout for each post-deploy hook (in seconds)
+    hook_timeout: 300

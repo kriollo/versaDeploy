@@ -237,12 +237,25 @@ func (d *Deployer) Deploy() error {
 		return err
 	}
 
+	// Step 11.6: Reuse dependencies from previous release if possible
+	if previousLock != nil {
+		d.reuseDependencies(sshClient, previousLock.LastDeploy.ReleaseDir, finalDir, cs)
+
+		// Step 11.7: Restore preserved paths (files that should not be updated)
+		if err := d.handlePreservedPaths(sshClient, previousLock.LastDeploy.ReleaseDir, finalDir); err != nil {
+			return err
+		}
+	}
+
 	// Step 12: Atomic symlink switch
 	d.log.Info("Activating release...")
 	currentSymlink := filepath.ToSlash(filepath.Join(d.env.RemotePath, "current"))
-	relativeTarget := filepath.ToSlash(filepath.Join("releases", releaseVersion))
+	// Use absolute path for target to be more robust
+	absoluteTarget := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", releaseVersion))
 
-	if err := sshClient.CreateSymlink(relativeTarget, currentSymlink); err != nil {
+	d.log.Info("  Linking: %s -> %s", currentSymlink, absoluteTarget)
+
+	if err := sshClient.CreateSymlink(absoluteTarget, currentSymlink); err != nil {
 		return err
 	}
 
@@ -256,19 +269,20 @@ func (d *Deployer) Deploy() error {
 
 		for _, hook := range d.env.PostDeploy {
 			// Wrap the hook to run within the newly deployed 'app' directory
-			appPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "current", "app"))
+			// Use the absolute path to the actual release folder for maximum robustness
+			appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
 			wrappedHook := fmt.Sprintf("cd %s && %s", appPath, hook)
 
 			d.log.Info("Executing: %s (in %s)", hook, appPath)
 			output, err := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
 			if err != nil {
-				d.log.Error("Post-deploy hook failed: %s", output)
+				d.log.Error("Post-deploy hook failed with output:\n%s", output)
 				// Rollback on hook failure
-				d.log.Info("Attempting automatic rollback...")
+				d.log.Info("Critical Error in Hook: Deployment will be rolled back to version %s", previousLock.LastDeploy.ReleaseDir)
 				if rollbackErr := d.rollback(sshClient, previousLock); rollbackErr != nil {
 					return fmt.Errorf("hook failed and rollback also failed: %w", rollbackErr)
 				}
-				return fmt.Errorf("post-deploy hook failed (rolled back): %w", err)
+				return fmt.Errorf("post-deploy hook failed (rolled back to %s): %w", previousLock.LastDeploy.ReleaseDir, err)
 			}
 			d.log.Info("Hook output: %s", output)
 		}
@@ -551,6 +565,99 @@ func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) e
 			return fmt.Errorf("failed to link shared path %s: %w", cleanPath, err)
 		}
 		d.log.Info("  Linked: %s -> %s", cleanPath, sharedPath)
+	}
+
+	return nil
+}
+
+// reuseDependencies attempts to recover vendor/node_modules and other build assets from previous release using hardlinks
+func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, finalDir string, cs *changeset.ChangeSet) {
+	if previousVersion == "" {
+		return
+	}
+
+	// Internal helper to reuse a specific path
+	reusePath := func(projectRoot, relPath string) {
+		oldPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, "app", projectRoot, relPath))
+		newPath := filepath.ToSlash(filepath.Join(finalDir, "app", projectRoot, relPath))
+
+		// Check if it's missing in new but exists in old
+		// Use cp -al for cross-release hardlinking (fast and space efficient)
+		cmd := fmt.Sprintf("if [ ! -e %s ] && [ -e %s ]; then mkdir -p %s && cp -al %s %s; fi",
+			newPath, oldPath, filepath.Dir(newPath), oldPath, newPath)
+		sshClient.ExecuteCommand(cmd)
+	}
+
+	// PHP
+	if d.env.Builds.PHP.Enabled && !cs.ComposerChanged {
+		// Always include vendor if not explicitly in ReusablePaths
+		paths := d.env.Builds.PHP.ReusablePaths
+		hasVendor := false
+		for _, p := range paths {
+			if p == "vendor" {
+				hasVendor = true
+				break
+			}
+		}
+		if !hasVendor {
+			paths = append(paths, "vendor")
+		}
+
+		for _, p := range paths {
+			reusePath(d.env.Builds.PHP.ProjectRoot, p)
+		}
+	}
+
+	// Frontend
+	if d.env.Builds.Frontend.Enabled && !cs.PackageChanged {
+		// Always include node_modules if not explicitly in ReusablePaths
+		paths := d.env.Builds.Frontend.ReusablePaths
+		hasNodeModules := false
+		for _, p := range paths {
+			if p == "node_modules" {
+				hasNodeModules = true
+				break
+			}
+		}
+		if !hasNodeModules {
+			paths = append(paths, "node_modules")
+		}
+
+		for _, p := range paths {
+			reusePath(d.env.Builds.Frontend.ProjectRoot, p)
+		}
+	}
+}
+
+// handlePreservedPaths restores files/directories from the previous release that should NOT be updated
+func (d *Deployer) handlePreservedPaths(sshClient *ssh.Client, previousVersion, finalDir string) error {
+	if len(d.env.PreservedPaths) == 0 || previousVersion == "" {
+		return nil
+	}
+
+	d.log.Info("Restoring preserved paths (locking to server version)...")
+	for _, path := range d.env.PreservedPaths {
+		cleanPath := filepath.ToSlash(filepath.Clean(path))
+
+		// Paths are inside 'app' in both releases
+		oldPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, "app", cleanPath))
+		newPath := filepath.ToSlash(filepath.Join(finalDir, "app", cleanPath))
+
+		// Check if source exists before trying to copy
+		exists, err := sshClient.ExecuteCommand(fmt.Sprintf("if [ -e %s ]; then echo \"exists\"; fi", oldPath))
+		if err == nil && strings.TrimSpace(exists) == "exists" {
+			// Remove whatever came in the artifact to ensure a clean copy
+			sshClient.ExecuteCommand(fmt.Sprintf("rm -rf %s", newPath))
+
+			// Copy from old to new (using -p to preserve attributes)
+			cmd := fmt.Sprintf("cp -rfp %s %s", oldPath, newPath)
+			if _, err := sshClient.ExecuteCommand(cmd); err != nil {
+				return fmt.Errorf("failed to preserve path %s: %w", cleanPath, err)
+			}
+			d.log.Info("  Preserved: %s (restored from previous release)", cleanPath)
+		} else {
+			d.log.Warn("  Could not preserve %s: source not found in previous release", cleanPath)
+		}
 	}
 
 	return nil
