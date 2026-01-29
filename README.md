@@ -15,10 +15,11 @@ versaDeploy is designed for developers who want **deterministic, atomic deployme
 
 ## 📖 Documentation
 
-- 📖 **[QUICKSTART.md](QUICKSTART.md)** - Get up and running in 5 minutes.
-- ⚙️ **[DEPLOY.md](DEPLOY.md)** - Detailed reference for `deploy.yml` configuration (Every field explained).
+- 🚀 **[INSTALL.md](INSTALL.md)** - Installation guide for Windows, Linux, and macOS.
+- ⚙️ **[DEPLOY.md](DEPLOY.md)** - Detailed reference for `deploy.yml` configuration.
 - 🔧 **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Solutions for common errors.
-- 📚 **[INDEX.md](INDEX.md)** - Documentation index.
+- 📋 **[CHANGELOG.md](CHANGELOG.md)** - Recent changes and version history.
+- 📚 **[QUICKSTART.md](QUICKSTART.md)** - 5-minute setup guide.
 
 ## 🛠️ Installation
 
