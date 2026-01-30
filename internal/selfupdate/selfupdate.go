@@ -151,7 +151,7 @@ func (u *Updater) performUpdate(url string) error {
 
 	// Set execution bits (for Linux/Mac)
 	if runtime.GOOS != "windows" {
-		_ = os.Chmod(currentPath, 0755)
+		_ = os.Chmod(currentPath, 0775)
 	}
 
 	// On Windows, we can't delete the .old file while we are running,

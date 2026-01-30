@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/user/versaDeploy/internal/state"
 )
@@ -26,6 +28,7 @@ type ChangeSet struct {
 	ComposerHash    string
 	PackageHash     string
 	GoModHash       string
+	Force           bool // If true, ignore change detection and force full build
 }
 
 // Detector handles change detection
@@ -63,7 +66,17 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 		AllFileHashes: make(map[string]string),
 	}
 
-	// Walk the repository and hash all files
+	// Collect all files to hash
+	type fileToHash struct {
+		path    string
+		relPath string
+		ext     string
+	}
+
+	var filesToHash []fileToHash
+	var mu sync.Mutex
+
+	// Walk the repository and collect files
 	err := filepath.Walk(d.repoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -105,46 +118,105 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 			return nil
 		}
 
-		// Calculate hash
-		hash, err := hashFile(path)
-		if err != nil {
-			return fmt.Errorf("failed to hash %s: %w", relPath, err)
-		}
-
-		cs.AllFileHashes[relPath] = hash
-
-		// Check if file changed
-		changed := d.isFileChanged(relPath, hash)
-
-		// Categorize changed files by extension
-		if changed {
-			switch ext {
-			case ".php":
-				cs.PHPFiles = append(cs.PHPFiles, relPath)
-			case ".twig":
-				cs.TwigFiles = append(cs.TwigFiles, relPath)
-			case ".go":
-				cs.GoFiles = append(cs.GoFiles, relPath)
-			case ".js", ".vue", ".ts", ".jsx", ".tsx", ".css", ".scss", ".less":
-				cs.FrontendFiles = append(cs.FrontendFiles, relPath)
-			default:
-				cs.OtherFiles = append(cs.OtherFiles, relPath)
-			}
-
-			// Check if route file changed
-			for _, rf := range d.routeFiles {
-				if relPath == rf {
-					cs.RoutesChanged = true
-					break
-				}
-			}
-		}
+		// Add to list for concurrent hashing
+		mu.Lock()
+		filesToHash = append(filesToHash, fileToHash{
+			path:    path,
+			relPath: relPath,
+			ext:     ext,
+		})
+		mu.Unlock()
 
 		return nil
 	})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to walk repository: %w", err)
+	}
+
+	// Concurrent hashing with worker pool
+	numWorkers := runtime.NumCPU() * 2
+	if numWorkers > len(filesToHash) {
+		numWorkers = len(filesToHash)
+	}
+	if numWorkers < 1 {
+		numWorkers = 1
+	}
+
+	type hashResult struct {
+		relPath string
+		hash    string
+		ext     string
+		err     error
+	}
+
+	jobs := make(chan fileToHash, len(filesToHash))
+	results := make(chan hashResult, len(filesToHash))
+
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for file := range jobs {
+				hash, err := hashFile(file.path)
+				results <- hashResult{
+					relPath: file.relPath,
+					hash:    hash,
+					ext:     file.ext,
+					err:     err,
+				}
+			}
+		}()
+	}
+
+	// Send jobs
+	for _, file := range filesToHash {
+		jobs <- file
+	}
+	close(jobs)
+
+	// Wait for all workers to finish
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	for result := range results {
+		if result.err != nil {
+			return nil, fmt.Errorf("failed to hash %s: %w", result.relPath, result.err)
+		}
+
+		cs.AllFileHashes[result.relPath] = result.hash
+
+		// Check if file changed
+		changed := d.isFileChanged(result.relPath, result.hash)
+
+		// Categorize changed files by extension
+		if changed {
+			switch result.ext {
+			case ".php":
+				cs.PHPFiles = append(cs.PHPFiles, result.relPath)
+			case ".twig":
+				cs.TwigFiles = append(cs.TwigFiles, result.relPath)
+			case ".go":
+				cs.GoFiles = append(cs.GoFiles, result.relPath)
+			case ".js", ".vue", ".ts", ".jsx", ".tsx", ".css", ".scss", ".less":
+				cs.FrontendFiles = append(cs.FrontendFiles, result.relPath)
+			default:
+				cs.OtherFiles = append(cs.OtherFiles, result.relPath)
+			}
+
+			// Check if route file changed
+			for _, rf := range d.routeFiles {
+				if result.relPath == rf {
+					cs.RoutesChanged = true
+					break
+				}
+			}
+		}
 	}
 
 	// Check dependency files

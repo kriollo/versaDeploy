@@ -67,7 +67,7 @@ func TestDetector_Detect(t *testing.T) {
 
 	for path, content := range files {
 		fullPath := filepath.Join(repoDir, path)
-		os.MkdirAll(filepath.Dir(fullPath), 0755)
+		os.MkdirAll(filepath.Dir(fullPath), 0775)
 		os.WriteFile(fullPath, []byte(content), 0644)
 	}
 
@@ -151,7 +151,7 @@ func TestDetector_Detect_IgnoredButCritical(t *testing.T) {
 
 	// Create a .vue file in an ignored directory
 	vuePath := filepath.Join(repoDir, "src/components/App.vue")
-	os.MkdirAll(filepath.Dir(vuePath), 0755)
+	os.MkdirAll(filepath.Dir(vuePath), 0775)
 	os.WriteFile(vuePath, []byte("<template>old</template>"), 0644)
 
 	ignored := []string{"src"} // Entire src folder is ignored

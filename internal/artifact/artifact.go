@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/schollz/progressbar/v3"
 	"github.com/user/versaDeploy/internal/builder"
 )
 
@@ -106,8 +107,19 @@ func GenerateReleaseVersion() string {
 	return time.Now().UTC().Format("20060102-150405")
 }
 
-// Compress creates a .tar.gz archive of the artifact directory
+// Compress creates a .tar.gz archive of the artifact directory with a progress bar
 func (g *Generator) Compress(archivePath string) error {
+	// First, count files for progress bar
+	var fileCount int64
+	filepath.WalkDir(g.artifactDir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			fileCount++
+		}
+		return nil
+	})
+
+	bar := progressbar.Default(fileCount, "Compressing artifact")
+
 	file, err := os.Create(archivePath)
 	if err != nil {
 		return fmt.Errorf("failed to create archive: %w", err)
@@ -217,6 +229,7 @@ func (g *Generator) Compress(archivePath string) error {
 			if err != nil {
 				return fmt.Errorf("failed to copy content for %s: %w", relPath, err)
 			}
+			bar.Add(1)
 		}
 
 		return nil

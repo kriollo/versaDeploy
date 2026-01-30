@@ -362,7 +362,7 @@ environments:
 	home := filepath.ToSlash(t.TempDir())
 	os.Setenv("HOME", home)
 	keyPath := filepath.Join(home, ".ssh", "id_rsa")
-	os.MkdirAll(filepath.Dir(keyPath), 0755)
+	os.MkdirAll(filepath.Dir(keyPath), 0775)
 
 	// On Windows, permissions are tricky. We'll use a very restricted mode
 	// but the check in config.go might still fail if it's too strict for Windows.

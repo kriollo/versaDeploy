@@ -12,6 +12,7 @@ import (
 	"github.com/user/versaDeploy/internal/changeset"
 	"github.com/user/versaDeploy/internal/config"
 	verserrors "github.com/user/versaDeploy/internal/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 // BuildResult tracks what was built
@@ -53,25 +54,44 @@ func (b *Builder) Build() (*BuildResult, error) {
 		return nil, fmt.Errorf("failed to copy repository: %w", err)
 	}
 
-	// Step 2: Build PHP (runs composer, updates vendor in place)
+	// Step 2-4: Build PHP, Go, and Frontend concurrently
+	fmt.Println("→ Running builds concurrently...")
+
+	var g errgroup.Group
+
+	// Build PHP concurrently
 	if b.config.Builds.PHP.Enabled {
-		if err := b.buildPHP(); err != nil {
-			return nil, fmt.Errorf("php build failed: %w", err)
-		}
+		g.Go(func() error {
+			if err := b.buildPHP(); err != nil {
+				return fmt.Errorf("php build failed: %w", err)
+			}
+			return nil
+		})
 	}
 
-	// Step 3: Build Go (creates binary)
+	// Build Go concurrently
 	if b.config.Builds.Go.Enabled {
-		if err := b.buildGo(); err != nil {
-			return nil, fmt.Errorf("go build failed: %w", err)
-		}
+		g.Go(func() error {
+			if err := b.buildGo(); err != nil {
+				return fmt.Errorf("go build failed: %w", err)
+			}
+			return nil
+		})
 	}
 
-	// Step 4: Build Frontend (runs npm, compiles, updates node_modules)
+	// Build Frontend concurrently
 	if b.config.Builds.Frontend.Enabled {
-		if err := b.buildFrontend(); err != nil {
-			return nil, fmt.Errorf("frontend build failed: %w", err)
-		}
+		g.Go(func() error {
+			if err := b.buildFrontend(); err != nil {
+				return fmt.Errorf("frontend build failed: %w", err)
+			}
+			return nil
+		})
+	}
+
+	// Wait for all builds to complete
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	// Step 5: Cleanup ignored paths after builds complete
@@ -86,7 +106,7 @@ func (b *Builder) Build() (*BuildResult, error) {
 // copyEntireRepo copies the entire repository to app/ directory (including ignored paths for build)
 func (b *Builder) copyEntireRepo() error {
 	appDir := filepath.Join(b.artifactDir, "app")
-	if err := os.MkdirAll(appDir, 0755); err != nil {
+	if err := os.MkdirAll(appDir, 0775); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
 
@@ -155,8 +175,8 @@ func (b *Builder) cleanupIgnoredPaths() error {
 
 // buildPHP handles PHP builds
 func (b *Builder) buildPHP() error {
-	// Run composer if composer.json changed
-	if b.changeset.ComposerChanged {
+	// Run composer if composer.json changed or if force redeploy is requested
+	if b.changeset.ComposerChanged || b.changeset.Force {
 		fmt.Println("→ Running composer install...")
 
 		// Run composer in the artifact's app directory
@@ -183,7 +203,7 @@ func (b *Builder) buildPHP() error {
 
 // buildGo handles Go builds
 func (b *Builder) buildGo() error {
-	if !b.changeset.GoModChanged && len(b.changeset.GoFiles) == 0 {
+	if !b.changeset.Force && !b.changeset.GoModChanged && len(b.changeset.GoFiles) == 0 {
 		return nil // No Go changes
 	}
 
@@ -218,7 +238,7 @@ func (b *Builder) buildFrontend() error {
 	npmDir := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot)
 	nmPath := filepath.Join(npmDir, "node_modules")
 
-	needsInstall := b.changeset.PackageChanged
+	needsInstall := b.changeset.PackageChanged || b.changeset.Force
 	if !needsInstall && len(b.changeset.FrontendFiles) > 0 {
 		if _, err := os.Stat(nmPath); os.IsNotExist(err) {
 			needsInstall = true
@@ -241,7 +261,7 @@ func (b *Builder) buildFrontend() error {
 
 	// If compile_command doesn't contain {file}, run it once if any frontend files changed
 	if !strings.Contains(b.config.Builds.Frontend.CompileCommand, "{file}") {
-		if len(b.changeset.FrontendFiles) > 0 {
+		if len(b.changeset.FrontendFiles) > 0 || b.changeset.Force {
 			fmt.Println("→ Compiling frontend (global)...")
 
 			// Run compile in the artifact's app directory
@@ -300,14 +320,18 @@ func (b *Builder) cleanupDevDependencies() error {
 		return nil // Feature not enabled
 	}
 
-	if !b.changeset.PackageChanged {
-		return nil // No package changes, skip cleanup
+	if !b.changeset.PackageChanged && len(b.changeset.FrontendFiles) == 0 && !b.changeset.Force {
+		return nil // No frontend-related changes, skip cleanup
 	}
 
 	fmt.Println("→ Cleaning up dev dependencies...")
+	nodeModulesDst := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot, "node_modules")
+
+	// Measure size before
+	beforeSize, _ := b.calculateDirSize(nodeModulesDst)
+	fmt.Printf("   Size before cleanup: %d MB\n", beforeSize/(1024*1024))
 
 	// Remove node_modules from artifact
-	nodeModulesDst := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot, "node_modules")
 	if err := os.RemoveAll(nodeModulesDst); err != nil {
 		return fmt.Errorf("failed to remove node_modules from artifact: %w", err)
 	}
@@ -323,10 +347,33 @@ func (b *Builder) cleanupDevDependencies() error {
 		fmt.Printf("   Production install output:\n%s\n", string(output))
 		return verserrors.New(verserrors.CodeBuildFailed, "Production install failed", "Check your production_command configuration.", fmt.Errorf("%w: %s", err, string(output)))
 	}
-	fmt.Println("   ✓ Production dependencies installed")
+
+	// Always log output in debug/verbose or if requested to verify
+	if len(output) > 0 {
+		fmt.Printf("   Command output: %s\n", strings.TrimSpace(string(output)))
+	}
+
+	// Measure size after
+	afterSize, _ := b.calculateDirSize(nodeModulesDst)
+	fmt.Printf("   Size after cleanup: %d MB\n", afterSize/(1024*1024))
 
 	fmt.Println("→ Dev dependencies cleaned up successfully")
 	return nil
+}
+
+// calculateDirSize calculates the total size of a directory recursively
+func (b *Builder) calculateDirSize(path string) (int64, error) {
+	var size int64
+	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size, err
 }
 
 // executeCommand runs a command in a shell based on the current OS
@@ -388,69 +435,6 @@ func copyFile(src, dst string) error {
 
 	// Copy permissions
 	os.Chmod(dst, info.Mode())
-
-	return nil
-}
-
-// copyDir recursively copies a directory, flattening symlinks for the artifact
-func copyDir(src, dst string) error {
-	// Root directory creation
-	srcInfo, err := os.Lstat(src)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
-		return err
-	}
-
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(dst, entry.Name())
-
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		// Handle Symlinks/Junctions by following them (flattening)
-		if info.Mode()&os.ModeSymlink != 0 || (runtime.GOOS == "windows" && (info.Mode()&os.ModeDevice != 0)) {
-			realPath, err := filepath.EvalSymlinks(srcPath)
-			if err != nil {
-				continue
-			}
-
-			realInfo, err := os.Stat(realPath)
-			if err != nil {
-				continue
-			}
-
-			if realInfo.IsDir() {
-				if err := copyDir(realPath, dstPath); err != nil {
-					return err
-				}
-			} else {
-				if err := copyFile(realPath, dstPath); err != nil {
-					return err
-				}
-			}
-			continue
-		}
-
-		if info.IsDir() {
-			if err := copyDir(srcPath, dstPath); err != nil {
-				return err
-			}
-		} else {
-			if err := copyFile(srcPath, dstPath); err != nil {
-				return err
-			}
-		}
-	}
 
 	return nil
 }

@@ -28,16 +28,7 @@ var rootCmd = &cobra.Command{
 - Detects changes via SHA256 hashing
 - Builds artifacts selectively outside production
 - Deploys atomically using symlink switching
-- Supports instant rollback
-
-Available Commands:
-  deploy      Deploy to specified environment
-  rollback    Rollback to previous release
-  status      Show deployment status
-  ssh-test    Test SSH connection to environment
-  init        Initialize a new versaDeploy configuration
-  version     Show application version
-  self-update Check and install updates for versaDeploy`,
+- Supports instant rollback`,
 }
 
 var versionCmd = &cobra.Command{
@@ -71,6 +62,7 @@ var deployCmd = &cobra.Command{
 		env := args[0]
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		initialDeploy, _ := cmd.Flags().GetBool("initial-deploy")
+		force, _ := cmd.Flags().GetBool("force")
 
 		// Initialize logger
 		log, err := logger.NewLogger(logFile, verbose, debug)
@@ -92,7 +84,7 @@ var deployCmd = &cobra.Command{
 		}
 
 		// Create deployer
-		d, err := deployer.NewDeployer(cfg, env, repoPath, dryRun, initialDeploy, log)
+		d, err := deployer.NewDeployer(cfg, env, repoPath, dryRun, initialDeploy, force, log)
 		if err != nil {
 			return err
 		}
@@ -129,7 +121,7 @@ var rollbackCmd = &cobra.Command{
 		}
 
 		// Create deployer
-		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, log)
+		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, false, log)
 		if err != nil {
 			return err
 		}
@@ -166,7 +158,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		// Create deployer
-		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, log)
+		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, false, log)
 		if err != nil {
 			return err
 		}
@@ -315,6 +307,7 @@ func init() {
 
 	deployCmd.Flags().Bool("dry-run", false, "Show changes without deploying")
 	deployCmd.Flags().Bool("initial-deploy", false, "Flag for first deployment")
+	deployCmd.Flags().Bool("force", false, "Force redeploy even if no changes detected")
 
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(rollbackCmd)

@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -374,34 +375,24 @@ func (c *Client) CleanupOldReleases(releasesDir string, keepCount int) error {
 		return err
 	}
 
-	// Sort releases (assuming timestamp format YYYYMMDD-HHMMSS)
 	// Keep newest releases
 	if len(releases) <= keepCount {
 		return nil // Nothing to clean up
 	}
 
-	// Sort in reverse order (newest first)
-	// Simple string sort works due to timestamp format
-	sortedReleases := make([]string, len(releases))
-	copy(sortedReleases, releases)
-
-	// Simple bubble sort (good enough for small lists)
-	for i := 0; i < len(sortedReleases); i++ {
-		for j := i + 1; j < len(sortedReleases); j++ {
-			if strings.Compare(sortedReleases[i], sortedReleases[j]) < 0 {
-				sortedReleases[i], sortedReleases[j] = sortedReleases[j], sortedReleases[i]
-			}
-		}
-	}
+	// Sort releases in descending order (newest first)
+	// Simple string sort works due to timestamp format YYYYMMDD-HHMMSS
+	sort.Sort(sort.Reverse(sort.StringSlice(releases)))
 
 	// Delete old releases
-	for i := keepCount; i < len(sortedReleases); i++ {
-		releaseDir := filepath.ToSlash(filepath.Join(releasesDir, sortedReleases[i]))
-		cmd := fmt.Sprintf("rm -rf %s", releaseDir)
-		if _, err := c.ExecuteCommand(cmd); err != nil {
-			return fmt.Errorf("failed to delete old release %s: %w", sortedReleases[i], err)
+	for i := keepCount; i < len(releases); i++ {
+		releaseDir := filepath.ToSlash(filepath.Join(releasesDir, releases[i]))
+		// Use %q for safe quoting and -- to prevent arguments injection
+		cmd := fmt.Sprintf("rm -rf -- %q", releaseDir)
+		output, err := c.ExecuteCommand(cmd)
+		if err != nil {
+			return fmt.Errorf("failed to delete old release %s: %w (output: %s)", releases[i], err, output)
 		}
-		fmt.Printf("Cleaned up old release: %s\n", sortedReleases[i])
 	}
 
 	return nil

@@ -16,7 +16,7 @@ func TestBuilder_copyEntireRepo(t *testing.T) {
 
 	// Create some files in repo
 	os.WriteFile(filepath.Join(repoDir, "file1.txt"), []byte("1"), 0644)
-	os.MkdirAll(filepath.Join(repoDir, "dir1"), 0755)
+	os.MkdirAll(filepath.Join(repoDir, "dir1"), 0775)
 	os.WriteFile(filepath.Join(repoDir, "dir1/file2.txt"), []byte("2"), 0644)
 
 	b := &Builder{
@@ -74,27 +74,6 @@ func TestCopyFile(t *testing.T) {
 	}
 }
 
-func TestCopyDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	src := filepath.Join(tmpDir, "src")
-	dst := filepath.Join(tmpDir, "dst")
-
-	os.MkdirAll(filepath.Join(src, "subdir"), 0755)
-	os.WriteFile(filepath.Join(src, "file1.txt"), []byte("1"), 0644)
-	os.WriteFile(filepath.Join(src, "subdir", "file2.txt"), []byte("2"), 0644)
-
-	if err := copyDir(src, dst); err != nil {
-		t.Fatalf("copyDir() error = %v", err)
-	}
-
-	if _, err := os.Stat(filepath.Join(dst, "file1.txt")); os.IsNotExist(err) {
-		t.Error("file1.txt not copied")
-	}
-	if _, err := os.Stat(filepath.Join(dst, "subdir", "file2.txt")); os.IsNotExist(err) {
-		t.Error("file2.txt not copied")
-	}
-}
-
 func TestNewBuilder(t *testing.T) {
 	cfg := &config.Environment{}
 	cs := &changeset.ChangeSet{}
@@ -114,7 +93,7 @@ func TestBuilder_BuildPHP_NoComposer(t *testing.T) {
 
 	// Create some files in repo
 	os.WriteFile(filepath.Join(repoDir, "index.php"), []byte("<?php"), 0644)
-	os.MkdirAll(filepath.Join(repoDir, "src"), 0755)
+	os.MkdirAll(filepath.Join(repoDir, "src"), 0775)
 	os.WriteFile(filepath.Join(repoDir, "src/helpers.php"), []byte("<?php"), 0644)
 
 	cfg := &config.Environment{
@@ -154,7 +133,7 @@ func TestBuilder_CleanupIgnoredPaths(t *testing.T) {
 	artifactDir := t.TempDir()
 
 	// Create structure
-	os.MkdirAll(filepath.Join(repoDir, "src"), 0755)
+	os.MkdirAll(filepath.Join(repoDir, "src"), 0775)
 	os.WriteFile(filepath.Join(repoDir, "src/main.go"), []byte("go"), 0644)
 	os.WriteFile(filepath.Join(repoDir, "keep.txt"), []byte("keep"), 0644)
 
@@ -218,7 +197,7 @@ func TestBuilder_Build_Subdirectories(t *testing.T) {
 	artifactDir := t.TempDir()
 
 	// Create structure: api/composer.json
-	os.MkdirAll(filepath.Join(repoDir, "api"), 0755)
+	os.MkdirAll(filepath.Join(repoDir, "api"), 0775)
 	os.WriteFile(filepath.Join(repoDir, "api/composer.json"), []byte("{}"), 0644)
 	os.WriteFile(filepath.Join(repoDir, "api/index.php"), []byte("<?php"), 0644)
 

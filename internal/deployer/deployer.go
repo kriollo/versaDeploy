@@ -29,11 +29,12 @@ type Deployer struct {
 	repoPath      string
 	dryRun        bool
 	initialDeploy bool
+	force         bool
 	log           *logger.Logger
 }
 
 // NewDeployer creates a new deployer
-func NewDeployer(cfg *config.Config, envName, repoPath string, dryRun, initialDeploy bool, log *logger.Logger) (*Deployer, error) {
+func NewDeployer(cfg *config.Config, envName, repoPath string, dryRun, initialDeploy, force bool, log *logger.Logger) (*Deployer, error) {
 	env, err := cfg.GetEnvironment(envName)
 	if err != nil {
 		return nil, err
@@ -46,6 +47,7 @@ func NewDeployer(cfg *config.Config, envName, repoPath string, dryRun, initialDe
 		repoPath:      repoPath,
 		dryRun:        dryRun,
 		initialDeploy: initialDeploy,
+		force:         force,
 		log:           log,
 	}, nil
 }
@@ -137,9 +139,15 @@ func (d *Deployer) Deploy() error {
 		return err
 	}
 
-	if !cs.HasChanges() {
+	cs.Force = d.force
+
+	if !cs.HasChanges() && !d.force {
 		d.log.Info("No changes detected - skipping deployment")
 		return nil
+	}
+
+	if d.force {
+		d.log.Info("Force redeploy requested - bypassing change detection")
 	}
 
 	d.log.Info("Changes detected: %d PHP, %d Twig, %d Go, %d Frontend files",
@@ -157,7 +165,7 @@ func (d *Deployer) Deploy() error {
 	// Step 9: Build artifacts
 	d.log.Info("Building artifacts...")
 	artifactDir := filepath.Join(os.TempDir(), "versadeploy-artifact-"+releaseVersion)
-	if err := os.MkdirAll(artifactDir, 0755); err != nil {
+	if err := os.MkdirAll(artifactDir, 0775); err != nil {
 		return err
 	}
 	defer os.RemoveAll(artifactDir)
@@ -202,17 +210,18 @@ func (d *Deployer) Deploy() error {
 	}
 
 	// Step 10: Compress and upload to staging
-	d.log.Info("Compressing and uploading release...")
 	archiveName := fmt.Sprintf("%s.tar.gz", releaseVersion)
 	localArchive := filepath.Join(os.TempDir(), archiveName)
 	remoteArchive := filepath.ToSlash(filepath.Join(d.env.RemotePath, archiveName))
 
 	g := artifact.NewGenerator(artifactDir, releaseVersion, commitHash)
+	d.log.Info("Compressing release...")
 	if err := g.Compress(localArchive); err != nil {
 		return fmt.Errorf("failed to compress release: %w", err)
 	}
 	defer os.Remove(localArchive)
 
+	d.log.Info("Uploading release to remote server...")
 	if err := sshClient.UploadFileWithProgress(localArchive, remoteArchive); err != nil {
 		return err
 	}
@@ -304,7 +313,7 @@ func (d *Deployer) Deploy() error {
 
 	// Upload deploy.lock directly as a file
 	tmpUploadDir := filepath.Join(os.TempDir(), "lockupload")
-	os.MkdirAll(tmpUploadDir, 0755)
+	os.MkdirAll(tmpUploadDir, 0775)
 	defer os.RemoveAll(tmpUploadDir)
 
 	lockUploadPath := filepath.Join(tmpUploadDir, "deploy.lock")

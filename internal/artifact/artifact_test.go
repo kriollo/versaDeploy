@@ -24,7 +24,7 @@ func TestGenerator_Compress(t *testing.T) {
 
 	for path, content := range files {
 		fullPath := filepath.Join(artifactDir, path)
-		os.MkdirAll(filepath.Dir(fullPath), 0755)
+		os.MkdirAll(filepath.Dir(fullPath), 0775)
 		os.WriteFile(fullPath, []byte(content), 0644)
 	}
 
