@@ -107,8 +107,96 @@ func GenerateReleaseVersion() string {
 	return time.Now().UTC().Format("20060102-150405")
 }
 
-// Compress creates a .tar.gz archive of the artifact directory with a progress bar
+// Compress creates a single-part .tar.gz archive of the artifact directory
 func (g *Generator) Compress(archivePath string) error {
+	// Use 1GB chunk size to ensure a single part for standard compression
+	chunks, err := g.CompressChunked(archivePath, 1024*1024*1024)
+	if err != nil {
+		return err
+	}
+
+	if len(chunks) == 1 {
+		// Rename the first chunk to the target archive path
+		return os.Rename(chunks[0], archivePath)
+	}
+
+	return nil
+}
+
+// chunkWriter is a custom writer that splits output into chunks
+type chunkWriter struct {
+	basePath  string
+	chunkSize int64
+	current   *os.File
+	currentID int
+	totalSize int64
+	bar       *progressbar.ProgressBar
+}
+
+func (cw *chunkWriter) Write(p []byte) (n int, err error) {
+	if cw.current == nil {
+		if err := cw.nextChunk(); err != nil {
+			return 0, err
+		}
+	}
+
+	remaining := cw.chunkSize - cw.totalSize
+	if int64(len(p)) <= remaining {
+		n, err = cw.current.Write(p)
+		cw.totalSize += int64(n)
+		return n, err
+	}
+
+	// Write what fits
+	n1, err := cw.current.Write(p[:remaining])
+	if err != nil {
+		return n1, err
+	}
+	cw.totalSize += int64(n1)
+
+	// Switch to next chunk
+	if err := cw.nextChunk(); err != nil {
+		return n1, err
+	}
+
+	// Write the rest (recursively if needed for very large p)
+	n2, err := cw.Write(p[remaining:])
+	return n1 + n2, err
+}
+
+func (cw *chunkWriter) nextChunk() error {
+	if cw.current != nil {
+		cw.current.Close()
+	}
+
+	cw.currentID++
+	cw.totalSize = 0
+	path := fmt.Sprintf("%s.%03d", cw.basePath, cw.currentID)
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	cw.current = f
+	return nil
+}
+
+func (cw *chunkWriter) Close() error {
+	if cw.current != nil {
+		return cw.current.Close()
+	}
+	return nil
+}
+
+func (cw *chunkWriter) ChunkPaths() []string {
+	paths := []string{}
+	for i := 1; i <= cw.currentID; i++ {
+		paths = append(paths, fmt.Sprintf("%s.%03d", cw.basePath, i))
+	}
+	return paths
+}
+
+// CompressChunked creates a multi-part .tar.gz archive of the artifact directory
+func (g *Generator) CompressChunked(archivePath string, chunkSize int64) ([]string, error) {
 	// First, count files for progress bar
 	var fileCount int64
 	filepath.WalkDir(g.artifactDir, func(path string, d os.DirEntry, err error) error {
@@ -118,28 +206,27 @@ func (g *Generator) Compress(archivePath string) error {
 		return nil
 	})
 
-	bar := progressbar.Default(fileCount, "Compressing artifact")
+	bar := progressbar.Default(fileCount, "Compressing artifact (chunked)")
 
-	file, err := os.Create(archivePath)
-	if err != nil {
-		return fmt.Errorf("failed to create archive: %w", err)
+	cw := &chunkWriter{
+		basePath:  archivePath,
+		chunkSize: chunkSize,
+		bar:       bar,
 	}
-	defer file.Close()
+	defer cw.Close()
 
-	gw := gzip.NewWriter(file)
+	gw := gzip.NewWriter(cw)
 	defer gw.Close()
 
 	tw := tar.NewWriter(gw)
 	defer tw.Close()
 
-	return filepath.WalkDir(g.artifactDir, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(g.artifactDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			// Skip entries that cause errors (like unreadable symlinks)
 			fmt.Printf("[WARN] Skipping path (error): %s - %v\n", path, err)
 			return nil
 		}
 
-		// Get relative path
 		relPath, err := filepath.Rel(g.artifactDir, path)
 		if err != nil {
 			return err
@@ -149,84 +236,60 @@ func (g *Generator) Compress(archivePath string) error {
 			return nil
 		}
 
-		// Get file info
 		info, err := d.Info()
 		if err != nil {
 			fmt.Printf("[WARN] Skipping (cannot get info): %s - %v\n", relPath, err)
 			return nil
 		}
 
-		// Create header manually to avoid Windows file mode issues
 		header := &tar.Header{
 			Name:    filepath.ToSlash(relPath),
 			ModTime: info.ModTime(),
 			Size:    info.Size(),
 		}
 
-		// Handle symlinks, junctions and reparse points
 		isSymlink := info.Mode()&os.ModeSymlink != 0
-
-		// Detailed check for Windows Junctions (which often appear as Dir | Irregular)
 		if !isSymlink && info.Mode()&os.ModeIrregular != 0 {
-			// Try to read as link anyway to see if it's a junction
 			if _, err := os.Readlink(path); err == nil {
 				isSymlink = true
 			}
 		}
 
 		if isSymlink {
-			linkTarget, err := os.Readlink(path)
-			if err != nil {
-				// On Windows, symlinks/junctions may not be readable
-				// Or they might be dangling (pointing to the ignored .pnpm)
-				fmt.Printf("[WARN] Skipping dangling/unreadable link: %s\n", relPath)
-				return nil
-			}
-
-			// Convert absolute targets (common on Windows junctions) to relative targets
-			// so they work correctly when extracted on a different system/path.
+			linkTarget, _ := os.Readlink(path)
 			if filepath.IsAbs(linkTarget) {
-				// Check if the target is inside our artifact directory
-				// Use filepath.Dir(path) as the source for the relative jump
 				if relTarget, err := filepath.Rel(g.artifactDir, linkTarget); err == nil {
-					// Check if it's actually inside (doesn't start with ..)
 					if !strings.HasPrefix(relTarget, ".."+string(filepath.Separator)) && relTarget != ".." {
-						// Calculate relative path from the link directory to the target
 						if portableTarget, err := filepath.Rel(filepath.Dir(path), linkTarget); err == nil {
 							linkTarget = portableTarget
 						}
 					}
 				}
 			}
-
 			header.Typeflag = tar.TypeSymlink
 			header.Linkname = filepath.ToSlash(linkTarget)
 			header.Size = 0
 		} else if info.IsDir() {
 			header.Typeflag = tar.TypeDir
-			header.Mode = 0775 // rwxrwxr-x
+			header.Mode = 0775
 		} else {
 			header.Typeflag = tar.TypeReg
-			header.Mode = 0664 // rw-rw-r--
+			header.Mode = 0774
 		}
 
-		// Write header
 		if err := tw.WriteHeader(header); err != nil {
 			return fmt.Errorf("failed to write header for %s: %w", relPath, err)
 		}
 
-		// Only write content for regular files
 		if header.Typeflag == tar.TypeReg {
 			f, err := os.Open(path)
 			if err != nil {
-				// Final safety check for files that disappeared or are locked
 				fmt.Printf("[WARN] Skipping file (cannot open): %s - %v\n", relPath, err)
 				return nil
 			}
 			defer f.Close()
 
-			_, err = io.Copy(tw, f)
-			if err != nil {
+			if _, err = io.Copy(tw, f); err != nil {
 				return fmt.Errorf("failed to copy content for %s: %w", relPath, err)
 			}
 			bar.Add(1)
@@ -234,4 +297,15 @@ func (g *Generator) Compress(archivePath string) error {
 
 		return nil
 	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Close tar and gzip before returning paths to ensure flushing
+	tw.Close()
+	gw.Close()
+	cw.Close()
+
+	return cw.ChunkPaths(), nil
 }

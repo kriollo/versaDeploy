@@ -17,6 +17,8 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/user/versaDeploy/internal/config"
 	verserrors "github.com/user/versaDeploy/internal/errors"
 )
@@ -96,8 +98,8 @@ func NewClient(cfg *config.SSHConfig) (*Client, error) {
 		return nil, verserrors.Wrap(fmt.Errorf("failed to connect to SSH server after %d attempts: %w", maxRetries, err))
 	}
 
-	// Create SFTP client
-	sftpClient, err := sftp.NewClient(sshClient)
+	// Create SFTP client with optimized settings
+	sftpClient, err := sftp.NewClient(sshClient, sftp.MaxPacket(1<<15))
 	if err != nil {
 		sshClient.Close()
 		return nil, fmt.Errorf("failed to create SFTP client: %w", err)
@@ -150,12 +152,61 @@ func (c *Client) UploadDirectory(localDir, remoteDir string) error {
 		}
 
 		// Upload file
-		return c.uploadFile(localPath, remotePath)
+		return c.uploadFile(localPath, remotePath, nil)
 	})
 }
 
-// uploadFile uploads a single file
-func (c *Client) uploadFile(localPath, remotePath string) error {
+// UploadFilesParallel uploads multiple files concurrently to a remote directory
+func (c *Client) UploadFilesParallel(localPaths []string, remoteDir string, concurrency int) error {
+	if concurrency <= 0 {
+		concurrency = 3
+	}
+
+	// Create remote directory if it doesn't exist
+	if err := c.sftpClient.MkdirAll(remoteDir); err != nil {
+		return fmt.Errorf("failed to create remote directory: %w", err)
+	}
+
+	// Calculate total size for unified progress bar
+	var totalSize int64
+	for _, p := range localPaths {
+		info, err := os.Stat(p)
+		if err == nil {
+			totalSize += info.Size()
+		}
+	}
+
+	bar := progressbar.DefaultBytes(totalSize, "Uploading archive chunks")
+
+	type uploadJob struct {
+		localPath  string
+		remotePath string
+	}
+
+	jobs := make(chan uploadJob, len(localPaths))
+	for _, localPath := range localPaths {
+		remotePath := filepath.ToSlash(filepath.Join(remoteDir, filepath.Base(localPath)))
+		jobs <- uploadJob{localPath, remotePath}
+	}
+	close(jobs)
+
+	var g errgroup.Group
+	for i := 0; i < concurrency; i++ {
+		g.Go(func() error {
+			for job := range jobs {
+				if err := c.uploadFile(job.localPath, job.remotePath, bar); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
+	return g.Wait()
+}
+
+// uploadFile uploads a single file, optionally reporting progress to a writer
+func (c *Client) uploadFile(localPath, remotePath string, progress io.Writer) error {
 	// Open local file
 	localFile, err := os.Open(localPath)
 	if err != nil {
@@ -171,7 +222,12 @@ func (c *Client) uploadFile(localPath, remotePath string) error {
 	defer remoteFile.Close()
 
 	// Copy contents
-	if _, err := io.Copy(remoteFile, localFile); err != nil {
+	var writer io.Writer = remoteFile
+	if progress != nil {
+		writer = io.MultiWriter(remoteFile, progress)
+	}
+
+	if _, err := io.Copy(writer, localFile); err != nil {
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
 
@@ -249,13 +305,13 @@ func (c *Client) UploadFileWithProgress(localPath, remotePath string) error {
 // ExtractArchive extracts a tar.gz archive on the remote server
 func (c *Client) ExtractArchive(archivePath, targetDir string) error {
 	// Create target directory if it doesn't exist
-	_, err := c.ExecuteCommand(fmt.Sprintf("mkdir -p %s", targetDir))
+	_, err := c.ExecuteCommand(fmt.Sprintf("mkdir -p -- %q", targetDir))
 	if err != nil {
 		return fmt.Errorf("failed to create target directory: %w", err)
 	}
 
 	// Extract
-	cmd := fmt.Sprintf("tar -xzf %s -C %s", archivePath, targetDir)
+	cmd := fmt.Sprintf("tar -xzf %q -C %q", archivePath, targetDir)
 	output, err := c.ExecuteCommand(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to extract archive: %w (output: %s)", err, output)
@@ -436,6 +492,26 @@ func (c *Client) CheckDiskSpace(path string, requiredBytes int64) error {
 		availableBytes/(1024*1024), requiredWithBuffer/(1024*1024))
 
 	return nil
+}
+
+// AcquireLock attempts to acquire a deployment lock using atomic directory creation
+func (c *Client) AcquireLock(lockPath string) error {
+	cmd := fmt.Sprintf("mkdir %q", lockPath)
+	_, err := c.ExecuteCommand(cmd)
+	if err != nil {
+		return verserrors.New(verserrors.CodeConfigInvalid,
+			"Deployment lock already held",
+			"Another deployment is currently in progress. If you are sure no one else is deploying, manually remove the directory: "+lockPath,
+			err)
+	}
+	return nil
+}
+
+// ReleaseLock releases the deployment lock
+func (c *Client) ReleaseLock(lockPath string) error {
+	cmd := fmt.Sprintf("rmdir %q", lockPath)
+	_, err := c.ExecuteCommand(cmd)
+	return err
 }
 
 // createHostKeyCallback returns an SSH HostKeyCallback based on configuration

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.2rc] - 2026-01-30
+
+### Added
+
+- **Project Status Badges**: Added build, release, and license badges to README.md.
+
+### Fixed
+
+- **Version Consistency**: Synchronized internal versioning with the release candidate tag.
+
 ## [1.0.1 RC] - 2026-01-30
 
 ### Added

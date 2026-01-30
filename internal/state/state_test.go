@@ -69,3 +69,27 @@ func TestParse_Errors(t *testing.T) {
 		t.Error("expected error for unsupported version")
 	}
 }
+
+func TestSortReleases(t *testing.T) {
+	releases := []string{
+		"20260129-100000",
+		"20260130-100000",
+		"20260130-090000",
+		"20260128-100000",
+	}
+
+	SortReleases(releases)
+
+	expected := []string{
+		"20260130-100000",
+		"20260130-090000",
+		"20260129-100000",
+		"20260128-100000",
+	}
+
+	for i := range expected {
+		if releases[i] != expected[i] {
+			t.Errorf("at index %d: expected %s, got %s", i, expected[i], releases[i])
+		}
+	}
+}

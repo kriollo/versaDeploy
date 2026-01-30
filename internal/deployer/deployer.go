@@ -17,6 +17,7 @@ import (
 	"github.com/user/versaDeploy/internal/logger"
 	"github.com/user/versaDeploy/internal/ssh"
 	"github.com/user/versaDeploy/internal/state"
+	"golang.org/x/sync/errgroup"
 )
 
 const ReleasesToKeep = 5
@@ -97,6 +98,19 @@ func (d *Deployer) Deploy() error {
 		return verserrors.Wrap(err)
 	}
 	defer sshClient.Close()
+
+	// Step 5.5: Acquire deployment lock to prevent concurrent deployments
+	lockDirPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, ".versa.lock"))
+	d.log.Info("Acquiring deployment lock...")
+	if err := sshClient.AcquireLock(lockDirPath); err != nil {
+		return err
+	}
+	defer func() {
+		d.log.Info("Releasing deployment lock...")
+		if err := sshClient.ReleaseLock(lockDirPath); err != nil {
+			d.log.Warn("Failed to release deployment lock: %v", err)
+		}
+	}()
 
 	// Step 6: Fetch deploy.lock from remote
 	lockPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "deploy.lock"))
@@ -194,7 +208,7 @@ func (d *Deployer) Deploy() error {
 	finalDir := filepath.ToSlash(filepath.Join(releasesDir, releaseVersion))
 
 	// Create releases directory if doesn't exist
-	if _, err := sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p %s", releasesDir)); err != nil {
+	if _, err := sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p -- %q", releasesDir)); err != nil {
 		return err
 	}
 
@@ -209,21 +223,36 @@ func (d *Deployer) Deploy() error {
 		}
 	}
 
-	// Step 10: Compress and upload to staging
+	// Step 10: Compress and upload to staging (Chunked Parallel)
 	archiveName := fmt.Sprintf("%s.tar.gz", releaseVersion)
-	localArchive := filepath.Join(os.TempDir(), archiveName)
+	localArchiveBase := filepath.Join(os.TempDir(), archiveName)
 	remoteArchive := filepath.ToSlash(filepath.Join(d.env.RemotePath, archiveName))
 
 	g := artifact.NewGenerator(artifactDir, releaseVersion, commitHash)
-	d.log.Info("Compressing release...")
-	if err := g.Compress(localArchive); err != nil {
+	d.log.Info("Compressing release into chunks...")
+
+	// Use 10MB chunks for parallel upload optimization
+	const chunkSize = 10 * 1024 * 1024
+	chunkPaths, err := g.CompressChunked(localArchiveBase, chunkSize)
+	if err != nil {
 		return fmt.Errorf("failed to compress release: %w", err)
 	}
-	defer os.Remove(localArchive)
+	defer func() {
+		for _, p := range chunkPaths {
+			os.Remove(p)
+		}
+	}()
 
-	d.log.Info("Uploading release to remote server...")
-	if err := sshClient.UploadFileWithProgress(localArchive, remoteArchive); err != nil {
-		return err
+	d.log.Info("Uploading %d chunks in parallel to remote server...", len(chunkPaths))
+	if err := sshClient.UploadFilesParallel(chunkPaths, d.env.RemotePath, 4); err != nil {
+		return fmt.Errorf("parallel upload failed: %w", err)
+	}
+
+	// Reassemble chunks on the remote server
+	d.log.Info("Reassembling artifact on server...")
+	reassembleCmd := fmt.Sprintf("cat %q.* > %q && rm -f %q.*", remoteArchive, remoteArchive, remoteArchive)
+	if _, err := sshClient.ExecuteCommand(reassembleCmd); err != nil {
+		return fmt.Errorf("failed to reassemble artifact on server: %w", err)
 	}
 
 	// Extract on remote
@@ -233,11 +262,11 @@ func (d *Deployer) Deploy() error {
 	}
 
 	// Cleanup remote archive
-	sshClient.ExecuteCommand(fmt.Sprintf("rm -f %s", remoteArchive))
+	sshClient.ExecuteCommand(fmt.Sprintf("rm -f -- %q", remoteArchive))
 
-	if _, err := sshClient.ExecuteCommand(fmt.Sprintf("mv %s %s", stagingDir, finalDir)); err != nil {
+	if _, err := sshClient.ExecuteCommand(fmt.Sprintf("mv -T -- %q %q", stagingDir, finalDir)); err != nil {
 		// Cleanup staging on failure
-		sshClient.ExecuteCommand(fmt.Sprintf("rm -rf %s", stagingDir))
+		sshClient.ExecuteCommand(fmt.Sprintf("rm -rf -- %q", stagingDir))
 		return fmt.Errorf("failed to finalize release: %w", err)
 	}
 
@@ -276,24 +305,24 @@ func (d *Deployer) Deploy() error {
 			hookTimeout = 300 * time.Second // Default 5 minutes
 		}
 
-		for _, hook := range d.env.PostDeploy {
-			// Wrap the hook to run within the newly deployed 'app' directory
-			// Use the absolute path to the actual release folder for maximum robustness
-			appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
-			wrappedHook := fmt.Sprintf("cd %s && %s", appPath, hook)
-
-			d.log.Info("Executing: %s (in %s)", hook, appPath)
-			output, err := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
-			if err != nil {
-				d.log.Error("Post-deploy hook failed with output:\n%s", output)
-				// Rollback on hook failure
-				d.log.Info("Critical Error in Hook: Deployment will be rolled back to version %s", previousLock.LastDeploy.ReleaseDir)
-				if rollbackErr := d.rollback(sshClient, previousLock); rollbackErr != nil {
-					return fmt.Errorf("hook failed and rollback also failed: %w", rollbackErr)
+		for _, hookConfig := range d.env.PostDeploy {
+			if hookConfig.Command != "" {
+				if err := d.runHook(sshClient, finalDir, hookConfig.Command, previousLock); err != nil {
+					return err
 				}
-				return fmt.Errorf("post-deploy hook failed (rolled back to %s): %w", previousLock.LastDeploy.ReleaseDir, err)
+			} else if len(hookConfig.Parallel) > 0 {
+				var g errgroup.Group
+				d.log.Info("Executing parallel hook group (%d commands)...", len(hookConfig.Parallel))
+				for _, h := range hookConfig.Parallel {
+					cmd := h // closure capture
+					g.Go(func() error {
+						return d.runHook(sshClient, finalDir, cmd, previousLock)
+					})
+				}
+				if err := g.Wait(); err != nil {
+					return err // runHook already handles rollback and specific logging
+				}
 			}
-			d.log.Info("Hook output: %s", output)
 		}
 	}
 
@@ -349,6 +378,35 @@ func (d *Deployer) rollback(sshClient *ssh.Client, previousLock *state.DeployLoc
 	return sshClient.CreateSymlink(relativeTarget, currentSymlink)
 }
 
+func (d *Deployer) runHook(sshClient *ssh.Client, finalDir, hook string, previousLock *state.DeployLock) error {
+	hookTimeout := time.Duration(d.env.HookTimeout) * time.Second
+	if hookTimeout <= 0 {
+		hookTimeout = 300 * time.Second
+	}
+
+	appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
+	wrappedHook := fmt.Sprintf("cd %s && %s", appPath, hook)
+
+	d.log.Info("Executing: %s (in %s)", hook, appPath)
+	output, err := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
+	if err != nil {
+		d.log.Error("Hook failed: %s\nOutput: %s", hook, output)
+
+		// Rollback on hook failure
+		if previousLock != nil {
+			d.log.Info("Critical Error in Hook: Deployment will be rolled back to version %s", previousLock.LastDeploy.ReleaseDir)
+			if rollbackErr := d.rollback(sshClient, previousLock); rollbackErr != nil {
+				return fmt.Errorf("hook failed and rollback also failed: %w", rollbackErr)
+			}
+			return fmt.Errorf("post-deploy hook failed (rolled back to %s): %w", previousLock.LastDeploy.ReleaseDir, err)
+		}
+		return fmt.Errorf("post-deploy hook failed (no previous version for rollback): %w", err)
+	}
+
+	d.log.Info("Hook output [%s]: %s", hook, strings.TrimSpace(output))
+	return nil
+}
+
 // Rollback rolls back to the previous release
 func (d *Deployer) Rollback() error {
 	d.log.Info("Rolling back %s...", d.envName)
@@ -380,17 +438,9 @@ func (d *Deployer) Rollback() error {
 		return fmt.Errorf("no previous release to rollback to")
 	}
 
-	// Find previous release (second newest)
-	// Sort releases
-	sorted := make([]string, len(releases))
-	copy(sorted, releases)
-	for i := 0; i < len(sorted); i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[i] < sorted[j] {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	// Sort releases (newest first)
+	state.SortReleases(releases)
+	sorted := releases
 
 	// Find previous (skip current if it's in the list)
 	var previousRelease string
@@ -475,63 +525,71 @@ func (d *Deployer) calculateDirectorySize(dirPath string) (int64, error) {
 
 // validateLocalTools checks if necessary build tools are available on the system
 func (d *Deployer) validateLocalTools() error {
+	var g errgroup.Group
+
 	// Check PHP tools
 	if d.env.Builds.PHP.Enabled {
-		cmd := "composer"
-		if d.env.Builds.PHP.ComposerCommand != "" {
-			parts := strings.Fields(d.env.Builds.PHP.ComposerCommand)
-			if len(parts) > 0 {
-				cmd = parts[0]
+		g.Go(func() error {
+			cmd := "composer"
+			if d.env.Builds.PHP.ComposerCommand != "" {
+				parts := strings.Fields(d.env.Builds.PHP.ComposerCommand)
+				if len(parts) > 0 {
+					cmd = parts[0]
+				}
 			}
-		}
-		if _, err := exec.LookPath(cmd); err != nil {
-			return verserrors.New(verserrors.CodeBuildFailed,
-				fmt.Sprintf("PHP build tool '%s' not found", cmd),
-				fmt.Sprintf("Install %s or ensure it is in your PATH. If you use a custom command, check your deploy.yml.", cmd), nil)
-		}
+			if _, err := exec.LookPath(cmd); err != nil {
+				return verserrors.New(verserrors.CodeBuildFailed,
+					fmt.Sprintf("PHP build tool '%s' not found", cmd),
+					fmt.Sprintf("Install %s or ensure it is in your PATH.", cmd), nil)
+			}
+			return nil
+		})
 	}
 
 	// Check Go tools
 	if d.env.Builds.Go.Enabled {
-		if _, err := exec.LookPath("go"); err != nil {
-			return verserrors.New(verserrors.CodeBuildFailed,
-				"Go compiler not found",
-				"Install Go (https://golang.org/dl/) and ensure it is in your PATH.", nil)
-		}
+		g.Go(func() error {
+			if _, err := exec.LookPath("go"); err != nil {
+				return verserrors.New(verserrors.CodeBuildFailed,
+					"Go compiler not found",
+					"Install Go (https://golang.org/dl/) and ensure it is in your PATH.", nil)
+			}
+			return nil
+		})
 	}
 
 	// Check Frontend tools
 	if d.env.Builds.Frontend.Enabled {
-		tools := []string{}
-		if d.env.Builds.Frontend.NPMCommand != "" {
-			parts := strings.Fields(d.env.Builds.Frontend.NPMCommand)
-			if len(parts) > 0 {
-				tools = append(tools, parts[0])
-			}
-		}
-		if d.env.Builds.Frontend.CompileCommand != "" {
-			parts := strings.Fields(d.env.Builds.Frontend.CompileCommand)
-			if len(parts) > 0 {
-				// Don't check placeholders or relative scripts starting with ./
-				// unless we want to be very strict.
-				// For now let's check standard tools.
-				cmd := parts[0]
-				if !strings.HasPrefix(cmd, "./") && !strings.HasPrefix(cmd, ".\\") {
-					tools = append(tools, cmd)
+		g.Go(func() error {
+			tools := []string{}
+			if d.env.Builds.Frontend.NPMCommand != "" {
+				parts := strings.Fields(d.env.Builds.Frontend.NPMCommand)
+				if len(parts) > 0 {
+					tools = append(tools, parts[0])
 				}
 			}
-		}
-
-		for _, tool := range tools {
-			if _, err := exec.LookPath(tool); err != nil {
-				return verserrors.New(verserrors.CodeBuildFailed,
-					fmt.Sprintf("Frontend build tool '%s' not found", tool),
-					fmt.Sprintf("Install %s (npm, pnpm, yarn, etc.) and ensure it is in your PATH.", tool), nil)
+			if d.env.Builds.Frontend.CompileCommand != "" {
+				parts := strings.Fields(d.env.Builds.Frontend.CompileCommand)
+				if len(parts) > 0 {
+					cmd := parts[0]
+					if !strings.HasPrefix(cmd, "./") && !strings.HasPrefix(cmd, ".\\") {
+						tools = append(tools, cmd)
+					}
+				}
 			}
-		}
+
+			for _, tool := range tools {
+				if _, err := exec.LookPath(tool); err != nil {
+					return verserrors.New(verserrors.CodeBuildFailed,
+						fmt.Sprintf("Frontend build tool '%s' not found", tool),
+						fmt.Sprintf("Install %s (npm, pnpm, yarn, etc.) and ensure it is in your PATH.", tool), nil)
+				}
+			}
+			return nil
+		})
 	}
 
-	return nil
+	return g.Wait()
 }
 
 // handleSharedPaths manages symbolic links for persistent directories
@@ -544,7 +602,7 @@ func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) e
 	sharedBase := filepath.ToSlash(filepath.Join(d.env.RemotePath, "shared"))
 
 	// Ensure shared directory exists
-	sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p %s", sharedBase))
+	sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p -- %q", sharedBase))
 
 	for _, path := range d.env.SharedPaths {
 		// Clean the path to avoid directory traversal or trailing slashes
@@ -559,17 +617,17 @@ func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) e
 		sharedPath := filepath.ToSlash(filepath.Join(sharedBase, cleanPath))
 
 		// 1. Ensure shared target exists
-		sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p %s", sharedPath))
+		sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p -- %q", sharedPath))
 
 		// 2. Remove directory in release if it exists to make room for symlink
-		sshClient.ExecuteCommand(fmt.Sprintf("rm -rf %s", releasePath))
+		sshClient.ExecuteCommand(fmt.Sprintf("rm -rf -- %q", releasePath))
 
 		// 3. Create parent directory in release if needed
-		sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p %s", filepath.Dir(releasePath)))
+		sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p -- %q", filepath.Dir(releasePath)))
 
 		// 4. Create symlink (use absolute path for shared target to be safe)
 		// We use ln -sf directly for shared paths as they don't need the atomic switch logic of 'current'
-		cmd := fmt.Sprintf("ln -sfn %s %s", sharedPath, releasePath)
+		cmd := fmt.Sprintf("ln -sfn %q %q", sharedPath, releasePath)
 		if _, err := sshClient.ExecuteCommand(cmd); err != nil {
 			return fmt.Errorf("failed to link shared path %s: %w", cleanPath, err)
 		}
@@ -592,7 +650,7 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 
 		// Check if it's missing in new but exists in old
 		// Use cp -al for cross-release hardlinking (fast and space efficient)
-		cmd := fmt.Sprintf("if [ ! -e %s ] && [ -e %s ]; then mkdir -p %s && cp -al %s %s; fi",
+		cmd := fmt.Sprintf("if [ ! -e %q ] && [ -e %q ]; then mkdir -p -- %q && cp -al -- %q %q; fi",
 			newPath, oldPath, filepath.Dir(newPath), oldPath, newPath)
 		sshClient.ExecuteCommand(cmd)
 	}
@@ -653,19 +711,20 @@ func (d *Deployer) handlePreservedPaths(sshClient *ssh.Client, previousVersion, 
 		newPath := filepath.ToSlash(filepath.Join(finalDir, "app", cleanPath))
 
 		// Check if source exists before trying to copy
-		exists, err := sshClient.ExecuteCommand(fmt.Sprintf("if [ -e %s ]; then echo \"exists\"; fi", oldPath))
+		// Use %q for safe quoting and direct shell return code check
+		exists, err := sshClient.ExecuteCommand(fmt.Sprintf("if [ -e %q ]; then echo 'exists'; fi", oldPath))
 		if err == nil && strings.TrimSpace(exists) == "exists" {
 			// Remove whatever came in the artifact to ensure a clean copy
-			sshClient.ExecuteCommand(fmt.Sprintf("rm -rf %s", newPath))
+			sshClient.ExecuteCommand(fmt.Sprintf("rm -rf -- %q", newPath))
 
 			// Copy from old to new (using -p to preserve attributes)
-			cmd := fmt.Sprintf("cp -rfp %s %s", oldPath, newPath)
+			cmd := fmt.Sprintf("cp -rfp -- %q %q", oldPath, newPath)
 			if _, err := sshClient.ExecuteCommand(cmd); err != nil {
 				return fmt.Errorf("failed to preserve path %s: %w", cleanPath, err)
 			}
 			d.log.Info("  Preserved: %s (restored from previous release)", cleanPath)
 		} else {
-			d.log.Warn("  Could not preserve %s: source not found in previous release", cleanPath)
+			d.log.Warn("  Could not preserve %s: source not found in previous release (%s)", cleanPath, oldPath)
 		}
 	}
 

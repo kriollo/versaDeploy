@@ -78,3 +78,14 @@ func (d *DeployLock) GetFileHash(path string) (string, bool) {
 func IsFirstDeploy(lock *DeployLock) bool {
 	return lock == nil || lock.LastDeploy.FileHashes == nil || len(lock.LastDeploy.FileHashes) == 0
 }
+
+// SortReleases sorts a slice of release version strings in descending order (newest first)
+func SortReleases(releases []string) {
+	for i := 0; i < len(releases); i++ {
+		for j := i + 1; j < len(releases); j++ {
+			if releases[i] < releases[j] {
+				releases[i], releases[j] = releases[j], releases[i]
+			}
+		}
+	}
+}

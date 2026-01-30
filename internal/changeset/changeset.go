@@ -275,7 +275,7 @@ func (d *Detector) shouldIgnore(path string) bool {
 	path = filepath.ToSlash(path)
 	for _, ignored := range d.ignoredPaths {
 		ignored = filepath.ToSlash(ignored)
-		if strings.HasPrefix(path, ignored) || path == ignored {
+		if path == ignored || strings.HasPrefix(path, ignored+"/") {
 			return true
 		}
 	}

@@ -84,6 +84,59 @@ func TestGenerator_Compress(t *testing.T) {
 	}
 }
 
+func TestGenerator_CompressChunked(t *testing.T) {
+	artifactDir := t.TempDir()
+	files := map[string]string{
+		"large.txt": "a", // We'll use a small chunk size to force split
+	}
+	for path, content := range files {
+		fullPath := filepath.Join(artifactDir, path)
+		os.WriteFile(fullPath, []byte(content), 0644)
+	}
+
+	g := NewGenerator(artifactDir, "20260127", "hash123")
+	archiveBase := filepath.Join(t.TempDir(), "artifact.tar.gz")
+
+	// Use tiny chunk size (1 byte) to ensure multiple chunks
+	chunks, err := g.CompressChunked(archiveBase, 1)
+	if err != nil {
+		t.Fatalf("CompressChunked() error = %v", err)
+	}
+
+	if len(chunks) < 2 {
+		t.Errorf("expected multiple chunks, got %d", len(chunks))
+	}
+
+	for _, p := range chunks {
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			t.Errorf("chunk file %s was not created", p)
+		}
+	}
+
+	// Verify reassembly
+	reassembledPath := archiveBase + ".full"
+	out, _ := os.Create(reassembledPath)
+	for _, p := range chunks {
+		in, _ := os.Open(p)
+		io.Copy(out, in)
+		in.Close()
+	}
+	out.Close()
+
+	// Verify reassembled archive
+	f, _ := os.Open(reassembledPath)
+	defer f.Close()
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("failed to read reassembled archive: %v", err)
+	}
+	tr := tar.NewReader(gr)
+	header, _ := tr.Next()
+	if header.Name != "large.txt" {
+		t.Errorf("expected large.txt, got %s", header.Name)
+	}
+}
+
 func TestGenerator_GenerateManifest(t *testing.T) {
 	artifactDir := t.TempDir()
 	g := NewGenerator(artifactDir, "1.0.0", "abc123")

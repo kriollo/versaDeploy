@@ -30,7 +30,7 @@ func TestHashFile(t *testing.T) {
 }
 
 func TestDetector_ShouldIgnore(t *testing.T) {
-	ignored := []string{".git", "vendor", "node_modules/cache"}
+	ignored := []string{".git", "vendor", "node_modules/cache", "services"}
 	d := NewDetector("", ignored, nil, "", "", "", nil)
 
 	tests := []struct {
@@ -40,6 +40,8 @@ func TestDetector_ShouldIgnore(t *testing.T) {
 		{".git/config", true},
 		{"vendor/autoload.php", true},
 		{"node_modules/cache/file.js", true},
+		{"services/config.json", true},
+		{"services_backup/config.json", false},
 		{"app/Controller.php", false},
 		{"public/index.php", false},
 	}

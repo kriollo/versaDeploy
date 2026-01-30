@@ -151,23 +151,25 @@ func (b *Builder) cleanupIgnoredPaths() error {
 	appDir := filepath.Join(b.artifactDir, "app")
 
 	for _, ignored := range b.config.Ignored {
-		// Skip .git as it's already not copied
-		if ignored == ".git" {
+		// Normalize to forward slashes for internal matching/lookup
+		cleanIgnored := filepath.ToSlash(filepath.Clean(ignored))
+		if cleanIgnored == ".git" {
 			continue
 		}
 
-		ignoredPath := filepath.Join(appDir, ignored)
+		ignoredPath := filepath.Join(appDir, cleanIgnored)
 
 		// Check if path exists
 		if _, err := os.Stat(ignoredPath); os.IsNotExist(err) {
-			continue // Path doesn't exist, skip
+			fmt.Printf("   Skipping (not found): %s\n", cleanIgnored)
+			continue
 		}
 
 		// Remove the path
 		if err := os.RemoveAll(ignoredPath); err != nil {
-			return fmt.Errorf("failed to remove ignored path %s: %w", ignored, err)
+			return fmt.Errorf("failed to remove ignored path %s: %w", cleanIgnored, err)
 		}
-		fmt.Printf("   Removed: %s\n", ignored)
+		fmt.Printf("   Removed: %s\n", cleanIgnored)
 	}
 
 	return nil

@@ -505,3 +505,60 @@ func TestConfig_Validate_Defaults(t *testing.T) {
 		t.Error("expected default ignored paths to be set")
 	}
 }
+func TestConfig_UnmarshalHooks(t *testing.T) {
+	yamlContent := `
+project: "test"
+environments:
+  prod:
+    ssh: {host: "h", user: "u", key_path: "k"}
+    remote_path: "/var/www"
+    builds: {php: {enabled: true}}
+    post_deploy:
+      - "echo sequential"
+      - parallel:
+          - "echo parallel 1"
+          - "echo parallel 2"
+`
+	tmpConfig := filepath.Join(t.TempDir(), "hooks.yml")
+	os.WriteFile(tmpConfig, []byte(yamlContent), 0644)
+
+	// Since Load() validates SSH keys, we need to create a fake one
+	home := t.TempDir()
+	os.Setenv("HOME", home)
+	k := filepath.Join(home, "k")
+	os.WriteFile(k, []byte("f"), 0600)
+
+	// Replace k with actual path in YAML for simplicity or just mock the file
+	yamlContentFixed := `
+project: "test"
+environments:
+  prod:
+    ssh: {host: "h", user: "u", key_path: "` + filepath.ToSlash(k) + `"}
+    remote_path: "/var/www"
+    builds: {php: {enabled: true}}
+    post_deploy:
+      - "echo sequential"
+      - parallel:
+          - "echo parallel 1"
+          - "echo parallel 2"
+`
+	os.WriteFile(tmpConfig, []byte(yamlContentFixed), 0644)
+
+	cfg, err := Load(tmpConfig)
+	if err != nil {
+		t.Fatalf("failed to load config with structured hooks: %v", err)
+	}
+
+	env, _ := cfg.GetEnvironment("prod")
+	if len(env.PostDeploy) != 2 {
+		t.Fatalf("expected 2 hook entries, got %d", len(env.PostDeploy))
+	}
+
+	if env.PostDeploy[0].Command != "echo sequential" {
+		t.Errorf("expected sequential command, got %v", env.PostDeploy[0])
+	}
+
+	if len(env.PostDeploy[1].Parallel) != 2 {
+		t.Errorf("expected 2 parallel commands, got %d", len(env.PostDeploy[1].Parallel))
+	}
+}

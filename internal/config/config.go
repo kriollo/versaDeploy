@@ -22,7 +22,7 @@ type Environment struct {
 	SSH            SSHConfig    `yaml:"ssh"`
 	RemotePath     string       `yaml:"remote_path"`
 	Builds         BuildsConfig `yaml:"builds"`
-	PostDeploy     []string     `yaml:"post_deploy"`
+	PostDeploy     []HookConfig `yaml:"post_deploy"`
 	Ignored        []string     `yaml:"ignored_paths"`
 	SharedPaths    []string     `yaml:"shared_paths"`    // Paths to persist between releases (e.g. storage, uploads)
 	PreservedPaths []string     `yaml:"preserved_paths"` // Paths to KEEP from previous release (overwriting artifact)
@@ -225,6 +225,33 @@ func (c *Config) GetEnvironment(name string) (*Environment, error) {
 		return nil, fmt.Errorf("environment '%s' not found in configuration", name)
 	}
 	return &env, nil
+}
+
+// HookConfig represents a single post-deploy hook, which can be a simple string or a parallel block
+type HookConfig struct {
+	Command  string
+	Parallel []string
+}
+
+// UnmarshalYAML implements custom unmarshalling for HookConfig
+func (h *HookConfig) UnmarshalYAML(value *yaml.Node) error {
+	// Try unmarshalling as a simple string first
+	var cmd string
+	if err := value.Decode(&cmd); err == nil {
+		h.Command = cmd
+		return nil
+	}
+
+	// Otherwise, it must be a map with a "parallel" key
+	var parallelMap struct {
+		Parallel []string `yaml:"parallel"`
+	}
+	if err := value.Decode(&parallelMap); err != nil {
+		return fmt.Errorf("hook must be a string or a map with a 'parallel' key")
+	}
+
+	h.Parallel = parallelMap.Parallel
+	return nil
 }
 
 // interpolateEnvVars replaces ${VAR} or $VAR with environment variable values
