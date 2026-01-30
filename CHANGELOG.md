@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1 RC] - 2026-01-30
+
+### Added
+
+- **Force Redeploy Flag**: Added `--force` flag to the `deploy` command to trigger full builds (Composer/NPM/Go) even when no file changes are detected.
+
+### Fixed
+
+- **Frontend Cleanup Logic**: Fixed a bug where `node_modules` cleanup was skipped if `package.json` was not modified, ensuring production-only dependencies are always enforced after a build.
+
+### Improved
+
+- **SSH Cleanup Diagnostics**: The `CleanupOldReleases` function now captures and reports the exact output from the server if a release deletion fails.
+- **Builder Diagnostics**: Added real-time directory size measurement (before/after cleanup) and improved command logging in the build process for easier troubleshooting.
+
+## [1.0.0 RC] - 2026-01-29
+
+### Added
+
+- **Concurrent File Hashing**: Significantly improved change detection speed (4-8x faster) by parallelizing SHA256 calculations using a worker pool.
+- **Parallel Builds**: Added concurrent execution of PHP (Composer), Go, and Frontend (NPM/Yarn) builds, reducing total build time by up to 60%.
+- **Compression Progress Bar**: Added real-time visual feedback during the artifact compression phase.
+- **Enhanced Progress Visibility**: Separated compression and upload phases in the UI for better status tracking.
+
+### Optimized
+
+- **Performance Overhaul**: Replaced O(n²) bubble sort with O(n log n) standard library sorting for release management.
+- **Code Efficiency**: Removed unused functions and streamlined internal build logic.
+- **Resource Management**: Optimized I/O operations for large file handling.
+
+### Fixed
+
+- **CLI Help Duplication**: Fixed an issue where available commands were listed twice in the `--help` output.
+- **Concurrent Build Isolation**: Ensured independent build processes do not interfere with each other.
+
 ## [0.9.0-beta] - 2026-01-29
 
 ### Added
