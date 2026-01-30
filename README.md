@@ -1,5 +1,11 @@
 # versaDeploy
 
+[![Latest Release](https://img.shields.io/github/v/release/kriollo/versaDeploy?include_prereleases&style=flat-square)](https://github.com/kriollo/versaDeploy/releases)
+[![Tests Status](https://img.shields.io/github/actions/workflow/status/kriollo/versaDeploy/test.yml?branch=main&label=tests&style=flat-square)](https://github.com/kriollo/versaDeploy/actions/workflows/test.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kriollo/versaDeploy?style=flat-square)](https://goreportcard.com/report/github.com/kriollo/versaDeploy)
+[![License](https://img.shields.io/github/license/kriollo/versaDeploy?style=flat-square)](https://github.com/kriollo/versaDeploy/blob/main/LICENSE)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/kriollo/versaDeploy?style=flat-square)](https://go.dev/)
+
 A production-grade deployment engine written in Go that deploys PHP, Go, and Frontend projects with **zero compilation in production**.
 
 versaDeploy is designed for developers who want **deterministic, atomic deployments** from their local machines (Windows/Linux) or CI/CD environments to Linux servers.
