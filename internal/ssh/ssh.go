@@ -304,13 +304,12 @@ func (c *Client) UploadFileWithProgress(localPath, remotePath string) error {
 
 // ExtractArchive extracts a tar.gz archive on the remote server
 func (c *Client) ExtractArchive(archivePath, targetDir string) error {
-	// Create target directory if it doesn't exist
-	_, err := c.ExecuteCommand(fmt.Sprintf("mkdir -p -- %q", targetDir))
-	if err != nil {
+	// Create target directory if it doesn't exist using SFTP
+	if err := c.sftpClient.MkdirAll(targetDir); err != nil {
 		return fmt.Errorf("failed to create target directory: %w", err)
 	}
 
-	// Extract
+	// Extract using shell (tar is too complex for SFTP)
 	cmd := fmt.Sprintf("tar -xzf %q -C %q", archivePath, targetDir)
 	output, err := c.ExecuteCommand(cmd)
 	if err != nil {
@@ -395,8 +394,8 @@ func (c *Client) CreateSymlink(target, linkPath string) error {
 	// Step 1: Create temporary symlink
 	tmpLink := linkPath + ".tmp"
 
-	// Remove tmp link if it exists
-	c.ExecuteCommand(fmt.Sprintf("rm -f %s", tmpLink))
+	// Remove tmp link if it exists using SFTP
+	c.sftpClient.Remove(tmpLink)
 
 	// Create symlink
 	cmd := fmt.Sprintf("ln -sfn %s %s", target, tmpLink)
@@ -494,10 +493,9 @@ func (c *Client) CheckDiskSpace(path string, requiredBytes int64) error {
 	return nil
 }
 
-// AcquireLock attempts to acquire a deployment lock using atomic directory creation
+// AcquireLock attempts to acquire a deployment lock using atomic directory creation via SFTP
 func (c *Client) AcquireLock(lockPath string) error {
-	cmd := fmt.Sprintf("mkdir %q", lockPath)
-	_, err := c.ExecuteCommand(cmd)
+	err := c.sftpClient.Mkdir(lockPath)
 	if err != nil {
 		return verserrors.New(verserrors.CodeConfigInvalid,
 			"Deployment lock already held",
@@ -507,11 +505,19 @@ func (c *Client) AcquireLock(lockPath string) error {
 	return nil
 }
 
-// ReleaseLock releases the deployment lock
+// ReleaseLock releases the deployment lock via SFTP
 func (c *Client) ReleaseLock(lockPath string) error {
-	cmd := fmt.Sprintf("rmdir %q", lockPath)
-	_, err := c.ExecuteCommand(cmd)
-	return err
+	return c.sftpClient.RemoveDirectory(lockPath)
+}
+
+// MkdirAll creates a directory and all parent directories via SFTP
+func (c *Client) MkdirAll(path string) error {
+	return c.sftpClient.MkdirAll(path)
+}
+
+// Remove removes a file or empty directory via SFTP
+func (c *Client) Remove(path string) error {
+	return c.sftpClient.Remove(path)
 }
 
 // createHostKeyCallback returns an SSH HostKeyCallback based on configuration

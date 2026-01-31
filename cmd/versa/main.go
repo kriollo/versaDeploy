@@ -63,6 +63,7 @@ var deployCmd = &cobra.Command{
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		initialDeploy, _ := cmd.Flags().GetBool("initial-deploy")
 		force, _ := cmd.Flags().GetBool("force")
+		skipDirtyCheck, _ := cmd.Flags().GetBool("skip-dirty-check")
 
 		// Initialize logger
 		log, err := logger.NewLogger(logFile, verbose, debug)
@@ -84,7 +85,7 @@ var deployCmd = &cobra.Command{
 		}
 
 		// Create deployer
-		d, err := deployer.NewDeployer(cfg, env, repoPath, dryRun, initialDeploy, force, log)
+		d, err := deployer.NewDeployer(cfg, env, repoPath, dryRun, initialDeploy, force, skipDirtyCheck, log)
 		if err != nil {
 			return err
 		}
@@ -121,7 +122,7 @@ var rollbackCmd = &cobra.Command{
 		}
 
 		// Create deployer
-		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, false, log)
+		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, false, false, log)
 		if err != nil {
 			return err
 		}
@@ -158,7 +159,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		// Create deployer
-		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, false, log)
+		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, false, false, log)
 		if err != nil {
 			return err
 		}
@@ -308,6 +309,7 @@ func init() {
 	deployCmd.Flags().Bool("dry-run", false, "Show changes without deploying")
 	deployCmd.Flags().Bool("initial-deploy", false, "Flag for first deployment")
 	deployCmd.Flags().Bool("force", false, "Force redeploy even if no changes detected")
+	deployCmd.Flags().Bool("skip-dirty-check", false, "Skip validation of uncommitted changes")
 
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(rollbackCmd)

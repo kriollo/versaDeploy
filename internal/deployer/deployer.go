@@ -31,11 +31,12 @@ type Deployer struct {
 	dryRun        bool
 	initialDeploy bool
 	force         bool
+	skipDirtyCheck bool
 	log           *logger.Logger
 }
 
 // NewDeployer creates a new deployer
-func NewDeployer(cfg *config.Config, envName, repoPath string, dryRun, initialDeploy, force bool, log *logger.Logger) (*Deployer, error) {
+func NewDeployer(cfg *config.Config, envName, repoPath string, dryRun, initialDeploy, force, skipDirtyCheck bool, log *logger.Logger) (*Deployer, error) {
 	env, err := cfg.GetEnvironment(envName)
 	if err != nil {
 		return nil, err
@@ -49,6 +50,7 @@ func NewDeployer(cfg *config.Config, envName, repoPath string, dryRun, initialDe
 		dryRun:        dryRun,
 		initialDeploy: initialDeploy,
 		force:         force,
+		skipDirtyCheck: skipDirtyCheck,
 		log:           log,
 	}, nil
 }
@@ -68,12 +70,16 @@ func (d *Deployer) Deploy() error {
 	}
 
 	// Step 2: Check if working directory is clean
-	clean, err := git.IsClean(d.repoPath)
-	if err != nil {
-		return err
-	}
-	if !clean {
-		return verserrors.Wrap(fmt.Errorf("working directory has uncommitted changes"))
+	if !d.skipDirtyCheck {
+		clean, err := git.IsClean(d.repoPath)
+		if err != nil {
+			return err
+		}
+		if !clean {
+			return verserrors.Wrap(fmt.Errorf("working directory has uncommitted changes (use --skip-dirty-check to bypass)"))
+		}
+	} else {
+		d.log.Warn("Skipping clean working directory check (--skip-dirty-check active)")
 	}
 
 	// Step 3: Clone repository to clean temp directory
@@ -83,6 +89,7 @@ func (d *Deployer) Deploy() error {
 		return err
 	}
 	defer os.RemoveAll(tmpRepo)
+
 
 	// Step 4: Get commit hash
 	commitHash, err := git.GetCurrentCommit(tmpRepo)
@@ -207,8 +214,8 @@ func (d *Deployer) Deploy() error {
 	stagingDir := filepath.ToSlash(filepath.Join(releasesDir, releaseVersion+".staging"))
 	finalDir := filepath.ToSlash(filepath.Join(releasesDir, releaseVersion))
 
-	// Create releases directory if doesn't exist
-	if _, err := sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p -- %q", releasesDir)); err != nil {
+	// Create releases directory if doesn't exist using SFTP
+	if err := sshClient.MkdirAll(releasesDir); err != nil {
 		return err
 	}
 
@@ -601,8 +608,8 @@ func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) e
 	d.log.Info("Linking shared directories...")
 	sharedBase := filepath.ToSlash(filepath.Join(d.env.RemotePath, "shared"))
 
-	// Ensure shared directory exists
-	sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p -- %q", sharedBase))
+	// Ensure shared directory exists via SFTP
+	sshClient.MkdirAll(sharedBase)
 
 	for _, path := range d.env.SharedPaths {
 		// Clean the path to avoid directory traversal or trailing slashes
@@ -611,19 +618,19 @@ func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) e
 			continue // Security: don't allow escaping release dir
 		}
 
-		// Path in release (e.g. app/storage)
-		releasePath := filepath.ToSlash(filepath.Join(releaseDir, cleanPath))
+		// Path in release (now inside 'app' subfolder)
+		releasePath := filepath.ToSlash(filepath.Join(releaseDir, "app", cleanPath))
 		// Path in shared (e.g. shared/app/storage)
 		sharedPath := filepath.ToSlash(filepath.Join(sharedBase, cleanPath))
 
-		// 1. Ensure shared target exists
-		sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p -- %q", sharedPath))
+		// 1. Ensure shared target exists via SFTP
+		sshClient.MkdirAll(sharedPath)
 
 		// 2. Remove directory in release if it exists to make room for symlink
 		sshClient.ExecuteCommand(fmt.Sprintf("rm -rf -- %q", releasePath))
 
-		// 3. Create parent directory in release if needed
-		sshClient.ExecuteCommand(fmt.Sprintf("mkdir -p -- %q", filepath.Dir(releasePath)))
+		// 3. Create parent directory in release if needed via SFTP
+		sshClient.MkdirAll(filepath.Dir(releasePath))
 
 		// 4. Create symlink (use absolute path for shared target to be safe)
 		// We use ln -sf directly for shared paths as they don't need the atomic switch logic of 'current'
@@ -646,13 +653,26 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 	// Internal helper to reuse a specific path
 	reusePath := func(projectRoot, relPath string) {
 		oldPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, "app", projectRoot, relPath))
+		oldPathLegacy := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, projectRoot, relPath))
 		newPath := filepath.ToSlash(filepath.Join(finalDir, "app", projectRoot, relPath))
 
-		// Check if it's missing in new but exists in old
-		// Use cp -al for cross-release hardlinking (fast and space efficient)
-		cmd := fmt.Sprintf("if [ ! -e %q ] && [ -e %q ]; then mkdir -p -- %q && cp -al -- %q %q; fi",
-			newPath, oldPath, filepath.Dir(newPath), oldPath, newPath)
-		sshClient.ExecuteCommand(cmd)
+		// Check if it's missing in new but exists in old (tries /app first, then legacy root)
+		// Use SFTP for existence check as it's more reliable than shell [ -e ]
+		sourceToUse := ""
+		if exists, _ := sshClient.FileExists(oldPath); exists {
+			sourceToUse = oldPath
+		} else if exists, _ := sshClient.FileExists(oldPathLegacy); exists {
+			sourceToUse = oldPathLegacy
+		}
+
+		if sourceToUse != "" {
+			// Check if already exists in new artifact
+			if exists, _ := sshClient.FileExists(newPath); !exists {
+				sshClient.MkdirAll(filepath.Dir(newPath))
+				cmd := fmt.Sprintf("cp -al -- %q %q", sourceToUse, newPath)
+				sshClient.ExecuteCommand(cmd)
+			}
+		}
 	}
 
 	// PHP
@@ -706,25 +726,34 @@ func (d *Deployer) handlePreservedPaths(sshClient *ssh.Client, previousVersion, 
 	for _, path := range d.env.PreservedPaths {
 		cleanPath := filepath.ToSlash(filepath.Clean(path))
 
-		// Paths are inside 'app' in both releases
+		// Paths are inside 'app' in the new structure, but might be at root in legacy releases
 		oldPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, "app", cleanPath))
+		oldPathLegacy := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, cleanPath))
 		newPath := filepath.ToSlash(filepath.Join(finalDir, "app", cleanPath))
 
-		// Check if source exists before trying to copy
-		// Use %q for safe quoting and direct shell return code check
-		exists, err := sshClient.ExecuteCommand(fmt.Sprintf("if [ -e %q ]; then echo 'exists'; fi", oldPath))
-		if err == nil && strings.TrimSpace(exists) == "exists" {
+		// Check if source exists before trying to copy (tries /app first, then legacy root)
+		// Use SFTP instead of shell for better reliability
+		sourceToUse := ""
+		if exists, _ := sshClient.FileExists(oldPath); exists {
+			sourceToUse = oldPath
+		} else if exists, _ := sshClient.FileExists(oldPathLegacy); exists {
+			sourceToUse = oldPathLegacy
+			d.log.Info("  Found %s in legacy root (migrating to /app structure)", cleanPath)
+		}
+
+		if sourceToUse != "" {
 			// Remove whatever came in the artifact to ensure a clean copy
 			sshClient.ExecuteCommand(fmt.Sprintf("rm -rf -- %q", newPath))
 
 			// Copy from old to new (using -p to preserve attributes)
-			cmd := fmt.Sprintf("cp -rfp -- %q %q", oldPath, newPath)
+			// We still use shell for cp as it's the fastest way to copy on server
+			cmd := fmt.Sprintf("cp -rfp -- %q %q", sourceToUse, newPath)
 			if _, err := sshClient.ExecuteCommand(cmd); err != nil {
 				return fmt.Errorf("failed to preserve path %s: %w", cleanPath, err)
 			}
 			d.log.Info("  Preserved: %s (restored from previous release)", cleanPath)
 		} else {
-			d.log.Warn("  Could not preserve %s: source not found in previous release (%s)", cleanPath, oldPath)
+			d.log.Warn("  Could not preserve %s: source not found in previous release (tried %s and %s)", cleanPath, oldPath, oldPathLegacy)
 		}
 	}
 

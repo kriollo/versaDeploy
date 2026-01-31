@@ -2,15 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.3rc] - 2026-01-31
+
+### Added
+
+- **Skip Dirty Check**: Added `--skip-dirty-check` flag to the `deploy` command. This allows deployments even when the local repository has uncommitted changes, ensuring that only the last committed state is deployed to the server.
+
 ## [1.0.2rc] - 2026-01-30
 
 ### Added
 
-- **Project Status Badges**: Added build, release, and license badges to README.md.
+- **Parallel Chunked Uploads**: Implemented parallel artifact uploading using 10MB chunks. This significantly reduces deployment time for large artifacts.
+- **Deployment Locking**: Added a distributed locking mechanism using atomic remote directory creation to prevent concurrent deployments to the same environment.
+- **Release Sorting**: Added deterministic release sorting logic to ensure correct order for rollbacks and cleanup operations.
+- **Safer Shell Execution**: Improved remote command security by using proper quoting (`%q`) for all user-provided and generated paths.
+
+### Improved
+
+- **SFTP Performance**: Optimized SFTP throughput by increasing the maximum packet size.
+- **Diagnostic Logging**: Enhanced error messages with more context when file preservation or hook execution fails.
+- **Repository Validation**: Strengthened internal checks for repository integrity before starting a build.
 
 ### Fixed
 
 - **Version Consistency**: Synchronized internal versioning with the release candidate tag.
+- **Artifact Generator**: Fixed edge cases in manifest validation for complex directory structures.
 
 ## [1.0.1 RC] - 2026-01-30
 

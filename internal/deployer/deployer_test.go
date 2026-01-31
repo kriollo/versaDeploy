@@ -21,7 +21,7 @@ func TestNewDeployer(t *testing.T) {
 	log, _ := logger.NewLogger("", false, false)
 
 	// Valid environment
-	d, err := NewDeployer(cfg, "prod", "repo/path", false, false, false, log)
+	d, err := NewDeployer(cfg, "prod", "repo/path", false, false, false, false, log)
 	if err != nil {
 		t.Fatalf("NewDeployer failed: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestNewDeployer(t *testing.T) {
 	}
 
 	// Invalid environment
-	_, err = NewDeployer(cfg, "staging", "repo/path", false, false, false, log)
+	_, err = NewDeployer(cfg, "staging", "repo/path", false, false, false, false, log)
 	if err == nil {
 		t.Error("expected error for invalid environment")
 	}
@@ -50,7 +50,7 @@ func TestDeployer_ValidateLocalTools(t *testing.T) {
 		},
 	}
 
-	d, _ := NewDeployer(cfg, "prod", ".", false, false, false, log)
+	d, _ := NewDeployer(cfg, "prod", ".", false, false, false, false, log)
 
 	err := d.validateLocalTools()
 	t.Logf("validateLocalTools returned: %v", err)
@@ -87,7 +87,7 @@ func TestDeployer_ValidateLocalTools_Go(t *testing.T) {
 		},
 	}
 
-	d, _ := NewDeployer(cfg, "prod", ".", false, false, false, log)
+	d, _ := NewDeployer(cfg, "prod", ".", false, false, false, false, log)
 	err := d.validateLocalTools()
 	// Should at least check for 'go'
 	t.Logf("validateLocalTools (Go) returned: %v", err)
@@ -107,7 +107,30 @@ func TestDeployer_ValidateLocalTools_Frontend(t *testing.T) {
 		},
 	}
 
-	d, _ := NewDeployer(cfg, "prod", ".", false, false, false, log)
+	d, _ := NewDeployer(cfg, "prod", ".", false, false, false, false, log)
 	err := d.validateLocalTools()
 	t.Logf("validateLocalTools (Frontend) returned: %v", err)
+}
+func TestDeployer_SkipDirtyCheck(t *testing.T) {
+	log, _ := logger.NewLogger("", false, false)
+	cfg := &config.Config{
+		Project: "test",
+		Environments: map[string]config.Environment{
+			"prod": {
+				RemotePath: "/var/www",
+			},
+		},
+	}
+
+	// Case 1: skipDirtyCheck = false (default)
+	d1, _ := NewDeployer(cfg, "prod", ".", false, false, false, false, log)
+	if d1.skipDirtyCheck {
+		t.Error("expected skipDirtyCheck to be false by default")
+	}
+
+	// Case 2: skipDirtyCheck = true
+	d2, _ := NewDeployer(cfg, "prod", ".", false, false, false, true, log)
+	if !d2.skipDirtyCheck {
+		t.Error("expected skipDirtyCheck to be true when requested")
+	}
 }
