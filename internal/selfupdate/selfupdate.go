@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	githubOwner = "jjara" // Standardizing based on user env
+	githubOwner = "kriollo" // Corrected owner based on remote config
 	githubRepo  = "versaDeploy"
 )
 
