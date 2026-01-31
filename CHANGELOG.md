@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.4rc] - 2026-01-31
+
+### Fixed
+
+- **Self-Update**: Fixed a bug where the self-update command would fail to detect the latest version from GitHub.
+
 ## [1.0.3rc] - 2026-01-31
 
 ### Added
