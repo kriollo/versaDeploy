@@ -21,6 +21,7 @@ import (
 
 	"github.com/user/versaDeploy/internal/config"
 	verserrors "github.com/user/versaDeploy/internal/errors"
+	"github.com/user/versaDeploy/internal/logger"
 )
 
 // Client wraps SSH and SFTP operations
@@ -28,10 +29,11 @@ type Client struct {
 	sshClient  *ssh.Client
 	sftpClient *sftp.Client
 	config     *config.SSHConfig
+	log        *logger.Logger
 }
 
 // NewClient creates a new SSH client
-func NewClient(cfg *config.SSHConfig) (*Client, error) {
+func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 	authMethods := []ssh.AuthMethod{}
 
 	// Support SSH Agent
@@ -109,6 +111,7 @@ func NewClient(cfg *config.SSHConfig) (*Client, error) {
 		sshClient:  sshClient,
 		sftpClient: sftpClient,
 		config:     cfg,
+		log:        log,
 	}, nil
 }
 
@@ -460,14 +463,14 @@ func (c *Client) CheckDiskSpace(path string, requiredBytes int64) error {
 	output, err := c.ExecuteCommand(cmd)
 	if err != nil {
 		// Non-fatal: just warn and continue
-		fmt.Printf("[WARN] Failed to check disk space: %v\n", err)
+		c.log.Warn("Failed to check disk space: %v", err)
 		return nil
 	}
 
 	output = strings.TrimSpace(output)
 	if output == "" {
 		// Non-fatal: just warn and continue
-		fmt.Printf("[WARN] Empty output from disk space check command\n")
+		c.log.Warn("Empty output from disk space check command")
 		return nil
 	}
 
@@ -475,7 +478,7 @@ func (c *Client) CheckDiskSpace(path string, requiredBytes int64) error {
 	_, err = fmt.Sscanf(output, "%d", &availableBytes)
 	if err != nil {
 		// Non-fatal: show the output for debugging and continue
-		fmt.Printf("[WARN] Failed to parse disk space output (got: '%s'): %v\n", output, err)
+		c.log.Warn("Failed to parse disk space output (got: '%s'): %v", output, err)
 		return nil
 	}
 
@@ -487,7 +490,7 @@ func (c *Client) CheckDiskSpace(path string, requiredBytes int64) error {
 			requiredWithBuffer/(1024*1024), availableBytes/(1024*1024))
 	}
 
-	fmt.Printf("[INFO] Disk space check passed: %d MB available, %d MB required\n",
+	c.log.Info("Disk space check passed: %d MB available, %d MB required",
 		availableBytes/(1024*1024), requiredWithBuffer/(1024*1024))
 
 	return nil

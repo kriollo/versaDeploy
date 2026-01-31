@@ -198,7 +198,7 @@ var sshTestCmd = &cobra.Command{
 
 		fmt.Printf("🔍 Testing SSH connection to %s (%s)...\n", env, envCfg.SSH.User+"@"+envCfg.SSH.Host)
 
-		client, err := ssh.NewClient(&envCfg.SSH)
+		client, err := ssh.NewClient(&envCfg.SSH, log)
 		if err != nil {
 			return fmt.Errorf("❌ SSH connection failed: %w", err)
 		}

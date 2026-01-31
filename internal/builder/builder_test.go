@@ -8,6 +8,7 @@ import (
 
 	"github.com/user/versaDeploy/internal/changeset"
 	"github.com/user/versaDeploy/internal/config"
+	"github.com/user/versaDeploy/internal/logger"
 )
 
 func TestBuilder_copyEntireRepo(t *testing.T) {
@@ -77,7 +78,8 @@ func TestCopyFile(t *testing.T) {
 func TestNewBuilder(t *testing.T) {
 	cfg := &config.Environment{}
 	cs := &changeset.ChangeSet{}
-	b := NewBuilder("repo", "artifact", cfg, cs)
+	log, _ := logger.NewLogger("", false, false)
+	b := NewBuilder("repo", "artifact", cfg, cs, log)
 
 	if b.repoPath != "repo" || b.artifactDir != "artifact" {
 		t.Error("NewBuilder fields not correctly initialized")
@@ -106,7 +108,8 @@ func TestBuilder_BuildPHP_NoComposer(t *testing.T) {
 		PHPFiles: []string{"index.php", "src/helpers.php"},
 	}
 
-	b := NewBuilder(repoDir, artifactDir, cfg, cs)
+	log, _ := logger.NewLogger("", false, false)
+	b := NewBuilder(repoDir, artifactDir, cfg, cs, log)
 	if err := b.copyEntireRepo(); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +144,8 @@ func TestBuilder_CleanupIgnoredPaths(t *testing.T) {
 		Ignored: []string{"src"},
 	}
 
-	b := NewBuilder(repoDir, artifactDir, cfg, &changeset.ChangeSet{})
+	log, _ := logger.NewLogger("", false, false)
+	b := NewBuilder(repoDir, artifactDir, cfg, &changeset.ChangeSet{}, log)
 
 	// Step 1: Copy everything
 	if err := b.copyEntireRepo(); err != nil {
@@ -180,7 +184,8 @@ func TestBuilder_Build_DisabledComponents(t *testing.T) {
 	}
 
 	cs := &changeset.ChangeSet{}
-	b := NewBuilder(repoDir, artifactDir, cfg, cs)
+	log, _ := logger.NewLogger("", false, false)
+	b := NewBuilder(repoDir, artifactDir, cfg, cs, log)
 
 	res, err := b.Build()
 	if err != nil {
@@ -225,7 +230,8 @@ func TestBuilder_Build_Subdirectories(t *testing.T) {
 		PHPFiles:        []string{"api/index.php"},
 	}
 
-	b := NewBuilder(repoDir, artifactDir, cfg, cs)
+	log, _ := logger.NewLogger("", false, false)
+	b := NewBuilder(repoDir, artifactDir, cfg, cs, log)
 	_, err := b.Build()
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)

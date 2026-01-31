@@ -7,6 +7,7 @@ import (
 
 	"github.com/user/versaDeploy/internal/changeset"
 	"github.com/user/versaDeploy/internal/config"
+	"github.com/user/versaDeploy/internal/logger"
 )
 
 // BenchmarkBuild_Concurrent benchmarks concurrent builds
@@ -49,7 +50,8 @@ func BenchmarkBuild_Concurrent(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		artifactDir := filepath.Join(b.TempDir(), "artifact")
-		builder := NewBuilder(repoDir, artifactDir, cfg, cs)
+		log, _ := logger.NewLogger("", false, false)
+		builder := NewBuilder(repoDir, artifactDir, cfg, cs, log)
 		_, err := builder.Build()
 		if err != nil {
 			b.Fatal(err)
@@ -92,7 +94,8 @@ func TestBuild_ConcurrentCorrectness(t *testing.T) {
 		FrontendFiles: []string{"app.js"},
 	}
 
-	builder := NewBuilder(repoDir, artifactDir, cfg, cs)
+	log, _ := logger.NewLogger("", false, false)
+	builder := NewBuilder(repoDir, artifactDir, cfg, cs, log)
 	result, err := builder.Build()
 	if err != nil {
 		t.Fatalf("Build() failed: %v", err)
@@ -133,7 +136,8 @@ func TestBuild_ConcurrentErrorPropagation(t *testing.T) {
 		ComposerChanged: true,
 	}
 
-	builder := NewBuilder(repoDir, artifactDir, cfg, cs)
+	log, _ := logger.NewLogger("", false, false)
+	builder := NewBuilder(repoDir, artifactDir, cfg, cs, log)
 	_, err := builder.Build()
 	if err == nil {
 		t.Error("Expected error from failed build, got nil")

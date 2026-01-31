@@ -1,78 +1,38 @@
-# versaDeploy
+# 🚀 versaDeploy
+
+A high-performance deployment tool for modern web applications. Fast, secure, and designed for simplicity.
 
 [![Latest Release](https://img.shields.io/github/v/release/kriollo/versaDeploy?include_prereleases&style=flat-square)](https://github.com/kriollo/versaDeploy/releases)
 [![Tests Status](https://img.shields.io/github/actions/workflow/status/kriollo/versaDeploy/test.yml?branch=main&label=tests&style=flat-square)](https://github.com/kriollo/versaDeploy/actions/workflows/test.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/kriollo/versaDeploy?style=flat-square)](https://goreportcard.com/report/github.com/kriollo/versaDeploy)
-[![License](https://img.shields.io/github/license/kriollo/versaDeploy?style=flat-square)](https://github.com/kriollo/versaDeploy/blob/main/LICENSE)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/kriollo/versaDeploy?style=flat-square)](https://go.dev/)
-
-A production-grade deployment engine written in Go that deploys PHP, Go, and Frontend projects with **zero compilation in production**.
+[![License](https://img.shields.io/github/license/kriollo/versaDeploy?style=flat-square)](LICENSE)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/kriollo/versaDeploy)
 
 versaDeploy is designed for developers who want **deterministic, atomic deployments** from their local machines (Windows/Linux) or CI/CD environments to Linux servers.
 
-## 🚀 Key Features
+## 📖 Documentation Hub
 
-- ✅ **Deterministic deployments** - SHA256 change detection ensures only changed files are uploaded.
-- ✅ **Selective builds** - Only rebuild what changed (PHP/Go/Frontend).
-- ✅ **Atomic deployments** - Instant symlink switching for zero downtime.
-- ✅ **Multi-Platform Support** - Run from Windows or Linux local dev environments.
-- ✅ **No remote compilation** - Keep your production server clean; all builds happen locally or in CI.
-- ✅ **Secure** - Built-in SSH/SFTP support with key-based authentication.
+We have structured our documentation to be clear and accessible:
 
-## 📖 Documentation
+- [🚀 **Getting Started**](doc/GETTING_STARTED.md): **Start here!** A step-by-step guide for beginners.
+- [⚙️ **Configuration Guide**](doc/DEPLOY.md): Full reference for all `deploy.yml` parameters.
+- [📖 **CLI Reference**](doc/CLI_REFERENCE.md): Detailed documentation of commands and flags.
+- [📝 **Changelog**](doc/CHANGELOG.md): History of all versions and improvements.
+- [⚠️ **Troubleshooting**](doc/TROUBLESHOOTING.md): Solutions to common server and connection issues.
 
-- 🚀 **[INSTALL.md](INSTALL.md)** - Installation guide for Windows, Linux, and macOS.
-- ⚙️ **[DEPLOY.md](DEPLOY.md)** - Detailed reference for `deploy.yml` configuration.
-- 🔧 **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Solutions for common errors.
-- 📋 **[CHANGELOG.md](CHANGELOG.md)** - Recent changes and version history.
-- 📚 **[QUICKSTART.md](QUICKSTART.md)** - 5-minute setup guide.
+## ✨ Why versaDeploy?
 
-## 🛠️ Installation
+- **Blazing Fast**: Concurrent builds and parallel chunked uploads reduce deployment time by up to 70%.
+- **Smart Dependencies**: Intelligent reuse of `vendor` and `node_modules` via Linux hardlinks avoid redundant downloads.
+- **Atomic & Secure**: Uses distributed locking and absolute symlinks to ensure zero-downtime and safe execution.
+- **Cross-Platform**: Run deployments from Windows or Linux with equal ease.
 
-```bash
-# Build from source
-go build -o versa ./cmd/versa/main.go
+## 🛠 Quick Installation
 
-# Add to your PATH (Linux example)
-sudo mv versa /usr/local/bin/
-```
+1. Download the latest binary for your OS from the [Releases](https://github.com/kriollo/versaDeploy/releases) page.
+2. Move the binary to a folder in your PATH.
+3. Verify by running:
+   ```bash
+   versa version
+   ```
 
-## 🏗️ How It Works
-
-versaDeploy orchestrates the deployment from your **local machine** to the **remote server**:
-
-1. **Detection**: Calculates SHA256 hashes of your local files.
-2. **Comparison**: Compares local hashes with the `deploy.lock` from the remote server.
-3. **Build**:
-   - Executes `composer install` if PHP dependencies changed.
-   - Cross-compiles Go binaries for the target OS/Arch.
-   - Runs your frontend compiler (e.g., npm/vite) for modified assets.
-4. **Upload**: Packages changed files and uploads them via SFTP to a new release directory.
-5. **Switch**: Atomically updates the `current` symlink on the server.
-6. **Cleanup**: Keeps a retention history of your last 5 releases.
-
-## 💻 Environment Support
-
-### Local (Developer Machine / CI)
-
-- **Windows**: Full support via `cmd.exe` or PowerShell.
-- **Linux / macOS**: Full support via standard shell.
-
-### Remote (Production / Staging Server)
-
-- **Linux**: Primary target for deployments and post-deploy hooks.
-
-## 🧪 Testing
-
-```bash
-# Run all unit tests
-go test ./... -cover
-```
-
-## ⚖️ License
-
-MIT - See [LICENSE](LICENSE) for details.
-
----
-
-**Built with ❤️ for deterministic deployments**
+Check our [Getting Started](doc/GETTING_STARTED.md) guide to launch your first deploy in minutes!

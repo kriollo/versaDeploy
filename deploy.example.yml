@@ -1,73 +1,70 @@
-project: "my-versa-app"
+# versaDeploy Configuration Example
+# This file defines how and where your application is deployed.
+
+# Unique project identifier (used for organizing logs and releases)
+project: "my-awesome-app"
 
 environments:
+  # You can define multiple environments like 'production', 'staging', etc.
   production:
     ssh:
-      host: "prod.example.com"
-      user: "deploy"
-      key_path: "~/.ssh/id_rsa"
-      port: 22
+      host: "1.2.3.4"          # Server IP or hostname
+      user: "deploy"           # SSH user
+      key_path: "~/.ssh/id_rsa"# Path to private key (supports ~/ on Linux/macOS)
+      port: 22                 # SSH port (default 22)
 
-    remote_path: "/var/www/my-app"
+    # Absolute path on the server where the project will live
+    remote_path: "/var/www/my-project"
 
-    # 1. SHARED PATHS: Persist directories across releases
-    # These will be symlinked to /var/www/my-app/shared/
+    # BUILD ENGINES: versaDeploy can build your app locally before uploading
+    builds:
+      # PHP / Composer Settings
+      php:
+        enabled: true
+        project_root: ""       # Subdirectory where composer.json is (optional)
+        composer_command: "composer install --no-dev --optimize-autoloader"
+        # Folders to reuse from previous release via hardlinks (speeds up deploy)
+        reusable_paths: ["vendor"]
+
+      # Frontend / Node Settings
+      frontend:
+        enabled: true
+        project_root: "frontend" # Example of building in a subdirectory
+        npm_command: "pnpm install"
+        compile_command: "pnpm run build"
+        cleanup_dev_deps: true   # Remove node_modules after build and reinstall prod-only
+        production_command: "pnpm install --prod"
+        reusable_paths: ["node_modules", "dist"]
+
+    # PERSISTENCE: Folders that should survive between releases
     shared_paths:
-      - "storage/logs"
-      - "public/uploads"
+      - "storage/logs"         # Log files
+      - "public/uploads"       # User uploaded content
+      - ".env"                 # Environment configuration
 
-    # 2. PRESERVED PATHS: Keep server-side versions (don't overwrite)
-    # Useful for .env or local-only configurations
+    # IMMUTABILITY: Files that should NOT be updated after the first deploy
     preserved_paths:
       - ".env"
       - "config.php"
 
-    builds:
-      # PHP: Composer and dependency reuse
-      php:
-        enabled: true
-        root: "api"
-        composer_command: "composer install --no-dev --optimize-autoloader"
-        # Recover from previous release to save bandwidth if composer.json didn't change
-        reusable_paths:
-          - "vendor"
-
-      # Go: Cross-platform compilation
-      go:
-        enabled: true
-        root: "cmd/api"
-        target_os: "linux"
-        target_arch: "amd64"
-        binary_name: "api-server"
-
-      # Frontend: Compilation and automatic dependency cleanup
-      frontend:
-        enabled: true
-        root: "theme"
-        npm_command: "pnpm install"
-        compile_command: "pnpm run build"
-        cleanup_dev_deps: true # Remove node_modules after build
-        production_command: "pnpm install --prod"
-        # Reuse previous compiled assets if no frontend files changed
-        reusable_paths:
-          - "node_modules"
-          - "dist"
-          - "public/build"
-
-    # 3. POST-DEPLOY HOOKS: Run on server before activating release
-    # Executed relative to your 'app/' directory in the new release
+    # HOOKS: Commands run on the server AFTER upload but BEFORE switching to the new version
+    # They run in the context of the 'app' directory of the new release.
     post_deploy:
+      - "php versaCLI migrate:up"
       - "php versaCLI cache:clear"
-      - "php artisan migrate --force"
 
-    # 4. IGNORED PATHS: Skip files/folders during upload/artifact creation
-    # versaDeploy will still track changes in .vue/.ts/.php inside these if needed
-    ignored_paths:
-      - ".git"
-      - ".vscode"
-      - "src"
-      - "tests"
-      - "node_modules/.cache"
+    # LIMITS:
+    hook_timeout: 300          # Kill hooks if they take more than 5 minutes
 
-    # Timeout for each post-deploy hook (in seconds)
-    hook_timeout: 300
+# FILES TO IGNORE: These patterns won't be included in the deployment artifact.
+# Note: versaDeploy is smart. If you ignore 'src' but a '.php' file inside changes,
+# it will still detect the change to trigger a build!
+ignored:
+  - ".git"
+  - ".github"
+  - "node_modules"
+  - "vendor"
+  - "tests"
+  - ".env"
+  - "README.md"
+  - "deploy.yml"

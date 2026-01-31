@@ -24,15 +24,15 @@ const ReleasesToKeep = 5
 
 // Deployer orchestrates the entire deployment process
 type Deployer struct {
-	cfg           *config.Config
-	env           *config.Environment
-	envName       string
-	repoPath      string
-	dryRun        bool
-	initialDeploy bool
-	force         bool
+	cfg            *config.Config
+	env            *config.Environment
+	envName        string
+	repoPath       string
+	dryRun         bool
+	initialDeploy  bool
+	force          bool
 	skipDirtyCheck bool
-	log           *logger.Logger
+	log            *logger.Logger
 }
 
 // NewDeployer creates a new deployer
@@ -43,15 +43,15 @@ func NewDeployer(cfg *config.Config, envName, repoPath string, dryRun, initialDe
 	}
 
 	return &Deployer{
-		cfg:           cfg,
-		env:           env,
-		envName:       envName,
-		repoPath:      repoPath,
-		dryRun:        dryRun,
-		initialDeploy: initialDeploy,
-		force:         force,
+		cfg:            cfg,
+		env:            env,
+		envName:        envName,
+		repoPath:       repoPath,
+		dryRun:         dryRun,
+		initialDeploy:  initialDeploy,
+		force:          force,
 		skipDirtyCheck: skipDirtyCheck,
-		log:           log,
+		log:            log,
 	}, nil
 }
 
@@ -90,7 +90,6 @@ func (d *Deployer) Deploy() error {
 	}
 	defer os.RemoveAll(tmpRepo)
 
-
 	// Step 4: Get commit hash
 	commitHash, err := git.GetCurrentCommit(tmpRepo)
 	if err != nil {
@@ -100,7 +99,7 @@ func (d *Deployer) Deploy() error {
 
 	// Step 5: Connect to remote server
 	d.log.Info("Connecting to %s@%s...", d.env.SSH.User, d.env.SSH.Host)
-	sshClient, err := ssh.NewClient(&d.env.SSH)
+	sshClient, err := ssh.NewClient(&d.env.SSH, d.log)
 	if err != nil {
 		return verserrors.Wrap(err)
 	}
@@ -108,12 +107,12 @@ func (d *Deployer) Deploy() error {
 
 	// Step 5.5: Acquire deployment lock to prevent concurrent deployments
 	lockDirPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, ".versa.lock"))
-	d.log.Info("Acquiring deployment lock...")
+	d.log.Debug("Acquiring deployment lock...")
 	if err := sshClient.AcquireLock(lockDirPath); err != nil {
 		return err
 	}
 	defer func() {
-		d.log.Info("Releasing deployment lock...")
+		d.log.Debug("Releasing deployment lock...")
 		if err := sshClient.ReleaseLock(lockDirPath); err != nil {
 			d.log.Warn("Failed to release deployment lock: %v", err)
 		}
@@ -129,7 +128,7 @@ func (d *Deployer) Deploy() error {
 	}
 
 	if exists {
-		d.log.Info("Fetching deploy.lock from remote...")
+		d.log.Debug("Fetching deploy.lock from remote...")
 		tmpLockFile := filepath.Join(os.TempDir(), "deploy.lock")
 		if err := sshClient.DownloadFile(lockPath, tmpLockFile); err != nil {
 			return err
@@ -191,14 +190,14 @@ func (d *Deployer) Deploy() error {
 	}
 	defer os.RemoveAll(artifactDir)
 
-	builder := builder.NewBuilder(tmpRepo, artifactDir, d.env, cs)
+	builder := builder.NewBuilder(tmpRepo, artifactDir, d.env, cs, d.log)
 	buildResult, err := builder.Build()
 	if err != nil {
 		return verserrors.Wrap(err)
 	}
 
 	// Step 10: Generate manifest
-	d.log.Info("Generating manifest...")
+	d.log.Debug("Generating manifest...")
 	gen := artifact.NewGenerator(artifactDir, releaseVersion, commitHash)
 	if err := gen.GenerateManifest(buildResult); err != nil {
 		return err
@@ -224,7 +223,7 @@ func (d *Deployer) Deploy() error {
 	if err != nil {
 		d.log.Warn("Could not calculate artifact size: %v", err)
 	} else {
-		d.log.Info("Artifact size: %d MB", artifactSize/(1024*1024))
+		d.log.Debug("Artifact size: %d MB", artifactSize/(1024*1024))
 		if err := sshClient.CheckDiskSpace(releasesDir, artifactSize); err != nil {
 			return verserrors.Wrap(err)
 		}
@@ -419,7 +418,7 @@ func (d *Deployer) Rollback() error {
 	d.log.Info("Rolling back %s...", d.envName)
 
 	// Connect to remote
-	sshClient, err := ssh.NewClient(&d.env.SSH)
+	sshClient, err := ssh.NewClient(&d.env.SSH, d.log)
 	if err != nil {
 		return verserrors.Wrap(err)
 	}
@@ -480,7 +479,7 @@ func (d *Deployer) Status() error {
 	d.log.Info("Status for %s:", d.envName)
 
 	// Connect to remote
-	sshClient, err := ssh.NewClient(&d.env.SSH)
+	sshClient, err := ssh.NewClient(&d.env.SSH, d.log)
 	if err != nil {
 		return verserrors.Wrap(err)
 	}

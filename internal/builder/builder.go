@@ -12,6 +12,7 @@ import (
 	"github.com/user/versaDeploy/internal/changeset"
 	"github.com/user/versaDeploy/internal/config"
 	verserrors "github.com/user/versaDeploy/internal/errors"
+	"github.com/user/versaDeploy/internal/logger"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -33,29 +34,31 @@ type Builder struct {
 	config      *config.Environment
 	changeset   *changeset.ChangeSet
 	result      *BuildResult
+	log         *logger.Logger
 }
 
 // NewBuilder creates a new builder
-func NewBuilder(repoPath, artifactDir string, cfg *config.Environment, cs *changeset.ChangeSet) *Builder {
+func NewBuilder(repoPath, artifactDir string, cfg *config.Environment, cs *changeset.ChangeSet, log *logger.Logger) *Builder {
 	return &Builder{
 		repoPath:    repoPath,
 		artifactDir: artifactDir,
 		config:      cfg,
 		changeset:   cs,
 		result:      &BuildResult{},
+		log:         log,
 	}
 }
 
 // Build executes all necessary builds based on the changeset
 func (b *Builder) Build() (*BuildResult, error) {
 	// Step 1: Copy entire repository to app/ directory (including ignored paths for build)
-	fmt.Println("→ Copying project files to artifact...")
+	b.log.Info("Copying project files to artifact...")
 	if err := b.copyEntireRepo(); err != nil {
 		return nil, fmt.Errorf("failed to copy repository: %w", err)
 	}
 
 	// Step 2-4: Build PHP, Go, and Frontend concurrently
-	fmt.Println("→ Running builds concurrently...")
+	b.log.Info("Running builds concurrently...")
 
 	var g errgroup.Group
 
@@ -95,7 +98,7 @@ func (b *Builder) Build() (*BuildResult, error) {
 	}
 
 	// Step 5: Cleanup ignored paths after builds complete
-	fmt.Println("→ Cleaning up build-time dependencies...")
+	b.log.Info("Cleaning up build-time dependencies...")
 	if err := b.cleanupIgnoredPaths(); err != nil {
 		return nil, fmt.Errorf("failed to cleanup ignored paths: %w", err)
 	}
@@ -161,7 +164,7 @@ func (b *Builder) cleanupIgnoredPaths() error {
 
 		// Check if path exists
 		if _, err := os.Stat(ignoredPath); os.IsNotExist(err) {
-			fmt.Printf("   Skipping (not found): %s\n", cleanIgnored)
+			b.log.Debug("   Skipping ignored path (not found): %s", cleanIgnored)
 			continue
 		}
 
@@ -169,7 +172,7 @@ func (b *Builder) cleanupIgnoredPaths() error {
 		if err := os.RemoveAll(ignoredPath); err != nil {
 			return fmt.Errorf("failed to remove ignored path %s: %w", cleanIgnored, err)
 		}
-		fmt.Printf("   Removed: %s\n", cleanIgnored)
+		b.log.Debug("   Removed ignored path: %s", cleanIgnored)
 	}
 
 	return nil
@@ -179,18 +182,18 @@ func (b *Builder) cleanupIgnoredPaths() error {
 func (b *Builder) buildPHP() error {
 	// Run composer if composer.json changed or if force redeploy is requested
 	if b.changeset.ComposerChanged || b.changeset.Force {
-		fmt.Println("→ Running composer install...")
+		b.log.Info("Running composer install...")
 
 		// Run composer in the artifact's app directory
 		composerDir := filepath.Join(b.artifactDir, "app", b.config.Builds.PHP.ProjectRoot)
-		fmt.Printf("   Working directory: app/%s\n", b.config.Builds.PHP.ProjectRoot)
+		b.log.Debug("   Working directory: app/%s", b.config.Builds.PHP.ProjectRoot)
 
 		output, err := b.executeCommand(b.config.Builds.PHP.ComposerCommand, composerDir)
 		if err != nil {
-			fmt.Printf("   Composer output:\n%s\n", string(output))
+			b.log.Debug("Composer output:\n%s", string(output))
 			return verserrors.New(verserrors.CodeBuildFailed, "Composer command failed", "Check your composer.json and ensure all dependencies are available locally.", fmt.Errorf("%w: %s", err, string(output)))
 		}
-		fmt.Println("   ✓ Composer install completed")
+		b.log.Success("Composer install completed")
 
 		b.result.ComposerUpdated = true
 	}
@@ -209,10 +212,10 @@ func (b *Builder) buildGo() error {
 		return nil // No Go changes
 	}
 
-	fmt.Println("→ Building Go binary...")
-
 	goCfg := b.config.Builds.Go
 	binaryPath := filepath.Join(b.artifactDir, "bin", goCfg.BinaryName)
+
+	b.log.Info("Building Go binary: %s", goCfg.BinaryName)
 
 	// Prepare build command
 	buildCmd := fmt.Sprintf("GOOS=%s GOARCH=%s go build -o %s", goCfg.TargetOS, goCfg.TargetArch, binaryPath)
@@ -248,15 +251,15 @@ func (b *Builder) buildFrontend() error {
 	}
 
 	if needsInstall {
-		fmt.Println("→ Running npm install...")
-		fmt.Printf("   Working directory: app/%s\n", b.config.Builds.Frontend.ProjectRoot)
+		b.log.Info("Running npm install...")
+		b.log.Debug("   Working directory: app/%s", b.config.Builds.Frontend.ProjectRoot)
 
 		output, err := b.executeCommand(b.config.Builds.Frontend.NPMCommand, npmDir)
 		if err != nil {
-			fmt.Printf("   NPM output:\n%s\n", string(output))
+			b.log.Debug("NPM output:\n%s", string(output))
 			return verserrors.New(verserrors.CodeBuildFailed, "NPM command failed", "Check your package.json and ensure npm/node is installed correctly.", fmt.Errorf("%w: %s", err, string(output)))
 		}
-		fmt.Println("   ✓ NPM install completed")
+		b.log.Success("NPM install completed")
 
 		b.result.NPMUpdated = true
 	}
@@ -264,20 +267,19 @@ func (b *Builder) buildFrontend() error {
 	// If compile_command doesn't contain {file}, run it once if any frontend files changed
 	if !strings.Contains(b.config.Builds.Frontend.CompileCommand, "{file}") {
 		if len(b.changeset.FrontendFiles) > 0 || b.changeset.Force {
-			fmt.Println("→ Compiling frontend (global)...")
+			b.log.Info("Compiling frontend assets...")
 
 			// Run compile in the artifact's app directory
 			compileDir := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot)
-			fmt.Printf("   Working directory: app/%s\n", b.config.Builds.Frontend.ProjectRoot)
-			fmt.Printf("   Command: %s\n", b.config.Builds.Frontend.CompileCommand)
+			b.log.Debug("   Working directory: app/%s", b.config.Builds.Frontend.ProjectRoot)
+			b.log.Debug("   Command: %s", b.config.Builds.Frontend.CompileCommand)
 
 			output, err := b.executeCommand(b.config.Builds.Frontend.CompileCommand, compileDir)
 			if err != nil {
-				fmt.Printf("   Compilation output:\n%s\n", string(output))
+				b.log.Debug("Compilation output:\n%s", string(output))
 				return verserrors.New(verserrors.CodeBuildFailed, "Frontend compile failed", "Check your build command.", fmt.Errorf("%w: %s", err, string(output)))
 			}
-			fmt.Printf("   Compilation output:\n%s\n", string(output))
-			fmt.Println("   ✓ Frontend compilation completed")
+			b.log.Success("Frontend compilation completed")
 			b.result.FrontendCompiled = len(b.changeset.FrontendFiles)
 		}
 
@@ -291,19 +293,19 @@ func (b *Builder) buildFrontend() error {
 
 	// Compile changed frontend files individually
 	for _, file := range b.changeset.FrontendFiles {
-		fmt.Printf("→ Compiling %s...\n", file)
+		b.log.Info("Compiling frontend asset: %s", file)
 
 		// Replace {file} placeholder in compile command
 		compileCmd := strings.Replace(b.config.Builds.Frontend.CompileCommand, "{file}", file, -1)
 		compileDir := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot)
-		fmt.Printf("   Command: %s\n", compileCmd)
+		b.log.Debug("   Command: %s", compileCmd)
 
 		output, err := b.executeCommand(compileCmd, compileDir)
 		if err != nil {
-			fmt.Printf("   Compilation output:\n%s\n", string(output))
+			b.log.Debug("Compilation output:\n%s", string(output))
 			return verserrors.New(verserrors.CodeBuildFailed, fmt.Sprintf("Compile failed for %s", file), "Check your custom compiler command and ensure it's correct for this file type.", fmt.Errorf("%w: %s", err, string(output)))
 		}
-		fmt.Printf("   ✓ Compiled successfully\n")
+		b.log.Success("Compiled successfully: %s", file)
 
 		b.result.FrontendCompiled++
 	}
@@ -326,12 +328,12 @@ func (b *Builder) cleanupDevDependencies() error {
 		return nil // No frontend-related changes, skip cleanup
 	}
 
-	fmt.Println("→ Cleaning up dev dependencies...")
+	b.log.Info("Cleaning up dev dependencies...")
 	nodeModulesDst := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot, "node_modules")
 
 	// Measure size before
 	beforeSize, _ := b.calculateDirSize(nodeModulesDst)
-	fmt.Printf("   Size before cleanup: %d MB\n", beforeSize/(1024*1024))
+	b.log.Debug("   Size before cleanup: %d MB", beforeSize/(1024*1024))
 
 	// Remove node_modules from artifact
 	if err := os.RemoveAll(nodeModulesDst); err != nil {
@@ -339,27 +341,27 @@ func (b *Builder) cleanupDevDependencies() error {
 	}
 
 	// Run production install in the artifact
-	fmt.Println("→ Installing production dependencies only...")
+	b.log.Info("Installing production dependencies...")
 	productionDir := filepath.Join(b.artifactDir, "app", b.config.Builds.Frontend.ProjectRoot)
-	fmt.Printf("   Working directory: app/%s\n", b.config.Builds.Frontend.ProjectRoot)
-	fmt.Printf("   Command: %s\n", b.config.Builds.Frontend.ProductionCommand)
+	b.log.Debug("   Working directory: app/%s", b.config.Builds.Frontend.ProjectRoot)
+	b.log.Debug("   Command: %s", b.config.Builds.Frontend.ProductionCommand)
 
 	output, err := b.executeCommand(b.config.Builds.Frontend.ProductionCommand, productionDir)
 	if err != nil {
-		fmt.Printf("   Production install output:\n%s\n", string(output))
+		b.log.Debug("Production install output:\n%s", string(output))
 		return verserrors.New(verserrors.CodeBuildFailed, "Production install failed", "Check your production_command configuration.", fmt.Errorf("%w: %s", err, string(output)))
 	}
 
 	// Always log output in debug/verbose or if requested to verify
 	if len(output) > 0 {
-		fmt.Printf("   Command output: %s\n", strings.TrimSpace(string(output)))
+		b.log.Debug("   Command output: %s", strings.TrimSpace(string(output)))
 	}
 
 	// Measure size after
 	afterSize, _ := b.calculateDirSize(nodeModulesDst)
-	fmt.Printf("   Size after cleanup: %d MB\n", afterSize/(1024*1024))
+	b.log.Debug("   Size after cleanup: %d MB", afterSize/(1024*1024))
 
-	fmt.Println("→ Dev dependencies cleaned up successfully")
+	b.log.Success("Dev dependencies cleaned up successfully")
 	return nil
 }
 
