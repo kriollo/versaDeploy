@@ -22,8 +22,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "versa",
-	Short: "versaDeploy - Production-grade deployment engine",
+	Use:     "versa",
+	Short:   "versaDeploy - Production-grade deployment engine",
+	Version: version.Version,
 	Long: `versaDeploy is a deterministic deployment tool that:
 - Detects changes via SHA256 hashing
 - Builds artifacts selectively outside production
