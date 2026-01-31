@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.6rc] - 2026-01-31
+
+### Added
+
+- **Documentation Overhaul**: Centralized documentation strategy by moving guides to the `doc/` directory.
+- **New Guides**: Added `doc/GETTING_STARTED.md` and `doc/CLI_REFERENCE.md` for better onboarding and reference.
+
+### Improved
+
+- **Logging Audit**: Full audit of application logs to standardize levels and improve readability. Debug logs are now properly suppressed unless `--debug` is used.
+- **SSH Diagnostics**: Added logger support to the SSH client for better troubleshooting of remote operations.
+- **Config Documentation**: Expanded comments and examples in `deploy.example.yml`.
+- **Builder Stability**: Improved failure reporting in the build phase with more detailed context.
+
+### Changed
+
+- **Internal Version**: Version bumped to 1.0.6rc.
+
 ## [1.0.5rc] - 2026-01-31
 
 ### Added
