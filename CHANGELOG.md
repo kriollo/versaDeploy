@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.7rc] - 2026-03-04
+
+### Performance
+
+- **Faster Release Sorting**: Replaced O(n²) bubble sort in `SortReleases` with `sort.Slice` (O(n log n)).
+- **Logger Lazy Formatting**: `Debug()` now returns early when debug mode is off, eliminating unnecessary `fmt.Sprintf` allocations in production.
+- **Faster Change Detection**: Pre-allocated `filesToHash` slice (capacity 512) to reduce GC pressure on large repos. Ignored paths now use a `map[string]struct{}` for O(1) exact-match lookups instead of linear scans.
+- **Hash Timeout**: Added a 30-second per-file context timeout to file hashing goroutines, preventing indefinite hangs on stale NFS mounts or broken file permissions.
+- **Parallel Repo Copy**: `copyEntireRepo` now uses a `runtime.NumCPU()` worker pool to copy files in parallel, significantly reducing build preparation time on large repos.
+- **Parallel Directory Upload**: `UploadDirectory` now creates remote directories sequentially and uploads files with 4 concurrent workers, reducing SFTP transfer time.
+- **Atomic Symlink in One Round-Trip**: `CreateSymlink` now executes the full create-rename-verify sequence in a single SSH command, reducing network round-trips from 3 to 1.
+- **Larger Upload Buffer**: `uploadFile` now uses `io.CopyBuffer` with a 256 KB buffer to reduce syscall overhead when uploading large artifacts.
+- **Reduced Artifact Memory Peak**: `Compress` default chunk size reduced from 1 GB to 100 MB, lowering peak memory usage during compression.
+
+### Improved
+
+- **Shared `CalculateDirSize`**: Extracted duplicate directory-size calculation into a new `internal/fsutil` package, used by both `builder` and `deployer`.
+- **Robust Network Error Detection**: `errors.Wrap` now uses `errors.As(*net.OpError)` for network error classification (timeout, connection refused) before falling back to string matching, making it more reliable across library versions.
+
+### Changed
+
+- **Internal Version**: Version bumped to 1.0.7rc.
+
 ## [1.0.6rc] - 2026-01-31
 
 ### Added

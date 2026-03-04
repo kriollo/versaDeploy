@@ -1,7 +1,9 @@
 package verserrors
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -68,17 +70,31 @@ func Wrap(err error) error {
 		return nil
 	}
 
+	// Network errors: prefer type assertions (O(1), robust to message changes),
+	// with string-matching fallback for errors that don't carry *net.OpError.
+	var netErr *net.OpError
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return New(CodeSSHConnectFailed, "SSH Connection timed out", "Ensure the remote host is reachable and the port (default 22) is open in the firewall.", err)
+		}
+		if strings.Contains(netErr.Error(), "connection refused") {
+			return New(CodeSSHConnectFailed, "SSH Connection refused", "Check if the SSH service is running on the remote host and you're using the correct port.", err)
+		}
+	}
+
 	errMsg := err.Error()
 
-	// SSH common errors
-	if strings.Contains(errMsg, "ssh: handshake failed") || strings.Contains(errMsg, "unable to authenticate") {
-		return New(CodeSSHAuthFailed, "SSH Authentication failed", "Check your SSH private key path and ensure it's added to the remote server's authorized_keys.", err)
-	}
+	// Fallback string matching for timeout/refused (covers plain errors without *net.OpError)
 	if strings.Contains(errMsg, "dial tcp") && strings.Contains(errMsg, "i/o timeout") {
 		return New(CodeSSHConnectFailed, "SSH Connection timed out", "Ensure the remote host is reachable and the port (default 22) is open in the firewall.", err)
 	}
 	if strings.Contains(errMsg, "connection refused") {
 		return New(CodeSSHConnectFailed, "SSH Connection refused", "Check if the SSH service is running on the remote host and you're using the correct port.", err)
+	}
+
+	// SSH auth/handshake errors — crypto/ssh does not export typed errors for these.
+	if strings.Contains(errMsg, "ssh: handshake failed") || strings.Contains(errMsg, "unable to authenticate") {
+		return New(CodeSSHAuthFailed, "SSH Authentication failed", "Check your SSH private key path and ensure it's added to the remote server's authorized_keys.", err)
 	}
 
 	// Git common errors

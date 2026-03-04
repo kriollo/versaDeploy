@@ -112,6 +112,9 @@ func (l *Logger) writeConsole(level Level, message string) {
 
 // Debug logs a debug message
 func (l *Logger) Debug(format string, args ...interface{}) {
+	if !l.debug {
+		return
+	}
 	l.log(LevelDebug, format, args...)
 }
 

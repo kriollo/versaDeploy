@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/user/versaDeploy/internal/changeset"
 	"github.com/user/versaDeploy/internal/config"
 	verserrors "github.com/user/versaDeploy/internal/errors"
+	"github.com/user/versaDeploy/internal/fsutil"
 	"github.com/user/versaDeploy/internal/logger"
 	"golang.org/x/sync/errgroup"
 )
@@ -106,31 +108,36 @@ func (b *Builder) Build() (*BuildResult, error) {
 	return b.result, nil
 }
 
-// copyEntireRepo copies the entire repository to app/ directory (including ignored paths for build)
+// copyEntireRepo copies the entire repository to app/ directory (including ignored paths for build).
+// Directories are created sequentially (to satisfy parent-before-child ordering), then files are
+// copied in parallel using a worker pool of runtime.NumCPU() goroutines.
 func (b *Builder) copyEntireRepo() error {
 	appDir := filepath.Join(b.artifactDir, "app")
 	if err := os.MkdirAll(appDir, 0775); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
 
-	// Walk through the repository and copy EVERYTHING (we'll cleanup ignored paths after build)
-	return filepath.Walk(b.repoPath, func(path string, info os.FileInfo, err error) error {
+	type filePair struct {
+		src string
+		dst string
+	}
+
+	// Collect files; create directories inline (sequential, preserves order).
+	var files []filePair
+	err := filepath.Walk(b.repoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Get relative path from repo root
 		relPath, err := filepath.Rel(b.repoPath, path)
 		if err != nil {
 			return err
 		}
 
-		// Skip root directory itself
 		if relPath == "." {
 			return nil
 		}
 
-		// Skip .git directory (always ignore)
 		if strings.HasPrefix(relPath, ".git") {
 			if info.IsDir() {
 				return filepath.SkipDir
@@ -138,15 +145,56 @@ func (b *Builder) copyEntireRepo() error {
 			return nil
 		}
 
-		// Destination path in artifact
 		dstPath := filepath.Join(appDir, relPath)
 
 		if info.IsDir() {
 			return os.MkdirAll(dstPath, info.Mode())
 		}
 
-		return copyFile(path, dstPath)
+		files = append(files, filePair{src: path, dst: dstPath})
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Copy files in parallel.
+	numWorkers := runtime.NumCPU()
+	if numWorkers > len(files) {
+		numWorkers = len(files)
+	}
+	if numWorkers < 1 {
+		numWorkers = 1
+	}
+
+	jobs := make(chan filePair, len(files))
+	for _, f := range files {
+		jobs <- f
+	}
+	close(jobs)
+
+	var (
+		wg      sync.WaitGroup
+		copyErr error
+		errMu   sync.Mutex
+	)
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for f := range jobs {
+				if err := copyFile(f.src, f.dst); err != nil {
+					errMu.Lock()
+					if copyErr == nil {
+						copyErr = err
+					}
+					errMu.Unlock()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	return copyErr
 }
 
 // cleanupIgnoredPaths removes ignored paths from artifact after builds complete
@@ -367,17 +415,7 @@ func (b *Builder) cleanupDevDependencies() error {
 
 // calculateDirSize calculates the total size of a directory recursively
 func (b *Builder) calculateDirSize(path string) (int64, error) {
-	var size int64
-	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			size += info.Size()
-		}
-		return nil
-	})
-	return size, err
+	return fsutil.CalculateDirSize(path)
 }
 
 // executeCommand runs a command in a shell based on the current OS

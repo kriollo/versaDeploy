@@ -13,6 +13,7 @@ import (
 	"github.com/user/versaDeploy/internal/changeset"
 	"github.com/user/versaDeploy/internal/config"
 	verserrors "github.com/user/versaDeploy/internal/errors"
+	"github.com/user/versaDeploy/internal/fsutil"
 	"github.com/user/versaDeploy/internal/git"
 	"github.com/user/versaDeploy/internal/logger"
 	"github.com/user/versaDeploy/internal/ssh"
@@ -516,17 +517,7 @@ func (d *Deployer) Status() error {
 
 // calculateDirectorySize calculates the total size of a directory
 func (d *Deployer) calculateDirectorySize(dirPath string) (int64, error) {
-	var size int64
-	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			size += info.Size()
-		}
-		return nil
-	})
-	return size, err
+	return fsutil.CalculateDirSize(dirPath)
 }
 
 // validateLocalTools checks if necessary build tools are available on the system

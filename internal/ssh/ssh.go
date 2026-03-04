@@ -126,37 +126,65 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// UploadDirectory uploads a directory recursively
+// UploadDirectory uploads a directory recursively.
+// Directories are created sequentially (to preserve parent-before-child ordering),
+// then files are uploaded in parallel using a pool of 4 workers.
 func (c *Client) UploadDirectory(localDir, remoteDir string) error {
-	// Create remote directory
+	// Create remote root directory
 	if err := c.sftpClient.MkdirAll(remoteDir); err != nil {
 		return fmt.Errorf("failed to create remote directory: %w", err)
 	}
 
-	// Walk local directory
-	return filepath.Walk(localDir, func(localPath string, info os.FileInfo, err error) error {
+	type filePair struct {
+		local  string
+		remote string
+	}
+
+	// Pass 1: collect directories and create them sequentially, collect files for parallel upload
+	var files []filePair
+	err := filepath.Walk(localDir, func(localPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Get relative path
 		relPath, err := filepath.Rel(localDir, localPath)
 		if err != nil {
 			return err
 		}
-
-		// Convert to forward slashes for remote path
 		relPath = filepath.ToSlash(relPath)
 		remotePath := filepath.ToSlash(filepath.Join(remoteDir, relPath))
 
 		if info.IsDir() {
-			// Create remote directory
 			return c.sftpClient.MkdirAll(remotePath)
 		}
 
-		// Upload file
-		return c.uploadFile(localPath, remotePath, nil)
+		files = append(files, filePair{local: localPath, remote: remotePath})
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Pass 2: upload files in parallel (4 workers, conservative for VPS bandwidth)
+	const uploadWorkers = 4
+	jobs := make(chan filePair, len(files))
+	for _, f := range files {
+		jobs <- f
+	}
+	close(jobs)
+
+	var g errgroup.Group
+	for i := 0; i < uploadWorkers; i++ {
+		g.Go(func() error {
+			for f := range jobs {
+				if err := c.uploadFile(f.local, f.remote, nil); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	return g.Wait()
 }
 
 // UploadFilesParallel uploads multiple files concurrently to a remote directory
@@ -208,7 +236,8 @@ func (c *Client) UploadFilesParallel(localPaths []string, remoteDir string, conc
 	return g.Wait()
 }
 
-// uploadFile uploads a single file, optionally reporting progress to a writer
+// uploadFile uploads a single file, optionally reporting progress to a writer.
+// Uses a 256 KB buffer to reduce syscall overhead for large files.
 func (c *Client) uploadFile(localPath, remotePath string, progress io.Writer) error {
 	// Open local file
 	localFile, err := os.Open(localPath)
@@ -224,13 +253,14 @@ func (c *Client) uploadFile(localPath, remotePath string, progress io.Writer) er
 	}
 	defer remoteFile.Close()
 
-	// Copy contents
+	// Copy contents with an explicit buffer to reduce syscall overhead
+	buf := make([]byte, 256*1024)
 	var writer io.Writer = remoteFile
 	if progress != nil {
 		writer = io.MultiWriter(remoteFile, progress)
 	}
 
-	if _, err := io.Copy(writer, localFile); err != nil {
+	if _, err := io.CopyBuffer(writer, localFile, buf); err != nil {
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
 
@@ -392,33 +422,21 @@ func (c *Client) ReadSymlink(path string) (string, error) {
 	return target, nil
 }
 
-// CreateSymlink creates a symlink atomically (two-step process)
+// CreateSymlink creates a symlink atomically using a single SSH round-trip.
+// It creates a temporary symlink, atomically renames it to the final location,
+// then reads back the target for verification — all in one shell command.
 func (c *Client) CreateSymlink(target, linkPath string) error {
-	// Step 1: Create temporary symlink
 	tmpLink := linkPath + ".tmp"
-
-	// Remove tmp link if it exists using SFTP
-	c.sftpClient.Remove(tmpLink)
-
-	// Create symlink
-	cmd := fmt.Sprintf("ln -sfn %s %s", target, tmpLink)
-	if _, err := c.ExecuteCommand(cmd); err != nil {
-		return fmt.Errorf("failed to create temporary symlink: %w", err)
-	}
-
-	// Step 2: Atomically move to final location
-	cmd = fmt.Sprintf("mv -Tf %s %s", tmpLink, linkPath)
-	if _, err := c.ExecuteCommand(cmd); err != nil {
-		return fmt.Errorf("failed to atomically switch symlink: %w", err)
-	}
-
-	// Step 3: Verify symlink points to correct target
-	actualTarget, err := c.ReadSymlink(linkPath)
+	// Batch all three operations into a single SSH round-trip to reduce latency.
+	cmd := fmt.Sprintf("ln -sfn %s %s && mv -Tf %s %s && readlink %s",
+		target, tmpLink, tmpLink, linkPath, linkPath)
+	output, err := c.ExecuteCommand(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to verify symlink: %w", err)
+		return fmt.Errorf("failed to create symlink: %w", err)
 	}
 
-	// Handle both absolute and relative paths
+	// Verify the symlink points to the expected target
+	actualTarget := strings.TrimSpace(output)
 	if !strings.HasSuffix(actualTarget, target) && actualTarget != target {
 		return fmt.Errorf("symlink verification failed: expected %s, got %s", target, actualTarget)
 	}

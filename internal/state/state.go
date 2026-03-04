@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -81,11 +82,7 @@ func IsFirstDeploy(lock *DeployLock) bool {
 
 // SortReleases sorts a slice of release version strings in descending order (newest first)
 func SortReleases(releases []string) {
-	for i := 0; i < len(releases); i++ {
-		for j := i + 1; j < len(releases); j++ {
-			if releases[i] < releases[j] {
-				releases[i], releases[j] = releases[j], releases[i]
-			}
-		}
-	}
+	sort.Slice(releases, func(i, j int) bool {
+		return releases[i] > releases[j]
+	})
 }

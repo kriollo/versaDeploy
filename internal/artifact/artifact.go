@@ -109,8 +109,8 @@ func GenerateReleaseVersion() string {
 
 // Compress creates a single-part .tar.gz archive of the artifact directory
 func (g *Generator) Compress(archivePath string) error {
-	// Use 1GB chunk size to ensure a single part for standard compression
-	chunks, err := g.CompressChunked(archivePath, 1024*1024*1024)
+	// Use 100MB chunk size to reduce peak memory during compression
+	chunks, err := g.CompressChunked(archivePath, 100*1024*1024)
 	if err != nil {
 		return err
 	}

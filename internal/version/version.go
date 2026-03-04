@@ -1,4 +1,4 @@
 package version
 
 // Version is the current version of versaDeploy
-const Version = "1.0.6rc"
+const Version = "1.0.7rc"

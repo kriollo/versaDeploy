@@ -1,6 +1,7 @@
 package changeset
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/user/versaDeploy/internal/state"
 )
@@ -35,6 +37,7 @@ type ChangeSet struct {
 type Detector struct {
 	repoPath     string
 	ignoredPaths []string
+	ignoredMap   map[string]struct{} // exact-match set for O(1) lookup
 	routeFiles   []string
 	phpRoot      string
 	goRoot       string
@@ -44,9 +47,19 @@ type Detector struct {
 
 // NewDetector creates a new change detector
 func NewDetector(repoPath string, ignoredPaths, routeFiles []string, phpRoot, goRoot, frontendRoot string, previousLock *state.DeployLock) *Detector {
+	// Pre-normalize ignored paths once and build a map for O(1) exact-match lookups
+	normalized := make([]string, len(ignoredPaths))
+	ignoredMap := make(map[string]struct{}, len(ignoredPaths))
+	for i, p := range ignoredPaths {
+		n := filepath.ToSlash(p)
+		normalized[i] = n
+		ignoredMap[n] = struct{}{}
+	}
+
 	return &Detector{
 		repoPath:     repoPath,
-		ignoredPaths: ignoredPaths,
+		ignoredPaths: normalized,
+		ignoredMap:   ignoredMap,
 		routeFiles:   routeFiles,
 		phpRoot:      phpRoot,
 		goRoot:       goRoot,
@@ -73,7 +86,7 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 		ext     string
 	}
 
-	var filesToHash []fileToHash
+	filesToHash := make([]fileToHash, 0, 512)
 	var mu sync.Mutex
 
 	// Walk the repository and collect files
@@ -154,13 +167,16 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 	results := make(chan hashResult, len(filesToHash))
 
 	// Start workers
+	const hashTimeout = 30 * time.Second
 	var wg sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for file := range jobs {
-				hash, err := hashFile(file.path)
+				ctx, cancel := context.WithTimeout(context.Background(), hashTimeout)
+				hash, err := hashFileCtx(ctx, file.path)
+				cancel()
 				results <- hashResult{
 					relPath: file.relPath,
 					hash:    hash,
@@ -272,14 +288,36 @@ func (d *Detector) isFileChanged(path, currentHash string) bool {
 
 // shouldIgnore checks if a path should be ignored
 func (d *Detector) shouldIgnore(path string) bool {
-	path = filepath.ToSlash(path)
+	// paths in ignoredPaths are already normalized in NewDetector
+	if _, ok := d.ignoredMap[path]; ok {
+		return true
+	}
 	for _, ignored := range d.ignoredPaths {
-		ignored = filepath.ToSlash(ignored)
-		if path == ignored || strings.HasPrefix(path, ignored+"/") {
+		if strings.HasPrefix(path, ignored+"/") {
 			return true
 		}
 	}
 	return false
+}
+
+// hashFileCtx calculates SHA256 hash of a file, respecting context cancellation/timeout.
+// If the context expires while hashing, the function returns ctx.Err().
+func hashFileCtx(ctx context.Context, path string) (string, error) {
+	type result struct {
+		hash string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		h, e := hashFile(path)
+		ch <- result{h, e}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", fmt.Errorf("hashing %s: %w", path, ctx.Err())
+	case r := <-ch:
+		return r.hash, r.err
+	}
 }
 
 // hashFile calculates SHA256 hash of a file
