@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0rc] - 2026-03-04
+
+### Added
+
+- **Interactive TUI (`--gui`)**: New terminal UI accessible via `versa --gui`. Provides a full-screen interactive dashboard without leaving the terminal.
+  - **Sidebar**: Lists all configured environments with live connection indicators (connected / connecting / error / idle). Navigate with `↑/↓` and switch with `Tab`.
+  - **View 1 — Dashboard**: Shows the current active release, remote disk usage, and total release count for the selected environment.
+  - **View 2 — Releases**: Scrollable table of all releases with the active one marked. Press `r` to rollback to any selected release instantly.
+  - **View 3 — File Browser**: SFTP-backed directory navigator rooted at `remote_path`. `Enter` descends into directories, `Backspace` goes up.
+  - **View 4 — Shared Paths**: Lists all configured `shared_paths` with their disk usage (`du -sh`).
+  - **View 5 — Deploy**: Toggle form for `dry-run`, `force`, and `initial-deploy` flags. Press `d` to launch the deployment and watch logs stream line-by-line in a scrollable viewport.
+  - **Lazy SSH connections**: Each environment connects on first access; reconnect at any time with `c`.
+  - **Tokyo Night color palette** via Lip Gloss.
+
+### Improved
+
+- **Logger TUI support**: `logger.NewTUILogger(w io.Writer, verbose, debug bool)` constructor added. When set, log output is written to the provided writer (used for deploy log streaming) instead of stdout.
+- **SSH `ReadDir`**: Exposed `Client.ReadDir(path string) ([]os.FileInfo, error)` for SFTP directory listing used by the file browser.
+
+### Dependencies
+
+- Added `github.com/charmbracelet/bubbletea` (Elm-architecture TUI framework)
+- Added `github.com/charmbracelet/lipgloss` (ANSI styling)
+- Added `github.com/charmbracelet/bubbles` (viewport, spinner, key components)
+
+### Changed
+
+- **Internal Version**: Version bumped to 1.1.0rc.
+
 ## [1.0.7rc] - 2026-03-04
 
 ### Performance

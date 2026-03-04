@@ -3,6 +3,7 @@ package logger
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 )
@@ -27,9 +28,10 @@ type Entry struct {
 
 // Logger handles logging to console and file
 type Logger struct {
-	file    *os.File
-	verbose bool
-	debug   bool
+	file        *os.File
+	extraWriter io.Writer // additional writer (used by TUI for streaming)
+	verbose     bool
+	debug       bool
 }
 
 // NewLogger creates a new logger
@@ -80,6 +82,12 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 	l.writeConsole(level, message)
 }
 
+// NewTUILogger creates a logger that streams formatted lines to w instead of stdout.
+// File logging is disabled; only the provided writer receives output.
+func NewTUILogger(w io.Writer, verbose, debug bool) *Logger {
+	return &Logger{extraWriter: w, verbose: verbose, debug: debug}
+}
+
 // writeConsole writes formatted output to console
 func (l *Logger) writeConsole(level Level, message string) {
 	var prefix string
@@ -106,6 +114,10 @@ func (l *Logger) writeConsole(level Level, message string) {
 		color = "\033[32m" // Green
 	}
 
+	if l.extraWriter != nil {
+		fmt.Fprintf(l.extraWriter, "%s %s\n", prefix, message)
+		return
+	}
 	reset := "\033[0m"
 	fmt.Printf("%s%s%s %s\n", color, prefix, reset, message)
 }

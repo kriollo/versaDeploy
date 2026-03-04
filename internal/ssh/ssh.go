@@ -526,6 +526,11 @@ func (c *Client) AcquireLock(lockPath string) error {
 	return nil
 }
 
+// ReadDir lists the contents of a remote directory via SFTP.
+func (c *Client) ReadDir(path string) ([]os.FileInfo, error) {
+	return c.sftpClient.ReadDir(path)
+}
+
 // ReleaseLock releases the deployment lock via SFTP
 func (c *Client) ReleaseLock(lockPath string) error {
 	return c.sftpClient.RemoveDirectory(lockPath)

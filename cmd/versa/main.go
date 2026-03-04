@@ -11,6 +11,7 @@ import (
 	"github.com/user/versaDeploy/internal/logger"
 	"github.com/user/versaDeploy/internal/selfupdate"
 	"github.com/user/versaDeploy/internal/ssh"
+	"github.com/user/versaDeploy/internal/tui"
 	"github.com/user/versaDeploy/internal/version"
 )
 
@@ -19,6 +20,7 @@ var (
 	verbose    bool
 	debug      bool
 	logFile    string
+	guiMode    bool
 )
 
 var rootCmd = &cobra.Command{
@@ -30,6 +32,20 @@ var rootCmd = &cobra.Command{
 - Builds artifacts selectively outside production
 - Deploys atomically using symlink switching
 - Supports instant rollback`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if !guiMode {
+			return cmd.Help()
+		}
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		repoPath, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		return tui.Launch(cfg, repoPath)
+	},
 }
 
 var versionCmd = &cobra.Command{
@@ -306,6 +322,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "Verbose output")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Debug mode")
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "Log file path")
+	rootCmd.PersistentFlags().BoolVar(&guiMode, "gui", false, "Launch interactive TUI")
 
 	deployCmd.Flags().Bool("dry-run", false, "Show changes without deploying")
 	deployCmd.Flags().Bool("initial-deploy", false, "Flag for first deployment")
