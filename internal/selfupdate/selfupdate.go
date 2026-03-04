@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"github.com/user/versaDeploy/internal/logger"
@@ -109,55 +110,86 @@ func (u *Updater) getLatestRelease() (*Release, error) {
 }
 
 func (u *Updater) performUpdate(url string) error {
-	// Download the new binary to a temporary file
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	tmpFile, err := os.CreateTemp("", "versa-update-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		tmpFile.Close()
-		return err
-	}
-	tmpFile.Close()
-
-	// Replace the current binary
+	// Resolve current binary path first so we can place the temp file on the
+	// same filesystem, avoiding cross-device rename errors.
 	currentPath, err := os.Executable()
 	if err != nil {
 		return err
 	}
+	currentDir := filepath.Dir(currentPath)
 
-	// On Windows, we must rename the current file before replacing it
+	// Download the new binary to a temp file in the same directory as the binary.
+	tmpFile, err := os.CreateTemp(currentDir, "versa-update-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		tmpFile.Close()
+		return err
+	}
+	defer resp.Body.Close()
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to download update: %w", err)
+	}
+	tmpFile.Close()
+
+	// Set execution bits before replacing (Linux/Mac)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(tmpPath, 0775); err != nil {
+			return fmt.Errorf("failed to set permissions on update: %w", err)
+		}
+	}
+
+	// Backup current binary then atomically swap in the new one.
 	oldPath := currentPath + ".old"
-	_ = os.Remove(oldPath) // Remove old backup if exists
+	_ = os.Remove(oldPath)
 
 	if err := os.Rename(currentPath, oldPath); err != nil {
 		return fmt.Errorf("failed to move current binary: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, currentPath); err != nil {
-		// Try to rollback if possible
-		_ = os.Rename(oldPath, currentPath)
-		return fmt.Errorf("failed to replace binary: %w", err)
+		// Cross-device rename should not happen now (same dir), but fall back
+		// to a manual copy just in case.
+		if copyErr := copyFile(tmpPath, currentPath); copyErr != nil {
+			_ = os.Rename(oldPath, currentPath) // restore on failure
+			return fmt.Errorf("failed to replace binary: %w", err)
+		}
 	}
 
-	// Set execution bits (for Linux/Mac)
-	if runtime.GOOS != "windows" {
-		_ = os.Chmod(currentPath, 0775)
-	}
-
-	// On Windows, we can't delete the .old file while we are running,
-	// but it's okay, it will be cleaned up eventually or by next update.
+	// Remove the old backup (best-effort; Windows may skip this).
+	_ = os.Remove(oldPath)
 
 	return nil
+}
+
+// copyFile copies src to dst, preserving executable permissions.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }
 
 func (u *Updater) restart() error {
