@@ -31,7 +31,7 @@ func TestHashFile(t *testing.T) {
 
 func TestDetector_ShouldIgnore(t *testing.T) {
 	ignored := []string{".git", "vendor", "node_modules/cache", "services"}
-	d := NewDetector("", ignored, nil, "", "", "", nil)
+	d := NewDetector("", ignored, nil, "", "", "", "", "requirements.txt", nil)
 
 	tests := []struct {
 		path   string
@@ -77,7 +77,7 @@ func TestDetector_Detect(t *testing.T) {
 	routes := []string{"app/routes.php"}
 
 	// Test first deployment (no previous lock)
-	detector := NewDetector(repoDir, ignored, routes, "", "", "", nil)
+	detector := NewDetector(repoDir, ignored, routes, "", "", "", "", "requirements.txt", nil)
 	cs, err := detector.Detect()
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestDetector_Detect(t *testing.T) {
 		},
 	}
 
-	detector = NewDetector(repoDir, ignored, routes, "", "", "", previousLock)
+	detector = NewDetector(repoDir, ignored, routes, "", "", "", "", "requirements.txt", previousLock)
 	cs2, err := detector.Detect()
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestDetector_Detect(t *testing.T) {
 	os.WriteFile(filepath.Join(repoDir, "app/routes.php"), []byte("<?php"), 0644)
 	os.WriteFile(filepath.Join(repoDir, "app/view.twig"), []byte("twig"), 0644)
 
-	detector = NewDetector(repoDir, ignored, routes, "", "", "", cs2.AllFileHashesAsLock()) // Use previous hashes
+	detector = NewDetector(repoDir, ignored, routes, "", "", "", "", "requirements.txt", cs2.AllFileHashesAsLock()) // Use previous hashes
 	cs3, err := detector.Detect()
 	if err != nil {
 		t.Fatal(err)
@@ -159,14 +159,14 @@ func TestDetector_Detect_IgnoredButCritical(t *testing.T) {
 	ignored := []string{"src"} // Entire src folder is ignored
 
 	// First deploy
-	d1 := NewDetector(repoDir, ignored, nil, "", "", "", nil)
+	d1 := NewDetector(repoDir, ignored, nil, "", "", "", "", "requirements.txt", nil)
 	cs1, _ := d1.Detect()
 
 	// Modify the .vue file
 	os.WriteFile(vuePath, []byte("<template>new</template>"), 0644)
 
 	// Detect changes for second deploy
-	d2 := NewDetector(repoDir, ignored, nil, "", "", "", cs1.AllFileHashesAsLock())
+	d2 := NewDetector(repoDir, ignored, nil, "", "", "", "", "requirements.txt", cs1.AllFileHashesAsLock())
 	cs2, _ := d2.Detect()
 
 	if len(cs2.FrontendFiles) != 1 || cs2.FrontendFiles[0] != "src/components/App.vue" {
@@ -193,7 +193,7 @@ func TestHashFile_Fail(t *testing.T) {
 }
 
 func TestDetector_Detect_Fail(t *testing.T) {
-	d := NewDetector("/non/existent/path", nil, nil, "", "", "", nil)
+	d := NewDetector("/non/existent/path", nil, nil, "", "", "", "", "requirements.txt", nil)
 	_, err := d.Detect()
 	if err == nil {
 		t.Error("expected error for non-existent repo path")

@@ -18,7 +18,7 @@ func BenchmarkDetect_Concurrent(b *testing.B) {
 		os.WriteFile(filename, []byte("test content"), 0644)
 	}
 
-	detector := NewDetector(tmpDir, []string{}, []string{}, ".", ".", ".", nil)
+	detector := NewDetector(tmpDir, []string{}, []string{}, ".", ".", ".", "", "requirements.txt", nil)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -47,7 +47,7 @@ func TestDetect_Concurrent(t *testing.T) {
 		}
 	}
 
-	detector := NewDetector(tmpDir, []string{}, []string{}, ".", ".", ".", nil)
+	detector := NewDetector(tmpDir, []string{}, []string{}, ".", ".", ".", "", "requirements.txt", nil)
 	cs, err := detector.Detect()
 	if err != nil {
 		t.Fatalf("Detect() failed: %v", err)
@@ -89,7 +89,7 @@ func TestDetect_ConcurrentLargeRepo(t *testing.T) {
 		}
 	}
 
-	detector := NewDetector(tmpDir, []string{}, []string{}, ".", ".", ".", nil)
+	detector := NewDetector(tmpDir, []string{}, []string{}, ".", ".", ".", "", "requirements.txt", nil)
 	cs, err := detector.Detect()
 	if err != nil {
 		t.Fatalf("Detect() failed: %v", err)

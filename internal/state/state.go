@@ -17,27 +17,29 @@ type DeployLock struct {
 
 // DeployInfo holds information about the last deployment
 type DeployInfo struct {
-	Timestamp       time.Time         `json:"timestamp"`
-	CommitHash      string            `json:"commit_hash"`
-	ReleaseDir      string            `json:"release_dir"`
-	FileHashes      map[string]string `json:"file_hashes"`       // path -> sha256
-	ComposerHash    string            `json:"composer_hash"`     // composer.json hash
-	PackageJSONHash string            `json:"package_json_hash"` // package.json hash
-	GoModHash       string            `json:"go_mod_hash"`       // go.mod hash
+	Timestamp        time.Time         `json:"timestamp"`
+	CommitHash       string            `json:"commit_hash"`
+	ReleaseDir       string            `json:"release_dir"`
+	FileHashes       map[string]string `json:"file_hashes"`
+	ComposerHash     string            `json:"composer_hash"`
+	PackageJSONHash  string            `json:"package_json_hash"`
+	GoModHash        string            `json:"go_mod_hash"`
+	RequirementsHash string            `json:"requirements_hash"` // requirements.txt / pyproject.toml hash
 }
 
 // New creates a new DeployLock with current deployment info
-func New(commitHash, releaseDir string, fileHashes map[string]string, composerHash, packageHash, goModHash string) *DeployLock {
+func New(commitHash, releaseDir string, fileHashes map[string]string, composerHash, packageHash, goModHash, requirementsHash string) *DeployLock {
 	return &DeployLock{
 		Version: LockFileVersion,
 		LastDeploy: DeployInfo{
-			Timestamp:       time.Now().UTC(),
-			CommitHash:      commitHash,
-			ReleaseDir:      releaseDir,
-			FileHashes:      fileHashes,
-			ComposerHash:    composerHash,
-			PackageJSONHash: packageHash,
-			GoModHash:       goModHash,
+			Timestamp:        time.Now().UTC(),
+			CommitHash:       commitHash,
+			ReleaseDir:       releaseDir,
+			FileHashes:       fileHashes,
+			ComposerHash:     composerHash,
+			PackageJSONHash:  packageHash,
+			GoModHash:        goModHash,
+			RequirementsHash: requirementsHash,
 		},
 	}
 }

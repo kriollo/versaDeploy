@@ -8,7 +8,7 @@ func TestDeployLock_ToJSON_And_Parse(t *testing.T) {
 	hashes := map[string]string{
 		"main.go": "hash1",
 	}
-	lock := New("abc123", "20260127-120000", hashes, "chash", "phash", "ghash")
+	lock := New("abc123", "20260127-120000", hashes, "chash", "phash", "ghash", "reqhash")
 
 	data, err := lock.ToJSON()
 	if err != nil {

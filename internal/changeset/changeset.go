@@ -17,36 +17,41 @@ import (
 
 // ChangeSet represents detected changes
 type ChangeSet struct {
-	PHPFiles        []string
-	TwigFiles       []string
-	GoFiles         []string
-	FrontendFiles   []string
-	ComposerChanged bool
-	PackageChanged  bool
-	GoModChanged    bool
-	RoutesChanged   bool
-	OtherFiles      []string          // Files not categorized as PHP, Go, or Frontend
-	AllFileHashes   map[string]string // All current file hashes
-	ComposerHash    string
-	PackageHash     string
-	GoModHash       string
-	Force           bool // If true, ignore change detection and force full build
+	PHPFiles            []string
+	TwigFiles           []string
+	GoFiles             []string
+	FrontendFiles       []string
+	PythonFiles         []string
+	ComposerChanged     bool
+	PackageChanged      bool
+	GoModChanged        bool
+	RequirementsChanged bool
+	RoutesChanged       bool
+	OtherFiles          []string          // Files not categorized as PHP, Go, or Frontend
+	AllFileHashes       map[string]string // All current file hashes
+	ComposerHash        string
+	PackageHash         string
+	GoModHash           string
+	RequirementsHash    string
+	Force               bool // If true, ignore change detection and force full build
 }
 
 // Detector handles change detection
 type Detector struct {
-	repoPath     string
-	ignoredPaths []string
-	ignoredMap   map[string]struct{} // exact-match set for O(1) lookup
-	routeFiles   []string
-	phpRoot      string
-	goRoot       string
-	frontendRoot string
-	previousLock *state.DeployLock
+	repoPath         string
+	ignoredPaths     []string
+	ignoredMap       map[string]struct{} // exact-match set for O(1) lookup
+	routeFiles       []string
+	phpRoot          string
+	goRoot           string
+	frontendRoot     string
+	pythonRoot       string
+	requirementsFile string
+	previousLock     *state.DeployLock
 }
 
 // NewDetector creates a new change detector
-func NewDetector(repoPath string, ignoredPaths, routeFiles []string, phpRoot, goRoot, frontendRoot string, previousLock *state.DeployLock) *Detector {
+func NewDetector(repoPath string, ignoredPaths, routeFiles []string, phpRoot, goRoot, frontendRoot, pythonRoot, requirementsFile string, previousLock *state.DeployLock) *Detector {
 	// Pre-normalize ignored paths once and build a map for O(1) exact-match lookups
 	normalized := make([]string, len(ignoredPaths))
 	ignoredMap := make(map[string]struct{}, len(ignoredPaths))
@@ -57,14 +62,16 @@ func NewDetector(repoPath string, ignoredPaths, routeFiles []string, phpRoot, go
 	}
 
 	return &Detector{
-		repoPath:     repoPath,
-		ignoredPaths: normalized,
-		ignoredMap:   ignoredMap,
-		routeFiles:   routeFiles,
-		phpRoot:      phpRoot,
-		goRoot:       goRoot,
-		frontendRoot: frontendRoot,
-		previousLock: previousLock,
+		repoPath:         repoPath,
+		ignoredPaths:     normalized,
+		ignoredMap:       ignoredMap,
+		routeFiles:       routeFiles,
+		phpRoot:          phpRoot,
+		goRoot:           goRoot,
+		frontendRoot:     frontendRoot,
+		pythonRoot:       pythonRoot,
+		requirementsFile: requirementsFile,
+		previousLock:     previousLock,
 	}
 }
 
@@ -118,11 +125,16 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 
 		// Check if it's a critical extension that might trigger a build
 		switch ext {
-		case ".php", ".twig", ".go", ".mod", ".sum", ".js", ".ts", ".vue", ".jsx", ".tsx", ".css", ".scss", ".sass", ".less":
+		case ".php", ".twig", ".go", ".mod", ".sum", ".js", ".ts", ".vue", ".jsx", ".tsx", ".css", ".scss", ".sass", ".less", ".py":
 			isCritical = true
 		case ".json":
 			base := filepath.Base(relPath)
-			if base == "composer.json" || base == "package.json" || base == "composer.lock" || base == "package-lock.json" || base == "pnpm-lock.yaml" {
+			if base == "composer.json" || base == "package.json" || base == "composer.lock" || base == "package-lock.json" || base == "pnpm-lock.yaml" || base == "pyproject.toml" || base == "poetry.lock" {
+				isCritical = true
+			}
+		case ".txt":
+			base := filepath.Base(relPath)
+			if base == "requirements.txt" || base == "Pipfile" {
 				isCritical = true
 			}
 		}
@@ -219,6 +231,8 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 				cs.TwigFiles = append(cs.TwigFiles, result.relPath)
 			case ".go":
 				cs.GoFiles = append(cs.GoFiles, result.relPath)
+			case ".py":
+				cs.PythonFiles = append(cs.PythonFiles, result.relPath)
 			case ".js", ".vue", ".ts", ".jsx", ".tsx", ".css", ".scss", ".less":
 				cs.FrontendFiles = append(cs.FrontendFiles, result.relPath)
 			default:
@@ -237,9 +251,7 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 
 	// Check dependency files
 	composerPath := filepath.ToSlash(filepath.Join(d.phpRoot, "composer.json"))
-	if strings.HasPrefix(composerPath, "./") {
-		composerPath = composerPath[2:]
-	}
+	composerPath = strings.TrimPrefix(composerPath, "./")
 	cs.ComposerHash = cs.AllFileHashes[composerPath]
 	if d.previousLock != nil {
 		cs.ComposerChanged = cs.ComposerHash != "" && cs.ComposerHash != d.previousLock.LastDeploy.ComposerHash
@@ -248,9 +260,7 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 	}
 
 	packagePath := filepath.ToSlash(filepath.Join(d.frontendRoot, "package.json"))
-	if strings.HasPrefix(packagePath, "./") {
-		packagePath = packagePath[2:]
-	}
+	packagePath = strings.TrimPrefix(packagePath, "./")
 	cs.PackageHash = cs.AllFileHashes[packagePath]
 	if d.previousLock != nil {
 		cs.PackageChanged = cs.PackageHash != "" && cs.PackageHash != d.previousLock.LastDeploy.PackageJSONHash
@@ -259,14 +269,32 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 	}
 
 	goModPath := filepath.ToSlash(filepath.Join(d.goRoot, "go.mod"))
-	if strings.HasPrefix(goModPath, "./") {
-		goModPath = goModPath[2:]
-	}
+	goModPath = strings.TrimPrefix(goModPath, "./")
 	cs.GoModHash = cs.AllFileHashes[goModPath]
 	if d.previousLock != nil {
 		cs.GoModChanged = cs.GoModHash != "" && cs.GoModHash != d.previousLock.LastDeploy.GoModHash
 	} else {
 		cs.GoModChanged = cs.GoModHash != ""
+	}
+
+	// Check Python dependency files
+	requirementsPath := filepath.ToSlash(filepath.Join(d.pythonRoot, d.requirementsFile))
+	requirementsPath = strings.TrimPrefix(requirementsPath, "./")
+	cs.RequirementsHash = cs.AllFileHashes[requirementsPath]
+	if d.previousLock != nil {
+		cs.RequirementsChanged = cs.RequirementsHash != "" && cs.RequirementsHash != d.previousLock.LastDeploy.RequirementsHash
+	} else {
+		cs.RequirementsChanged = cs.RequirementsHash != ""
+	}
+
+	// Also check pyproject.toml and Pipfile
+	pyprojectPath := filepath.ToSlash(filepath.Join(d.pythonRoot, "pyproject.toml"))
+	if _, ok := cs.AllFileHashes[pyprojectPath]; ok {
+		cs.RequirementsChanged = true
+	}
+	pipfilePath := filepath.ToSlash(filepath.Join(d.pythonRoot, "Pipfile"))
+	if _, ok := cs.AllFileHashes[pipfilePath]; ok {
+		cs.RequirementsChanged = true
 	}
 
 	return cs, nil
@@ -320,7 +348,7 @@ func hashFileCtx(ctx context.Context, path string) (string, error) {
 	}
 }
 
-// hashFile calculates SHA256 hash of a file
+// hashFile calculates SHA256 hash of a file efficiently using a fixed buffer
 func hashFile(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -329,7 +357,11 @@ func hashFile(path string) (string, error) {
 	defer file.Close()
 
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+
+	// Create a 32KB buffer to avoid massive memory allocations during io.Copy
+	// for very large files (e.g. video files, large datasets)
+	buf := make([]byte, 32*1024)
+	if _, err := io.CopyBuffer(hash, file, buf); err != nil {
 		return "", err
 	}
 
@@ -342,8 +374,10 @@ func (cs *ChangeSet) HasChanges() bool {
 		len(cs.TwigFiles) > 0 ||
 		len(cs.GoFiles) > 0 ||
 		len(cs.FrontendFiles) > 0 ||
+		len(cs.PythonFiles) > 0 ||
 		len(cs.OtherFiles) > 0 ||
 		cs.ComposerChanged ||
 		cs.PackageChanged ||
-		cs.GoModChanged
+		cs.GoModChanged ||
+		cs.RequirementsChanged
 }

@@ -352,7 +352,7 @@ func (c *Client) ExtractArchive(archivePath, targetDir string) error {
 	return nil
 }
 
-// ExecuteCommand executes a command on the remote server
+// ExecuteCommand executes a command on the remote server with no timeout
 func (c *Client) ExecuteCommand(cmd string) (string, error) {
 	return c.ExecuteCommandWithTimeout(cmd, 0)
 }
@@ -365,17 +365,12 @@ func (c *Client) ExecuteCommandWithTimeout(cmd string, timeout time.Duration) (s
 	}
 	defer session.Close()
 
-	var b bytes.Buffer
-	session.Stdout = &b
-	session.Stderr = &b
+	var outBuf, errBuf bytes.Buffer
+	session.Stdout = &outBuf
+	session.Stderr = &errBuf
 
 	if err := session.Start(cmd); err != nil {
-		return "", fmt.Errorf("failed to start command: %w", err)
-	}
-
-	if timeout <= 0 {
-		err := session.Wait()
-		return b.String(), err
+		return "", fmt.Errorf("failed to start command %q: %w", cmd, err)
 	}
 
 	done := make(chan error, 1)
@@ -383,17 +378,29 @@ func (c *Client) ExecuteCommandWithTimeout(cmd string, timeout time.Duration) (s
 		done <- session.Wait()
 	}()
 
-	select {
-	case <-time.After(timeout):
-		session.Signal(ssh.SIGKILL)
-		session.Close()
-		return b.String(), fmt.Errorf("command timed out after %v", timeout)
-	case err := <-done:
-		if err != nil {
-			return b.String(), fmt.Errorf("command failed: %w", err)
+	var waitErr error
+	if timeout > 0 {
+		select {
+		case <-time.After(timeout):
+			session.Signal(ssh.SIGKILL)
+			return outBuf.String(), fmt.Errorf("command timed out after %v", timeout)
+		case waitErr = <-done:
 		}
-		return b.String(), nil
+	} else {
+		waitErr = <-done
 	}
+
+	// Combine stdout and stderr for full context on failure
+	output := outBuf.String()
+	if waitErr != nil {
+		errMsg := errBuf.String()
+		if errMsg != "" {
+			return output, fmt.Errorf("command failed: %w (stderr: %s)", waitErr, strings.TrimSpace(errMsg))
+		}
+		return output, fmt.Errorf("command failed: %w", waitErr)
+	}
+
+	return output, nil
 }
 
 // ListReleases lists all release directories on the remote server
@@ -529,6 +536,16 @@ func (c *Client) AcquireLock(lockPath string) error {
 // ReadDir lists the contents of a remote directory via SFTP.
 func (c *Client) ReadDir(path string) ([]os.FileInfo, error) {
 	return c.sftpClient.ReadDir(path)
+}
+
+// ReadRemoteBytes reads up to maxBytes from a remote file into memory.
+func (c *Client) ReadRemoteBytes(path string, maxBytes int64) ([]byte, error) {
+	f, err := c.sftpClient.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open remote file: %w", err)
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, maxBytes))
 }
 
 // ReleaseLock releases the deployment lock via SFTP

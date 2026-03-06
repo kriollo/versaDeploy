@@ -154,7 +154,7 @@ func (d *Deployer) Deploy() error {
 
 	// Step 7: Calculate changeset
 	d.log.Info("Calculating changes...")
-	detector := changeset.NewDetector(tmpRepo, d.env.Ignored, d.env.RouteFiles, d.env.Builds.PHP.ProjectRoot, d.env.Builds.Go.ProjectRoot, d.env.Builds.Frontend.ProjectRoot, previousLock)
+	detector := changeset.NewDetector(tmpRepo, d.env.Ignored, d.env.RouteFiles, d.env.Builds.PHP.ProjectRoot, d.env.Builds.Go.ProjectRoot, d.env.Builds.Frontend.ProjectRoot, d.env.Builds.Python.ProjectRoot, d.env.Builds.Python.RequirementsFile, previousLock)
 	cs, err := detector.Detect()
 	if err != nil {
 		return err
@@ -335,7 +335,7 @@ func (d *Deployer) Deploy() error {
 
 	// Step 14: Update deploy.lock
 	d.log.Info("Updating deploy.lock...")
-	newLock := state.New(commitHash, releaseVersion, cs.AllFileHashes, cs.ComposerHash, cs.PackageHash, cs.GoModHash)
+	newLock := state.New(commitHash, releaseVersion, cs.AllFileHashes, cs.ComposerHash, cs.PackageHash, cs.GoModHash, cs.RequirementsHash)
 	lockData, err := newLock.ToJSON()
 	if err != nil {
 		return err

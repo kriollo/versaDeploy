@@ -38,3 +38,5 @@ go.work
 # Deployment artifacts
 /artifact/
 deploy.lock
+
+/services/

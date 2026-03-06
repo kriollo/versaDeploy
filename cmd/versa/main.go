@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/user/versaDeploy/internal/config"
@@ -36,14 +39,24 @@ var rootCmd = &cobra.Command{
 		if !guiMode {
 			return cmd.Help()
 		}
-		cfg, err := config.Load(configPath)
-		if err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
-		}
+
 		repoPath, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("failed to get current directory: %w", err)
 		}
+
+		var cfg *config.Config
+		// If user explicitly provided --config, we MUST try to load it.
+		if cmd.Flags().Changed("config") {
+			cfg, err = config.Load(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load specified config: %w", err)
+			}
+		} else {
+			// Try default, but don't fail hard if it's missing (TUI will discover others)
+			cfg, _ = config.Load(configPath)
+		}
+
 		return tui.Launch(cfg, repoPath)
 	},
 }
@@ -89,6 +102,13 @@ var deployCmd = &cobra.Command{
 		}
 		defer log.Close()
 
+		// Determine configuration file
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
+
 		// Load configuration
 		cfg, err := config.Load(configPath)
 		if err != nil {
@@ -125,6 +145,13 @@ var rollbackCmd = &cobra.Command{
 			return fmt.Errorf("failed to initialize logger: %w", err)
 		}
 		defer log.Close()
+
+		// Determine configuration file
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
 
 		// Load configuration
 		cfg, err := config.Load(configPath)
@@ -163,6 +190,13 @@ var statusCmd = &cobra.Command{
 		}
 		defer log.Close()
 
+		// Determine configuration file
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
+
 		// Load configuration
 		cfg, err := config.Load(configPath)
 		if err != nil {
@@ -199,6 +233,13 @@ var sshTestCmd = &cobra.Command{
 			return fmt.Errorf("failed to initialize logger: %w", err)
 		}
 		defer log.Close()
+
+		// Determine configuration file
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
 
 		// Load configuration
 		cfg, err := config.Load(configPath)
@@ -252,8 +293,8 @@ var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize a new versaDeploy configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if _, err := os.Stat("deploy.yml"); err == nil {
-			return fmt.Errorf("deploy.yml already exists")
+		if _, err := os.Stat(configPath); err == nil {
+			return fmt.Errorf("%s already exists", configPath)
 		}
 
 		content := `project: "my-versa-project"
@@ -267,54 +308,158 @@ environments:
       port: 22
       known_hosts_file: "~/.ssh/known_hosts"
       use_ssh_agent: false
-    
+
     remote_path: "/var/www/app"
-    
+
     # Timeout for each post_deploy hook in seconds (optional, default: 300)
     hook_timeout: 300
-    
-    # Files that trigger route cache regeneration
-    route_files:
-      - "app/routes.php"
-    
+
     # Paths to ignore for SHA256 tracking
     ignored_paths:
       - ".git"
       - "tests"
       - "var/cache"
       - "node_modules/.cache"
-    
+
+    # Paths that persist between releases (symlinked into each release)
+    shared_paths:
+      - ".env"
+      # - "storage/logs"
+      # - "public/uploads"
+
     builds:
       php:
-        enabled: true
+        enabled: false
         composer_command: "composer install --no-dev --optimize-autoloader"
-      
+
       go:
         enabled: false
         target_os: "linux"
         target_arch: "amd64"
         binary_name: "app"
-      
+
       frontend:
-        enabled: true
+        enabled: false
         npm_command: "npm ci" # Can be changed to "pnpm install" or "yarn install"
-        compile_command: "npm run prod" # Use {file} if you want to compile files individually
-    
+        compile_command: "npm run prod"
+
+      python:
+        enabled: true
+
+        # --- Basic settings ---
+        root: ""                          # Subdirectory where your Python project lives (if any)
+        python_command: "python3"
+        package_manager: "pip"            # pip (default), poetry, pipenv
+        requirements_file: "requirements.txt"
+        venv_path: ".venv"
+
+        # --- Web server mode ---
+        # Enable if deploying a web app (Flask, FastAPI, Django, etc.)
+        web_server: false
+        web_framework: "fastapi"          # django, flask, fastapi, uvicorn, gunicorn
+        entry_point: "main.py"            # App entry point
+        web_host: "0.0.0.0"
+        web_port: 8000
+        web_workers: 2                    # Number of worker processes
+        # web_threads: 0                  # Threads per worker (uvicorn only)
+
+        # Custom run command (overrides web_framework auto-detection)
+        # run_command: "python3 -m uvicorn main:app --host 0.0.0.0 --port 8000"
+
+        # --- systemd service management ---
+        # If set, generates a .service file ready to install on the server.
+        # First deploy: sudo cp /var/www/app/current/app/<name>.service /etc/systemd/system/
+        #               sudo systemctl enable <name> && sudo systemctl start <name>
+        service_name: ""                  # e.g. "myapp"
+
+        # --- Binary build (PyInstaller) ---
+        # Compiles a standalone executable (no Python needed on server)
+        build_binary: false
+        # entry_point: "main.py"          # Required when build_binary: true
+        # binary_name: "myapp"
+
+        # --- WebSocket support ---
+        websocket: false
+        # ws_protocol: "channels"         # websocket, socket.io, channels (Django)
+
+        # --- Dependency options ---
+        install_dev_deps: false
+        use_cache: false
+        # pypi_mirror: ""                 # Custom PyPI mirror URL
+        # torch_index: ""                 # PyTorch index (e.g. https://download.pytorch.org/whl/cpu)
+        # extra_requirements: []          # Extra requirements files to install
+
+        # Reuse .venv from previous release (speeds up deploys)
+        reusable_paths:
+          - ".venv"
+
     # Hooks to run on remote server after symlink switch
     post_deploy:
-      - "php current/versa cache:clear"
-      - "php current/versa routes:dump"
-      - "php current/versa twig:clear-cache"
+      # Restart systemd service after each deploy (requires service_name to be set above)
+      # - "sudo systemctl restart myapp"
+      []
 `
-		err := os.WriteFile("deploy.yml", []byte(content), 0644)
+		err := os.WriteFile(configPath, []byte(content), 0644)
 		if err != nil {
-			return fmt.Errorf("failed to create deploy.yml: %w", err)
+			return fmt.Errorf("failed to create %s: %w", configPath, err)
 		}
 
-		fmt.Println("🚀 Initialized versaDeploy! Created deploy.yml.")
-		fmt.Println("Edit deploy.yml to match your server details and then run: versa deploy production --initial-deploy")
+		fmt.Printf("🚀 Initialized versaDeploy! Created %s.\n", configPath)
+		fmt.Printf("Edit %s to match your server details and then run: versa deploy production --initial-deploy\n", configPath)
 		return nil
 	},
+}
+
+func getOrSelectConfig(cmd *cobra.Command) (string, error) {
+	// If the user explicitly provided a config flag, use it
+	if cmd.Flags().Changed("config") {
+		return configPath, nil
+	}
+
+	// If GUI mode is enabled, we don't want to prompt in CLI.
+	// We'll let the TUI handle it later.
+	if guiMode {
+		return configPath, nil
+	}
+
+	// Try to discover config files automatically
+	cwd, err := os.Getwd()
+	if err != nil {
+		return configPath, nil
+	}
+
+	files, err := config.FindConfigFiles(cwd)
+	if err != nil || len(files) == 0 {
+		// fallback to original default
+		return configPath, nil
+	}
+
+	if len(files) == 1 {
+		return files[0], nil
+	}
+
+	// If there are multiple configuration files, prompt the user
+	fmt.Println("\nMultiple configuration files found. Please select one:")
+	for i, f := range files {
+		fmt.Printf("[%d] %s\n", i+1, filepath.Base(f))
+	}
+	fmt.Print("Enter number: ")
+
+	var input string
+	_, err = fmt.Scanln(&input)
+	if err != nil {
+		// Just fallback if scanning fails
+		return configPath, nil
+	}
+
+	input = strings.TrimSpace(input)
+	idx, err := strconv.Atoi(input)
+	if err != nil || idx < 1 || idx > len(files) {
+		return "", fmt.Errorf("invalid selection")
+	}
+
+	fmt.Println()
+	return files[idx-1], nil
 }
 
 func init() {

@@ -10,6 +10,9 @@ import (
 	"github.com/user/versaDeploy/internal/state"
 )
 
+// Ensure state is used (SortReleases is the canonical sort)
+var _ = state.SortReleases
+
 type releasesModel struct {
 	releases []string
 	current  string
@@ -23,10 +26,6 @@ type msgReleasesLoaded struct {
 	releases []string
 	current  string
 	err      error
-}
-
-type msgRollbackDone struct {
-	err error
 }
 
 func loadReleases(client *versassh.Client, remotePath string) tea.Cmd {
@@ -46,15 +45,6 @@ func loadReleases(client *versassh.Client, remotePath string) tea.Cmd {
 		}
 
 		return msgReleasesLoaded{releases: releases, current: current}
-	}
-}
-
-func doRollback(client *versassh.Client, remotePath, targetRelease string) tea.Cmd {
-	return func() tea.Msg {
-		currentSymlink := filepath.ToSlash(filepath.Join(remotePath, "current"))
-		relTarget := filepath.ToSlash(filepath.Join("releases", targetRelease))
-		err := client.CreateSymlink(relTarget, currentSymlink)
-		return msgRollbackDone{err: err}
 	}
 }
 

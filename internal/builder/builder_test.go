@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/user/versaDeploy/internal/builder/lang"
 	"github.com/user/versaDeploy/internal/changeset"
 	"github.com/user/versaDeploy/internal/config"
 	"github.com/user/versaDeploy/internal/logger"
@@ -114,9 +115,22 @@ func TestBuilder_BuildPHP_NoComposer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := b.buildPHP(); err != nil {
-		t.Fatalf("buildPHP() error = %v", err)
+	ctx := &lang.BuilderContext{
+		RepoPath:    repoDir,
+		ArtifactDir: artifactDir,
+		Config:      cfg,
+		Changeset:   cs,
+		Log:         log,
 	}
+
+	builder := &lang.PHPBuilder{}
+	count, updated, err := builder.Build(ctx)
+	if err != nil {
+		t.Fatalf("PHPBuilder.Build() error = %v", err)
+	}
+
+	b.result.PHPFilesChanged = count
+	b.result.ComposerUpdated = updated
 
 	if b.result.PHPFilesChanged != 2 {
 		t.Errorf("expected 2 PHP files changed, got %d", b.result.PHPFilesChanged)

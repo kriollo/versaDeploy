@@ -2,7 +2,7 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-// Color palette
+// Color palette (Tokyo Night)
 var (
 	colorBg      = lipgloss.Color("#1a1b26")
 	colorSurface = lipgloss.Color("#24283b")
@@ -14,7 +14,6 @@ var (
 	colorText    = lipgloss.Color("#c0caf5")
 )
 
-// Styles
 var (
 	StyleHeader = lipgloss.NewStyle().
 			Background(colorSurface).
@@ -25,6 +24,11 @@ var (
 	StyleTitle = lipgloss.NewStyle().
 			Foreground(colorAccent).
 			Bold(true)
+
+	StyleSurface = lipgloss.NewStyle().
+			Background(colorSurface).
+			Foreground(colorText).
+			Padding(0, 1)
 
 	StyleSidebar = lipgloss.NewStyle().
 			Background(colorSurface).
@@ -70,13 +74,22 @@ var (
 
 	StyleTableHeader = lipgloss.NewStyle().
 				Foreground(colorAccent).
-				Bold(true).
-				BorderBottom(true).
-				BorderStyle(lipgloss.NormalBorder()).
-				BorderForeground(colorMuted)
+				Bold(true)
 
 	StyleConnected    = lipgloss.NewStyle().Foreground(colorSuccess)
 	StyleConnecting   = lipgloss.NewStyle().Foreground(colorWarning)
 	StyleDisconnected = lipgloss.NewStyle().Foreground(colorMuted)
 	StyleErrorState   = lipgloss.NewStyle().Foreground(colorError)
+
+	StyleSection = lipgloss.NewStyle().
+			Foreground(colorAccent).
+			Bold(true)
+
+	StyleCmd = lipgloss.NewStyle().
+			Foreground(colorWarning).
+			Bold(true)
+
+	StyleHint = lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Italic(true)
 )

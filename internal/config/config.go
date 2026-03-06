@@ -45,6 +45,7 @@ type BuildsConfig struct {
 	PHP      PHPBuildConfig      `yaml:"php"`
 	Go       GoBuildConfig       `yaml:"go"`
 	Frontend FrontendBuildConfig `yaml:"frontend"`
+	Python   PythonBuildConfig   `yaml:"python"`
 }
 
 // PHPBuildConfig holds PHP build settings
@@ -74,6 +75,55 @@ type FrontendBuildConfig struct {
 	CleanupDevDeps    bool     `yaml:"cleanup_dev_deps"`   // Remove dev deps after build
 	ProductionCommand string   `yaml:"production_command"` // Command for production-only install
 	ReusablePaths     []string `yaml:"reusable_paths"`     // Paths to recover from previous release (e.g. node_modules, dist)
+}
+
+// PythonBuildConfig holds Python build settings
+type PythonBuildConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	ProjectRoot      string `yaml:"root"`              // Subdirectory for Python project (within artifact)
+	SourcePath       string `yaml:"source_path"`       // Local source path (default: repo root)
+	DeployPath       string `yaml:"deploy_path"`       // Remote deployment path (overrides environment remote_path)
+	PythonCommand    string `yaml:"python_command"`    // Default: python3
+	PackageManager   string `yaml:"package_manager"`   // pip (default), poetry, pipenv
+	RequirementsFile string `yaml:"requirements_file"` // Default: requirements.txt
+	VenvPath         string `yaml:"venv_path"`         // Default: .venv
+
+	// Web Server Configuration
+	WebServer    bool   `yaml:"web_server"`    // Enable web server mode
+	WebFramework string `yaml:"web_framework"` // django, flask, fastapi, uvicorn, gunicorn
+	WebPort      int    `yaml:"web_port"`      // Port for web server (default: 8000)
+	WebHost      string `yaml:"web_host"`      // Host for web server (default: 0.0.0.0)
+	WebWorkers   int    `yaml:"web_workers"`   // Number of workers (for gunicorn)
+	WebThreads   int    `yaml:"web_threads"`   // Threads per worker (for uvicorn)
+
+	// Server Management (systemd, etc)
+	RunCommand  string `yaml:"run_command"`  // Custom run command (e.g., "python manage.py runserver")
+	StopCommand string `yaml:"stop_command"` // Custom stop command
+	ServiceName string `yaml:"service_name"` // systemd service name
+
+	// Binary Build (PyInstaller)
+	BuildBinary          bool   `yaml:"build_binary"`           // Use PyInstaller for standalone binary
+	EntryPoint           string `yaml:"entry_point"`            // e.g. main.py (required if build_binary: true)
+	BinaryName           string `yaml:"binary_name"`            // Output binary name
+	ExtraPyinstallerArgs string `yaml:"extra_pyinstaller_args"` // Extra flags for PyInstaller
+
+	// WebSocket Support
+	WebSocket      bool   `yaml:"websocket"`        // Enable WebSocket support
+	WSProtocol     string `yaml:"ws_protocol"`      // websocket, socket.io, channels
+	WSChannelLayer string `yaml:"ws_channel_layer"` // Django channels layer
+
+	// Dependency Management
+	InstallDevDeps bool   `yaml:"install_dev_deps"` // Install dev dependencies
+	UseCache       bool   `yaml:"use_cache"`        // Use pip cache
+	PyPIMirror     string `yaml:"pypi_mirror"`      // Custom PyPI mirror
+
+	// PyTorch specific
+	TorchIndex string `yaml:"torch_index"` // PyTorch index URL (e.g., https://download.pytorch.org/whl/cpu)
+
+	// Extra options
+	ExtraRequirements []string `yaml:"extra_requirements"` // Extra requirements files to install
+
+	ReusablePaths []string `yaml:"reusable_paths"` // Paths to recover from previous release (e.g. .venv, __pycache__)
 }
 
 // Load reads and parses deploy.yml
@@ -172,7 +222,7 @@ func (e *Environment) Validate(envName string) error {
 	}
 
 	// At least one build type must be enabled
-	if !e.Builds.PHP.Enabled && !e.Builds.Go.Enabled && !e.Builds.Frontend.Enabled {
+	if !e.Builds.PHP.Enabled && !e.Builds.Go.Enabled && !e.Builds.Frontend.Enabled && !e.Builds.Python.Enabled {
 		return fmt.Errorf("environment %s: at least one build type must be enabled", envName)
 	}
 
@@ -207,6 +257,42 @@ func (e *Environment) Validate(envName string) error {
 		// Set default production command if cleanup is enabled
 		if e.Builds.Frontend.CleanupDevDeps && e.Builds.Frontend.ProductionCommand == "" {
 			e.Builds.Frontend.ProductionCommand = "pnpm install --production"
+		}
+	}
+
+	// Validate Python config
+	if e.Builds.Python.Enabled {
+		if e.Builds.Python.PythonCommand == "" {
+			e.Builds.Python.PythonCommand = "python3"
+		}
+		if e.Builds.Python.PackageManager == "" {
+			e.Builds.Python.PackageManager = "pip"
+		}
+		if e.Builds.Python.RequirementsFile == "" {
+			e.Builds.Python.RequirementsFile = "requirements.txt"
+		}
+		if e.Builds.Python.VenvPath == "" {
+			e.Builds.Python.VenvPath = ".venv"
+		}
+		// Web server defaults
+		if e.Builds.Python.WebServer {
+			if e.Builds.Python.WebPort == 0 {
+				e.Builds.Python.WebPort = 8000
+			}
+			if e.Builds.Python.WebHost == "" {
+				e.Builds.Python.WebHost = "0.0.0.0"
+			}
+			if e.Builds.Python.WebFramework == "" {
+				e.Builds.Python.WebFramework = "auto"
+			}
+		}
+		if e.Builds.Python.BuildBinary {
+			if e.Builds.Python.EntryPoint == "" {
+				return fmt.Errorf("environment %s: python.entry_point is required when build_binary is enabled", envName)
+			}
+			if e.Builds.Python.BinaryName == "" {
+				return fmt.Errorf("environment %s: python.binary_name is required when build_binary is enabled", envName)
+			}
 		}
 	}
 

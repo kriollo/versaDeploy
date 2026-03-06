@@ -10,6 +10,7 @@ import (
 // Launch starts the interactive TUI. It blocks until the user quits.
 func Launch(cfg *config.Config, repoPath string) error {
 	m := newAppModel(cfg, repoPath)
+	m.discoverConfigs()
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
