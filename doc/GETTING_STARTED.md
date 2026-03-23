@@ -98,6 +98,11 @@ environments:
       - "storage"
       - ".env"
 
+    # Optional: control when hooks run
+    # - after_switch (default): switch current first, then hooks (rollback-aware)
+    # - before_switch: hooks first, switch only if all pass
+    hook_execution_mode: "after_switch"
+
     post_deploy:
       - "php artisan migrate --force"
       - "php artisan cache:clear"

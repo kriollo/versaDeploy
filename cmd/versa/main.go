@@ -314,6 +314,11 @@ environments:
     # Timeout for each post_deploy hook in seconds (optional, default: 300)
     hook_timeout: 300
 
+	# Hook execution strategy
+	# - after_switch (default): switch current first, then run hooks (rollback-aware)
+	# - before_switch: run hooks first, switch only if all hooks pass
+	hook_execution_mode: "after_switch"
+
     # Paths to ignore for SHA256 tracking
     ignored_paths:
       - ".git"
@@ -334,6 +339,8 @@ environments:
 
       go:
         enabled: false
+				root: ""                       # Subdirectory where your go.mod lives (if any)
+				deploy_path: "bin/go"          # Release-relative output path for the Go binary
         target_os: "linux"
         target_arch: "amd64"
         binary_name: "app"

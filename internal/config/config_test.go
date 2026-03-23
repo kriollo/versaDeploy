@@ -505,6 +505,171 @@ func TestConfig_Validate_Defaults(t *testing.T) {
 		t.Error("expected default ignored paths to be set")
 	}
 }
+
+func TestConfig_Validate_PythonReusablePathsDefault(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "id_rsa")
+	os.WriteFile(keyPath, []byte("fake"), 0600)
+
+	cfg := Config{
+		Project: "test",
+		Environments: map[string]Environment{
+			"prod": {
+				SSH: SSHConfig{
+					Host:    "host",
+					User:    "user",
+					KeyPath: keyPath,
+				},
+				RemotePath: "/var/www",
+				Builds: BuildsConfig{
+					Python: PythonBuildConfig{Enabled: true},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+
+	updatedEnv := cfg.Environments["prod"]
+	if len(updatedEnv.Builds.Python.ReusablePaths) != 1 || updatedEnv.Builds.Python.ReusablePaths[0] != ".venv" {
+		t.Fatalf("expected default python.reusable_paths to contain .venv, got %v", updatedEnv.Builds.Python.ReusablePaths)
+	}
+}
+
+func TestConfig_Validate_PythonReusablePathsCustomPreserved(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "id_rsa")
+	os.WriteFile(keyPath, []byte("fake"), 0600)
+
+	cfg := Config{
+		Project: "test",
+		Environments: map[string]Environment{
+			"prod": {
+				SSH: SSHConfig{
+					Host:    "host",
+					User:    "user",
+					KeyPath: keyPath,
+				},
+				RemotePath: "/var/www",
+				Builds: BuildsConfig{
+					Python: PythonBuildConfig{
+						Enabled:       true,
+						ReusablePaths: []string{".cache", "env"},
+					},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+
+	updatedEnv := cfg.Environments["prod"]
+	if len(updatedEnv.Builds.Python.ReusablePaths) != 2 {
+		t.Fatalf("expected custom python.reusable_paths to be preserved, got %v", updatedEnv.Builds.Python.ReusablePaths)
+	}
+	if updatedEnv.Builds.Python.ReusablePaths[0] != ".cache" || updatedEnv.Builds.Python.ReusablePaths[1] != "env" {
+		t.Fatalf("custom python.reusable_paths were modified: %v", updatedEnv.Builds.Python.ReusablePaths)
+	}
+}
+
+func TestConfig_Validate_HookExecutionModeDefault(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "id_rsa")
+	os.WriteFile(keyPath, []byte("fake"), 0600)
+
+	cfg := Config{
+		Project: "test",
+		Environments: map[string]Environment{
+			"prod": {
+				SSH: SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
+				RemotePath: "/var/www",
+				Builds: BuildsConfig{PHP: PHPBuildConfig{Enabled: true}},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+
+	if got := cfg.Environments["prod"].HookExecutionMode; got != "after_switch" {
+		t.Fatalf("expected default hook_execution_mode after_switch, got %s", got)
+	}
+}
+
+func TestConfig_Validate_HookExecutionModeInvalid(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "id_rsa")
+	os.WriteFile(keyPath, []byte("fake"), 0600)
+
+	cfg := Config{
+		Project: "test",
+		Environments: map[string]Environment{
+			"prod": {
+				SSH: SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
+				RemotePath: "/var/www",
+				HookExecutionMode: "invalid",
+				Builds: BuildsConfig{PHP: PHPBuildConfig{Enabled: true}},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for invalid hook_execution_mode")
+	}
+}
+
+func TestConfig_Validate_GoDeployPathDefault(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "id_rsa")
+	os.WriteFile(keyPath, []byte("fake"), 0600)
+
+	cfg := Config{
+		Project: "test",
+		Environments: map[string]Environment{
+			"prod": {
+				SSH: SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
+				RemotePath: "/var/www",
+				Builds: BuildsConfig{
+					Go: GoBuildConfig{Enabled: true, TargetOS: "linux", TargetArch: "amd64", BinaryName: "svc"},
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+
+	if got := cfg.Environments["prod"].Builds.Go.DeployPath; got != "bin" {
+		t.Fatalf("expected default go.deploy_path bin, got %s", got)
+	}
+}
+
+func TestConfig_Validate_GoDeployPathInvalid(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "id_rsa")
+	os.WriteFile(keyPath, []byte("fake"), 0600)
+
+	tests := []string{"../bin", "/opt/bin"}
+	for _, deployPath := range tests {
+		cfg := Config{
+			Project: "test",
+			Environments: map[string]Environment{
+				"prod": {
+					SSH: SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
+					RemotePath: "/var/www",
+					Builds: BuildsConfig{
+						Go: GoBuildConfig{Enabled: true, TargetOS: "linux", TargetArch: "amd64", BinaryName: "svc", DeployPath: deployPath},
+					},
+				},
+			},
+		}
+
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("expected validation error for go.deploy_path=%s", deployPath)
+		}
+	}
+}
+
 func TestConfig_UnmarshalHooks(t *testing.T) {
 	yamlContent := `
 project: "test"

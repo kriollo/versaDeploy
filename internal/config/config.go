@@ -28,6 +28,7 @@ type Environment struct {
 	PreservedPaths []string     `yaml:"preserved_paths"` // Paths to KEEP from previous release (overwriting artifact)
 	RouteFiles     []string     `yaml:"route_files"`     // Files that trigger route cache regeneration
 	HookTimeout    int          `yaml:"hook_timeout"`    // Timeout for post-deploy hooks in seconds
+	HookExecutionMode string    `yaml:"hook_execution_mode"` // Hook execution mode: after_switch (default) or before_switch
 }
 
 // SSHConfig holds SSH connection details
@@ -60,6 +61,7 @@ type PHPBuildConfig struct {
 type GoBuildConfig struct {
 	Enabled     bool   `yaml:"enabled"`
 	ProjectRoot string `yaml:"root"` // Subdirectory for go.mod
+	DeployPath  string `yaml:"deploy_path"` // Relative path inside release for compiled binary (default: bin)
 	TargetOS    string `yaml:"target_os"`
 	TargetArch  string `yaml:"target_arch"`
 	BinaryName  string `yaml:"binary_name"`
@@ -221,6 +223,13 @@ func (e *Environment) Validate(envName string) error {
 		return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: remote_path must be an absolute path", envName), "Ensure 'remote_path' starts with / (for Linux) or a drive letter (for Windows).", nil)
 	}
 
+	if e.HookExecutionMode == "" {
+		e.HookExecutionMode = "after_switch"
+	}
+	if e.HookExecutionMode != "after_switch" && e.HookExecutionMode != "before_switch" {
+		return fmt.Errorf("environment %s: hook_execution_mode must be 'after_switch' or 'before_switch'", envName)
+	}
+
 	// At least one build type must be enabled
 	if !e.Builds.PHP.Enabled && !e.Builds.Go.Enabled && !e.Builds.Frontend.Enabled && !e.Builds.Python.Enabled {
 		return fmt.Errorf("environment %s: at least one build type must be enabled", envName)
@@ -235,6 +244,16 @@ func (e *Environment) Validate(envName string) error {
 
 	// Validate Go config
 	if e.Builds.Go.Enabled {
+		if e.Builds.Go.DeployPath == "" {
+			e.Builds.Go.DeployPath = "bin"
+		}
+		e.Builds.Go.DeployPath = filepath.ToSlash(filepath.Clean(e.Builds.Go.DeployPath))
+		if e.Builds.Go.DeployPath == "." {
+			e.Builds.Go.DeployPath = "bin"
+		}
+		if strings.HasPrefix(e.Builds.Go.DeployPath, "/") || e.Builds.Go.DeployPath == ".." || strings.HasPrefix(e.Builds.Go.DeployPath, "../") {
+			return fmt.Errorf("environment %s: go.deploy_path must be a relative path inside the release", envName)
+		}
 		if e.Builds.Go.TargetOS == "" {
 			return fmt.Errorf("environment %s: go.target_os is required when go builds are enabled", envName)
 		}
@@ -273,6 +292,9 @@ func (e *Environment) Validate(envName string) error {
 		}
 		if e.Builds.Python.VenvPath == "" {
 			e.Builds.Python.VenvPath = ".venv"
+		}
+		if len(e.Builds.Python.ReusablePaths) == 0 && e.Builds.Python.VenvPath != "" {
+			e.Builds.Python.ReusablePaths = []string{e.Builds.Python.VenvPath}
 		}
 		// Web server defaults
 		if e.Builds.Python.WebServer {

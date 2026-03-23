@@ -30,14 +30,15 @@ Settings for connecting to the remote server.
 
 ### 2. General Environment Settings
 
-| Field             | Type         | Default | Description                                                                                                       |
-| :---------------- | :----------- | :------ | :---------------------------------------------------------------------------------------------------------------- |
-| `remote_path`     | string       | -       | **Required**. Absolute path on the remote server where the application will be deployed.                          |
-| `shared_paths`    | list[string] | `[]`    | Paths that persist across releases (e.g. `storage`, `uploads`). They are symlinked to a central `shared/` folder. |
-| `preserved_paths` | list[string] | `[]`    | Files/folders on the server that **should not be updated** after the first deploy (e.g. `.env`, `config.php`).    |
-| `hook_timeout`    | int          | `300`   | Timeout in seconds for each `post_deploy` hook.                                                                   |
-| `route_files`     | list[string] | `[]`    | Files that, if changed, will trigger specific logic in your hooks via environment variables.                      |
-| `ignored_paths`   | list[string] | `[...]` | Paths relative to project root that should be ignored when creating the artifact.                                 |
+| Field                 | Type         | Default        | Description                                                                                                            |
+| :-------------------- | :----------- | :------------- | :--------------------------------------------------------------------------------------------------------------------- |
+| `remote_path`         | string       | -              | **Required**. Absolute path on the remote server where the application will be deployed.                               |
+| `shared_paths`        | list[string] | `[]`           | Paths that persist across releases (e.g. `storage`, `uploads`). They are symlinked to a central `shared/` folder.      |
+| `preserved_paths`     | list[string] | `[]`           | Files/folders on the server that **should not be updated** after the first deploy (e.g. `.env`, `config.php`).         |
+| `hook_timeout`        | int          | `300`          | Timeout in seconds for each `post_deploy` hook.                                                                        |
+| `hook_execution_mode` | string       | `after_switch` | When to execute `post_deploy` hooks: `after_switch` (default, rollback-aware) or `before_switch` (prepare-first mode). |
+| `route_files`         | list[string] | `[]`           | Files that, if changed, will trigger specific logic in your hooks via environment variables.                           |
+| `ignored_paths`       | list[string] | `[...]`        | Paths relative to project root that should be ignored when creating the artifact.                                      |
 
 ### 3. Build Configurations (`builds`)
 
@@ -54,14 +55,18 @@ versaDeploy supports three build engines: `php`, `go`, and `frontend`.
 
 #### Go (`go`)
 
-| Field         | Type   | Default | Description                                                        |
-| :------------ | :----- | :------ | :----------------------------------------------------------------- |
-| `enabled`     | bool   | `false` | Enable Go build engine.                                            |
-| `root`        | string | `""`    | Subdirectory where `go.mod` is located.                            |
-| `target_os`   | string | -       | **Required** if enabled. Target OS (`linux`, `darwin`, `windows`). |
-| `target_arch` | string | -       | **Required** if enabled. Target architecture (`amd64`, `arm64`).   |
-| `binary_name` | string | -       | **Required** if enabled. Name of the resulting binary.             |
-| `build_flags` | string | `""`    | Additional flags for `go build`.                                   |
+| Field         | Type   | Default | Description                                                                   |
+| :------------ | :----- | :------ | :---------------------------------------------------------------------------- |
+| `enabled`     | bool   | `false` | Enable Go build engine.                                                       |
+| `root`        | string | `""`    | Subdirectory where `go.mod` is located.                                       |
+| `deploy_path` | string | `bin`   | Release-relative path where the compiled Go binary is stored (e.g. `bin/go`). |
+| `target_os`   | string | -       | **Required** if enabled. Target OS (`linux`, `darwin`, `windows`).            |
+| `target_arch` | string | -       | **Required** if enabled. Target architecture (`amd64`, `arm64`).              |
+| `binary_name` | string | -       | **Required** if enabled. Name of the resulting binary.                        |
+| `build_flags` | string | `""`    | Additional flags for `go build`.                                              |
+
+> [!NOTE]
+> Go binaries are rebuilt only when Go files or `go.mod` changes are detected. A global `--force` deploy no longer rebuilds Go by itself.
 
 #### Frontend (`frontend`)
 
@@ -75,13 +80,30 @@ versaDeploy supports three build engines: `php`, `go`, and `frontend`.
 | `production_command` | string       | `pnpm install --prod`   | Command to install production-only dependencies if `cleanup_dev_deps` is true.                                 |
 | `reusable_paths`     | list[string] | `["node_modules", ...]` | Folders to reuse from previous release if `package.json` didn't change (e.g. `node_modules`, `dist`, `build`). |
 
+#### Python (`python`)
+
+| Field               | Type         | Default            | Description                                                                  |
+| :------------------ | :----------- | :----------------- | :--------------------------------------------------------------------------- |
+| `enabled`           | bool         | `false`            | Enable Python build engine.                                                  |
+| `root`              | string       | `""`               | Subdirectory where Python project files live.                                |
+| `python_command`    | string       | `python3`          | Python executable used for dependency install/build.                         |
+| `requirements_file` | string       | `requirements.txt` | Requirements file used for dependency hash and install.                      |
+| `venv_path`         | string       | `.venv`            | Virtualenv path relative to Python root.                                     |
+| `reusable_paths`    | list[string] | `[".venv"]`        | Runtime paths reused from previous release when dependencies did not change. |
+| `web_server`        | bool         | `false`            | Generate runtime web-server script for backend services.                     |
+| `service_name`      | string       | `""`               | If set, generates a systemd unit file in the release.                        |
+| `build_binary`      | bool         | `false`            | Build standalone binary with PyInstaller.                                    |
+| `binary_name`       | string       | -                  | Required when `build_binary` is true.                                        |
+
 ## Post-Deployment Hooks (`post_deploy`)
 
-A list of commands to run on the **remote server** after the release is extracted and before the final symlink switch.
+A list of commands to run on the **remote server** after the release is extracted.
 
 - Commands are executed relative to the `app` directory of the **new release**.
-- Final activation of the `current` symlink happens **only if all hooks pass**.
-- If a hook fails, the entire deployment is rolled back automatically.
+- Hook timing is controlled by `hook_execution_mode`:
+  - `after_switch` (default): symlink switches first, hooks run second. Hook failures trigger rollback.
+  - `before_switch`: hooks run first, symlink switches only if all hooks pass.
+- In `after_switch`, if a hook fails, the deployment is rolled back automatically.
 
 ```yaml
 post_deploy:
@@ -98,6 +120,33 @@ versaDeploy tracks changes using SHA256 hashes of your files. Even if a folder i
 ### Reusable Paths & Optimization
 
 To keep deployments fast, versaDeploy uses **Linux Hardlinks** (`cp -al`) to carry over large folders (like `vendor` or `node_modules`) between releases if their configuration hasn't changed. This avoids unnecessary network transfers and dependency re-installs.
+
+### Backend Path Isolation (Go/Python)
+
+For multi-service deployments, keep each backend runtime path isolated inside the release:
+
+- **Go**: set `go.deploy_path` (for example `bin/go-api` or `services/go/bin`) so binaries from different services do not overlap.
+- **Python**: set `python.root` per service (for example `services/embedding`) and keep `python.reusable_paths` scoped to that root (for example `.venv`).
+
+Example:
+
+```yaml
+builds:
+  go:
+    enabled: true
+    root: "services/gateway"
+    deploy_path: "bin/gateway"
+    target_os: "linux"
+    target_arch: "amd64"
+    binary_name: "gateway"
+
+  python:
+    enabled: true
+    root: "services/embedding"
+    venv_path: ".venv"
+    reusable_paths:
+      - ".venv"
+```
 
 ### Absolute Symlinks
 

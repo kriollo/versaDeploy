@@ -36,6 +36,15 @@ environments:
         production_command: "pnpm install --prod"
         reusable_paths: ["node_modules", "dist"]
 
+      # Go / Binary Settings
+      go:
+        enabled: false
+        root: ""                 # Subdirectory where go.mod is (optional)
+        deploy_path: "bin/go"    # Output directory inside each release
+        target_os: "linux"
+        target_arch: "amd64"
+        binary_name: "my-service"
+
     # PERSISTENCE: Folders that should survive between releases
     shared_paths:
       - "storage/logs"         # Log files
@@ -47,8 +56,9 @@ environments:
       - ".env"
       - "config.php"
 
-    # HOOKS: Commands run on the server AFTER upload but BEFORE switching to the new version
-    # They run in the context of the 'app' directory of the new release.
+    # HOOKS: Commands run in the context of the 'app' directory of the new release.
+    # Default mode is after_switch (rollback-aware). Set before_switch to prepare first.
+    hook_execution_mode: "after_switch" # or "before_switch"
     post_deploy:
       - "php versaCLI migrate:up"
       - "php versaCLI cache:clear"

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/user/versaDeploy/internal/config"
@@ -226,11 +225,6 @@ func (p *PythonBuilder) setupWebServer(ctx *BuilderContext, appDir string, cfg c
 
 	runScript := "#!/bin/bash\n" + runCmd + "\n"
 	scriptPath := filepath.Join(appDir, "run_server.sh")
-
-	if runtime.GOOS == "windows" {
-		scriptPath = filepath.Join(appDir, "run_server.bat")
-		runScript = "@echo off\n" + runCmd + "\n"
-	}
 
 	if err := os.WriteFile(scriptPath, []byte(runScript), 0755); err != nil {
 		return fmt.Errorf("failed to write run script: %w", err)

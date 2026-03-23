@@ -15,12 +15,15 @@ type GoBuilder struct{}
 
 // Build compiles the Go binary
 func (g *GoBuilder) Build(ctx *BuilderContext) (int, bool, error) {
-	if !ctx.Changeset.Force && !ctx.Changeset.GoModChanged && len(ctx.Changeset.GoFiles) == 0 {
+	if !ctx.Changeset.GoModChanged && len(ctx.Changeset.GoFiles) == 0 {
 		return 0, false, nil // No Go changes
 	}
 
 	goCfg := ctx.Config.Builds.Go
-	binaryPath := filepath.Join(ctx.ArtifactDir, "bin", goCfg.BinaryName)
+	binaryPath := filepath.Join(ctx.ArtifactDir, goCfg.DeployPath, goCfg.BinaryName)
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0775); err != nil {
+		return 0, false, fmt.Errorf("failed to create Go output directory: %w", err)
+	}
 
 	ctx.Log.Info("Building Go binary: %s", goCfg.BinaryName)
 

@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0rc] - 2026-03-23
+
+### Added
+
+- **Go Deploy Path Isolation**: Added `builds.go.deploy_path` to control where Go binaries are stored inside each release (default: `bin`). This enables safer multi-service deployments by separating runtime paths.
+- **Hook Execution Mode**: Added `hook_execution_mode` with `after_switch` (default) and `before_switch` modes for rollout strategy control.
+- **Runtime Pre-Activation Validation**: Deployments now validate critical runtime artifacts (Go binary, Python runtime script/binary, PHP vendor dependencies) before activating `current`.
+
+### Changed
+
+- **Go Rebuild Semantics**: Go binaries are now rebuilt only when Go files or `go.mod` change. A global `--force` no longer triggers Go rebuilds by itself.
+- **Go/Python Runtime Reuse**: Enhanced reuse logic to carry over Go binaries and Python runtime assets/dependencies between releases when dependency inputs are unchanged.
+- **Python Server Script Output**: Python web-server setup now always produces Linux-compatible `run_server.sh` artifacts for remote servers, regardless of local OS.
+- **`versa init` Template**: Updated default generated `deploy.yml` with `hook_execution_mode`, `go.root`, and `go.deploy_path`.
+
+### Improved
+
+- **Configuration Defaults and Validation**: Added stricter validation and sane defaults for Go/Python deployment paths and hook execution mode.
+- **Documentation**: Updated `doc/DEPLOY.md`, `doc/GETTING_STARTED.md`, `deploy.example.yml`, and default `deploy.yml` to reflect the new backend deployment model.
+
+### Version
+
+- **Internal Version**: Version bumped to 1.2.0rc.
+
 ## [1.1.0rc] - 2026-03-04
 
 ### Added

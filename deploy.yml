@@ -15,6 +15,11 @@ environments:
     # Timeout for each post_deploy hook in seconds (optional, default: 300)
     hook_timeout: 300
 
+    # Hook execution strategy
+    # - after_switch (default): switch current first, then run hooks (rollback-aware)
+    # - before_switch: run hooks first, switch only if all hooks pass
+    hook_execution_mode: "after_switch"
+
     # Paths to ignore for SHA256 tracking
     ignored_paths:
       - ".git"
@@ -35,6 +40,8 @@ environments:
 
       go:
         enabled: false
+        root: "" # Subdirectory where your go.mod lives (if any)
+        deploy_path: "bin/go" # Release-relative output path for the Go binary
         target_os: "linux"
         target_arch: "amd64"
         binary_name: "app"
@@ -48,20 +55,20 @@ environments:
         enabled: true
 
         # --- Basic settings ---
-        root: ""                          # Subdirectory where your Python project lives (if any)
+        root: "" # Subdirectory where your Python project lives (if any)
         python_command: "python3"
-        package_manager: "pip"            # pip (default), poetry, pipenv
+        package_manager: "pip" # pip (default), poetry, pipenv
         requirements_file: "requirements.txt"
         venv_path: ".venv"
 
         # --- Web server mode ---
         # Enable if deploying a web app (Flask, FastAPI, Django, etc.)
         web_server: false
-        web_framework: "fastapi"          # django, flask, fastapi, uvicorn, gunicorn
-        entry_point: "main.py"            # App entry point
+        web_framework: "fastapi" # django, flask, fastapi, uvicorn, gunicorn
+        entry_point: "main.py" # App entry point
         web_host: "0.0.0.0"
         web_port: 8000
-        web_workers: 2                    # Number of worker processes
+        web_workers: 2 # Number of worker processes
         # web_threads: 0                  # Threads per worker (uvicorn only)
 
         # Custom run command (overrides web_framework auto-detection)
@@ -71,7 +78,7 @@ environments:
         # If set, generates a .service file ready to install on the server.
         # First deploy: sudo cp /var/www/app/current/app/<name>.service /etc/systemd/system/
         #               sudo systemctl enable <name> && sudo systemctl start <name>
-        service_name: ""                  # e.g. "myapp"
+        service_name: "" # e.g. "myapp"
 
         # --- Binary build (PyInstaller) ---
         # Compiles a standalone executable (no Python needed on server)

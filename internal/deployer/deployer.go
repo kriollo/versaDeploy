@@ -284,7 +284,9 @@ func (d *Deployer) Deploy() error {
 
 	// Step 11.6: Reuse dependencies from previous release if possible
 	if previousLock != nil {
-		d.reuseDependencies(sshClient, previousLock.LastDeploy.ReleaseDir, finalDir, cs)
+		if err := d.reuseDependencies(sshClient, previousLock.LastDeploy.ReleaseDir, finalDir, cs); err != nil {
+			return err
+		}
 
 		// Step 11.7: Restore preserved paths (files that should not be updated)
 		if err := d.handlePreservedPaths(sshClient, previousLock.LastDeploy.ReleaseDir, finalDir); err != nil {
@@ -292,7 +294,19 @@ func (d *Deployer) Deploy() error {
 		}
 	}
 
-	// Step 12: Atomic symlink switch
+	// Step 11.8: Validate runtime artifacts before activating symlink
+	if err := d.validateRuntimeArtifacts(sshClient, finalDir, cs); err != nil {
+		return err
+	}
+
+	// Step 12: Run hooks before switch when configured (migration-safe mode)
+	if d.env.HookExecutionMode == "before_switch" {
+		if err := d.executePostDeployHooks(sshClient, finalDir, nil); err != nil {
+			return err
+		}
+	}
+
+	// Step 13: Atomic symlink switch
 	d.log.Info("Activating release...")
 	currentSymlink := filepath.ToSlash(filepath.Join(d.env.RemotePath, "current"))
 	// Use absolute path for target to be more robust
@@ -304,36 +318,14 @@ func (d *Deployer) Deploy() error {
 		return err
 	}
 
-	// Step 13: Execute post-deploy hooks
-	if len(d.env.PostDeploy) > 0 {
-		d.log.Info("Running post-deploy hooks...")
-		hookTimeout := time.Duration(d.env.HookTimeout) * time.Second
-		if hookTimeout <= 0 {
-			hookTimeout = 300 * time.Second // Default 5 minutes
-		}
-
-		for _, hookConfig := range d.env.PostDeploy {
-			if hookConfig.Command != "" {
-				if err := d.runHook(sshClient, finalDir, hookConfig.Command, previousLock); err != nil {
-					return err
-				}
-			} else if len(hookConfig.Parallel) > 0 {
-				var g errgroup.Group
-				d.log.Info("Executing parallel hook group (%d commands)...", len(hookConfig.Parallel))
-				for _, h := range hookConfig.Parallel {
-					cmd := h // closure capture
-					g.Go(func() error {
-						return d.runHook(sshClient, finalDir, cmd, previousLock)
-					})
-				}
-				if err := g.Wait(); err != nil {
-					return err // runHook already handles rollback and specific logging
-				}
-			}
+	// Step 14: Execute post-deploy hooks in default mode (after switch)
+	if d.env.HookExecutionMode != "before_switch" {
+		if err := d.executePostDeployHooks(sshClient, finalDir, previousLock); err != nil {
+			return err
 		}
 	}
 
-	// Step 14: Update deploy.lock
+	// Step 15: Update deploy.lock
 	d.log.Info("Updating deploy.lock...")
 	newLock := state.New(commitHash, releaseVersion, cs.AllFileHashes, cs.ComposerHash, cs.PackageHash, cs.GoModHash, cs.RequirementsHash)
 	lockData, err := newLock.ToJSON()
@@ -362,7 +354,7 @@ func (d *Deployer) Deploy() error {
 		d.log.Error("Failed to upload deploy.lock: %v", err)
 	}
 
-	// Step 15: Cleanup old releases
+	// Step 16: Cleanup old releases
 	d.log.Info("Cleaning up old releases...")
 	if err := sshClient.CleanupOldReleases(releasesDir, ReleasesToKeep); err != nil {
 		// Non-fatal
@@ -411,6 +403,36 @@ func (d *Deployer) runHook(sshClient *ssh.Client, finalDir, hook string, previou
 	}
 
 	d.log.Info("Hook output [%s]: %s", hook, strings.TrimSpace(output))
+	return nil
+}
+
+func (d *Deployer) executePostDeployHooks(sshClient *ssh.Client, finalDir string, rollbackLock *state.DeployLock) error {
+	if len(d.env.PostDeploy) == 0 {
+		return nil
+	}
+
+	d.log.Info("Running post-deploy hooks (%s)...", d.env.HookExecutionMode)
+
+	for _, hookConfig := range d.env.PostDeploy {
+		if hookConfig.Command != "" {
+			if err := d.runHook(sshClient, finalDir, hookConfig.Command, rollbackLock); err != nil {
+				return err
+			}
+		} else if len(hookConfig.Parallel) > 0 {
+			var g errgroup.Group
+			d.log.Info("Executing parallel hook group (%d commands)...", len(hookConfig.Parallel))
+			for _, h := range hookConfig.Parallel {
+				cmd := h // closure capture
+				g.Go(func() error {
+					return d.runHook(sshClient, finalDir, cmd, rollbackLock)
+				})
+			}
+			if err := g.Wait(); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -635,13 +657,13 @@ func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) e
 }
 
 // reuseDependencies attempts to recover vendor/node_modules and other build assets from previous release using hardlinks
-func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, finalDir string, cs *changeset.ChangeSet) {
+func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, finalDir string, cs *changeset.ChangeSet) error {
 	if previousVersion == "" {
-		return
+		return nil
 	}
 
 	// Internal helper to reuse a specific path
-	reusePath := func(projectRoot, relPath string) {
+	reusePath := func(projectRoot, relPath string) error {
 		oldPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, "app", projectRoot, relPath))
 		oldPathLegacy := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, projectRoot, relPath))
 		newPath := filepath.ToSlash(filepath.Join(finalDir, "app", projectRoot, relPath))
@@ -658,11 +680,49 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 		if sourceToUse != "" {
 			// Check if already exists in new artifact
 			if exists, _ := sshClient.FileExists(newPath); !exists {
-				sshClient.MkdirAll(filepath.Dir(newPath))
+				if err := sshClient.MkdirAll(filepath.Dir(newPath)); err != nil {
+					return fmt.Errorf("failed to create directory for reusable path %s: %w", relPath, err)
+				}
 				cmd := fmt.Sprintf("cp -al -- %q %q", sourceToUse, newPath)
-				sshClient.ExecuteCommand(cmd)
+				if _, err := sshClient.ExecuteCommand(cmd); err != nil {
+					return fmt.Errorf("failed to reuse path %s from previous release: %w", relPath, err)
+				}
+				d.log.Info("  Reused: %s", newPath)
 			}
 		}
+
+		return nil
+	}
+
+	// Reuse release-level path (outside app/), e.g. bin/app for Go
+	reuseReleasePath := func(relPath string) error {
+		oldPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, relPath))
+		newPath := filepath.ToSlash(filepath.Join(finalDir, relPath))
+
+		sourceToUse := ""
+		if exists, _ := sshClient.FileExists(oldPath); exists {
+			sourceToUse = oldPath
+		}
+
+		if sourceToUse == "" {
+			return nil
+		}
+
+		if exists, _ := sshClient.FileExists(newPath); exists {
+			return nil
+		}
+
+		if err := sshClient.MkdirAll(filepath.Dir(newPath)); err != nil {
+			return fmt.Errorf("failed to create directory for reusable release path %s: %w", relPath, err)
+		}
+
+		cmd := fmt.Sprintf("cp -al -- %q %q", sourceToUse, newPath)
+		if _, err := sshClient.ExecuteCommand(cmd); err != nil {
+			return fmt.Errorf("failed to reuse release path %s from previous release: %w", relPath, err)
+		}
+
+		d.log.Info("  Reused: %s", newPath)
+		return nil
 	}
 
 	// PHP
@@ -681,7 +741,9 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 		}
 
 		for _, p := range paths {
-			reusePath(d.env.Builds.PHP.ProjectRoot, p)
+			if err := reusePath(d.env.Builds.PHP.ProjectRoot, p); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -701,9 +763,140 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 		}
 
 		for _, p := range paths {
-			reusePath(d.env.Builds.Frontend.ProjectRoot, p)
+			if err := reusePath(d.env.Builds.Frontend.ProjectRoot, p); err != nil {
+				return err
+			}
 		}
 	}
+
+	// Go
+	if d.env.Builds.Go.Enabled && !cs.GoModChanged && len(cs.GoFiles) == 0 {
+		goBinary := filepath.ToSlash(filepath.Join(d.env.Builds.Go.DeployPath, d.env.Builds.Go.BinaryName))
+		if err := reuseReleasePath(goBinary); err != nil {
+			return err
+		}
+	}
+
+	// Python
+	if d.env.Builds.Python.Enabled && !cs.RequirementsChanged {
+		paths := d.env.Builds.Python.ReusablePaths
+		hasVenv := false
+		for _, p := range paths {
+			if p == d.env.Builds.Python.VenvPath {
+				hasVenv = true
+				break
+			}
+		}
+		if !hasVenv && d.env.Builds.Python.VenvPath != "" {
+			paths = append(paths, d.env.Builds.Python.VenvPath)
+		}
+
+		if d.env.Builds.Python.WebServer {
+			paths = append(paths, "run_server.sh")
+			if d.env.Builds.Python.ServiceName != "" {
+				paths = append(paths, d.env.Builds.Python.ServiceName+".service")
+			}
+		}
+
+		if d.env.Builds.Python.BuildBinary && d.env.Builds.Python.BinaryName != "" {
+			paths = append(paths, d.env.Builds.Python.BinaryName)
+		}
+
+		for _, p := range paths {
+			if err := reusePath(d.env.Builds.Python.ProjectRoot, p); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (d *Deployer) validateRuntimeArtifacts(sshClient *ssh.Client, finalDir string, cs *changeset.ChangeSet) error {
+	if d.env.Builds.Go.Enabled {
+		binPath := filepath.ToSlash(filepath.Join(finalDir, d.env.Builds.Go.DeployPath, d.env.Builds.Go.BinaryName))
+		exists, err := sshClient.FileExists(binPath)
+		if err != nil {
+			return fmt.Errorf("failed to verify Go binary on release: %w", err)
+		}
+		if !exists {
+			return verserrors.New(
+				verserrors.CodeBuildFailed,
+				fmt.Sprintf("release is missing required Go binary: %s", binPath),
+				"Ensure Go build is enabled and/or reuse from previous release succeeds.",
+				nil,
+			)
+		}
+	}
+
+	if d.env.Builds.Python.Enabled {
+		projectRoot := d.env.Builds.Python.ProjectRoot
+		appDir := filepath.ToSlash(filepath.Join(finalDir, "app", projectRoot))
+
+		if d.env.Builds.Python.BuildBinary {
+			binPath := filepath.ToSlash(filepath.Join(appDir, d.env.Builds.Python.BinaryName))
+			exists, err := sshClient.FileExists(binPath)
+			if err != nil {
+				return fmt.Errorf("failed to verify Python binary on release: %w", err)
+			}
+			if !exists {
+				return verserrors.New(
+					verserrors.CodeBuildFailed,
+					fmt.Sprintf("release is missing required Python binary: %s", binPath),
+					"Set python.build_binary correctly and ensure PyInstaller build succeeds.",
+					nil,
+				)
+			}
+		}
+
+		if d.env.Builds.Python.WebServer {
+			scriptPath := filepath.ToSlash(filepath.Join(appDir, "run_server.sh"))
+			exists, err := sshClient.FileExists(scriptPath)
+			if err != nil {
+				return fmt.Errorf("failed to verify Python run script on release: %w", err)
+			}
+			if !exists {
+				return verserrors.New(
+					verserrors.CodeBuildFailed,
+					fmt.Sprintf("release is missing required Python run script: %s", scriptPath),
+					"Enable python.web_server with a valid entry_point or run_command.",
+					nil,
+				)
+			}
+		}
+
+		// If Python files changed but requirements did not, verify configured reusable runtime paths when present.
+		if len(cs.PythonFiles) > 0 && !cs.RequirementsChanged {
+			for _, reusable := range d.env.Builds.Python.ReusablePaths {
+				reusablePath := filepath.ToSlash(filepath.Join(appDir, reusable))
+				exists, err := sshClient.FileExists(reusablePath)
+				if err != nil {
+					return fmt.Errorf("failed to verify Python reusable path %s: %w", reusablePath, err)
+				}
+				if !exists {
+					d.log.Warn("Python reusable path not found in release: %s", reusablePath)
+				}
+			}
+		}
+	}
+
+	if d.env.Builds.PHP.Enabled {
+		phpVendorPath := filepath.ToSlash(filepath.Join(finalDir, "app", d.env.Builds.PHP.ProjectRoot, "vendor"))
+		exists, err := sshClient.FileExists(phpVendorPath)
+		if err != nil {
+			return fmt.Errorf("failed to verify PHP vendor path on release: %w", err)
+		}
+		if !exists {
+			return verserrors.New(
+				verserrors.CodeBuildFailed,
+				fmt.Sprintf("release is missing required PHP dependencies: %s", phpVendorPath),
+				"Ensure composer install ran successfully or vendor was reused from previous release.",
+				nil,
+			)
+		}
+	}
+
+	return nil
 }
 
 // handlePreservedPaths restores files/directories from the previous release that should NOT be updated
