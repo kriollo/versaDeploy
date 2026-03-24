@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [1.3.1rc] - 2026-03-24
 
+### Fixed
+
+- **Config editor scroll behavior**: Improved upward navigation in the Config editor by adding cursor margins so the viewport no longer follows too aggressively near the file end.
+- **Self-update restart path**: Fixed restart resolution after `self-update` to avoid attempting to execute a removed `.old` binary path.
+- **Config edit mode key isolation**: Global shortcuts are now blocked while editing config files, so keys like `c` are treated as text input instead of triggering commands.
+
+### Changed
+
+- **Internal Version**: Version bumped to 1.3.1rc.
+
+## [1.3.0rc] - 2026-03-24
+
 ### Added
 
 - **`--no-gui` flag**: TUI now launches by default when running `versa` with no subcommand. Use `--no-gui` to get the help output instead. `--gui` is kept for backward compatibility.
@@ -42,7 +54,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - **`hook_execution_mode` deprecated**: The field is still parsed for backward compatibility but triggers a migration warning. Use `pre_deploy_local`, `pre_deploy_server`, and `post_deploy` instead.
-- **Internal Version**: Version bumped to 1.3.1rc.
+- **Internal Version**: Version bumped to 1.3.0rc.
 
 ## [1.2.0rc] - 2026-03-23
 
