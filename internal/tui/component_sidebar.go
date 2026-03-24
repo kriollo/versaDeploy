@@ -26,10 +26,10 @@ func renderSidebar(height int, envNames []string, activeEnv int, focused bool, s
 			if focused {
 				line = StyleSelected.Render(fmt.Sprintf(" %s ", line))
 			} else {
-				line = StyleActive.Render("● " + label)
+				line = StyleActive.Render(fmt.Sprintf("%s %s", indicator, label))
 			}
 		} else {
-			line = StyleMuted.Render("  " + label)
+			line = StyleMuted.Render(fmt.Sprintf("%s %s", indicator, label))
 		}
 		rows = append(rows, line)
 	}

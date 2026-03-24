@@ -593,8 +593,9 @@ func TestConfig_Validate_HookExecutionModeDefault(t *testing.T) {
 		t.Fatalf("Validate() failed: %v", err)
 	}
 
-	if got := cfg.Environments["prod"].HookExecutionMode; got != "after_switch" {
-		t.Fatalf("expected default hook_execution_mode after_switch, got %s", got)
+	// hook_execution_mode is deprecated; after migration it should be cleared
+	if got := cfg.Environments["prod"].HookExecutionMode; got != "" {
+		t.Fatalf("expected HookExecutionMode to be cleared after migration, got %s", got)
 	}
 }
 

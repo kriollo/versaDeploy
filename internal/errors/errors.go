@@ -37,6 +37,8 @@ func (e *VersaError) Error() string {
 	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
 }
 
+func (e *VersaError) Unwrap() error { return e.WrappedErr }
+
 // New creates a new VersaError
 func New(code ErrorCode, msg, suggestion string, err error) *VersaError {
 	return &VersaError{

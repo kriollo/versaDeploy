@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -28,6 +29,7 @@ type Entry struct {
 
 // Logger handles logging to console and file
 type Logger struct {
+	mu          sync.Mutex
 	file        *os.File
 	extraWriter io.Writer // additional writer (used by TUI for streaming)
 	verbose     bool
@@ -71,12 +73,14 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 		Message:   message,
 	}
 
+	l.mu.Lock()
 	// Write to file as JSON
 	if l.file != nil {
 		data, _ := json.Marshal(entry)
 		l.file.Write(data)
 		l.file.Write([]byte("\n"))
 	}
+	l.mu.Unlock()
 
 	// Write to console with formatting
 	l.writeConsole(level, message)

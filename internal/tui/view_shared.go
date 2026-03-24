@@ -16,9 +16,11 @@ type sharedEntry struct {
 }
 
 type sharedModel struct {
-	entries []sharedEntry
-	loaded  bool
-	err     error
+	entries   []sharedEntry
+	cursor    int
+	viewStart int
+	loaded    bool
+	err       error
 }
 
 type msgSharedData struct {
@@ -61,9 +63,30 @@ func (s *sharedModel) applyData(msg msgSharedData) {
 	s.entries = msg.entries
 	s.err = msg.err
 	s.loaded = true
+	s.cursor = 0
+	s.viewStart = 0
 }
 
-func (s sharedModel) view(width int) string {
+func (s *sharedModel) moveUp() {
+	if s.cursor > 0 {
+		s.cursor--
+	}
+}
+
+func (s *sharedModel) moveDown() {
+	if s.cursor < len(s.entries)-1 {
+		s.cursor++
+	}
+}
+
+func (s *sharedModel) selectedEntry() *sharedEntry {
+	if len(s.entries) == 0 || s.cursor >= len(s.entries) {
+		return nil
+	}
+	return &s.entries[s.cursor]
+}
+
+func (s sharedModel) view(width, height int) string {
 	title := StyleTitle.Render("  Shared Directory")
 	sep := StyleMuted.Render(strings.Repeat("─", max(width-4, 4)))
 
@@ -80,15 +103,49 @@ func (s sharedModel) view(width int) string {
 	} else {
 		header := StyleTableHeader.Render(fmt.Sprintf("  %-4s %-36s %s", "Type", "Name", "Size"))
 		rows = append(rows, header, "")
-		for _, e := range s.entries {
-			icon := "📄"
-			if e.isDir {
-				icon = "📁"
+
+		// Scroll window: overhead = title+sep+blank+header+blank = ~6, footer ~4
+		vH := height - 10
+		if vH < 3 {
+			vH = 3
+		}
+		total := len(s.entries)
+
+		if s.cursor >= s.viewStart+vH {
+			s.viewStart = s.cursor - vH + 1
+		} else if s.cursor < s.viewStart {
+			s.viewStart = s.cursor
+		}
+		if s.viewStart < 0 {
+			s.viewStart = 0
+		}
+		endIdx := s.viewStart + vH
+		if endIdx > total {
+			endIdx = total
+		}
+
+		for i := s.viewStart; i < endIdx; i++ {
+			e := s.entries[i]
+			icon := iconForEntry(e.name, e.isDir)
+			line := fmt.Sprintf("  %s  %-36s %s", icon, e.name, e.size)
+			if i == s.cursor {
+				line = StyleSelected.Render(fmt.Sprintf("  %s  %-36s %s", icon, e.name, e.size))
 			}
-			rows = append(rows, fmt.Sprintf("  %s   %-36s %s", icon, e.name, e.size))
+			rows = append(rows, line)
+		}
+
+		if total > vH {
+			pct := 0
+			if total > 1 {
+				pct = int((float64(s.cursor) / float64(total-1)) * 100)
+			}
+			rows = append(rows, StyleMuted.Render(fmt.Sprintf(
+				"  … %d/%d  (%d%%)", s.cursor+1, total, pct)))
 		}
 	}
 
-	rows = append(rows, "", sep)
+	rows = append(rows, "", sep, "",
+		StyleMuted.Render("  ↑/↓:navigate  ↵:open directory  F5:refresh"),
+	)
 	return strings.Join(rows, "\n")
 }

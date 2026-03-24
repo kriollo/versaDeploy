@@ -218,6 +218,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			contentW = 10
 		}
 		m.operations.initViewport(contentW, contentH)
+		m.config.contentH = contentH
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -234,6 +235,16 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentView == viewBrowser {
 				if env := m.activeEnvCfg(); env != nil {
 					m.browser.init(env.RemotePath)
+				}
+			}
+			// Check deploy.lock existence to lock/unlock "Initial deploy" flag
+			if env := m.activeEnvCfg(); env != nil {
+				lockPath := filepath.ToSlash(filepath.Join(env.RemotePath, "deploy.lock"))
+				if exists, err := msg.client.FileExists(lockPath); err == nil {
+					m.operations.deployLockExists = exists
+					if exists {
+						m.operations.flags[2].enabled = false
+					}
 				}
 			}
 			cmds = append(cmds, m.loadCurrentViewCmds()...)
@@ -273,6 +284,33 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		contentH := m.height - 3
 		m.browser.applyFileContent(msg, contentW, contentH)
 		m.statusMsg = "Viewing: " + msg.path
+
+	case msgXferLine:
+		m.browser.appendXferLine(msg.line)
+		cmds = append(cmds, waitForXferLine(m.browser.xfer.logCh))
+
+	case msgXferStreamEnd:
+		// log channel closed; msgXferDone arrives separately via doneCh
+
+	case msgDeleteDone:
+		if msg.err != nil {
+			m.browser.statusMsg = StyleError.Render("✕ Delete failed: " + msg.err.Error())
+		} else {
+			m.browser.statusMsg = StyleSuccess.Render("✓ Deleted: " + msg.path)
+			if client := m.activeClient(); client != nil {
+				cmds = append(cmds, listDir(client, m.browser.currentPath()))
+			}
+		}
+
+	case msgXferDone:
+		m.browser.xfer.running = false
+		m.browser.xfer.done = true
+		m.browser.xfer.err = msg.err
+		if msg.err == nil && m.browser.xfer.dir == xferUpload {
+			if client := m.activeClient(); client != nil {
+				cmds = append(cmds, listDir(client, m.browser.currentPath()))
+			}
+		}
 
 	case msgSharedData:
 		m.shared.applyData(msg)
@@ -351,6 +389,26 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		return m, tea.Batch(cmds...)
 	}
 
+	// Left/Right arrow: cycle through views (skip viewConfigSelector=6)
+	// Allow from config view when not editing.
+	configBlocked := m.currentView == viewConfig && m.config.isEditing
+	if key.Matches(msg, Keys.Left) && !m.sidebarFocused && m.currentView != viewConfigSelector && !configBlocked {
+		next := int(m.currentView) - 1
+		if next < 0 {
+			next = int(viewConfig)
+		}
+		cmds = append(cmds, m.switchToView(viewID(next))...)
+		return m, tea.Batch(cmds...)
+	}
+	if key.Matches(msg, Keys.Right) && !m.sidebarFocused && m.currentView != viewConfigSelector && !configBlocked {
+		next := int(m.currentView) + 1
+		if next > int(viewConfig) {
+			next = 0
+		}
+		cmds = append(cmds, m.switchToView(viewID(next))...)
+		return m, tea.Batch(cmds...)
+	}
+
 	// View switching — FIX: init browser on ACTUAL model here, not in a value-copy helper
 	switch msg.String() {
 	case "1":
@@ -388,19 +446,41 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 	}
 
 	// Shortcut: d goes to operations view from anywhere
-	if key.Matches(msg, Keys.Deploy) && m.currentView != viewOperations {
+	if key.Matches(msg, Keys.Deploy) && m.currentView != viewOperations && m.currentView != viewBrowser {
 		m.currentView = viewOperations
+		return m, tea.Batch(cmds...)
+	}
+
+	// F5 refresh: reload data for current view
+	if key.Matches(msg, Keys.Refresh) {
+		cmds = append(cmds, m.loadCurrentViewCmds()...)
+		m.statusMsg = "Refreshing…"
 		return m, tea.Batch(cmds...)
 	}
 
 	// Content-area key handling per view
 	switch m.currentView {
+	case viewDashboard:
+		// Dashboard handles r (Refresh already handled above via F5)
+
 	case viewReleases:
 		switch {
 		case key.Matches(msg, Keys.Up):
 			m.releases.moveUp()
 		case key.Matches(msg, Keys.Down):
 			m.releases.moveDown()
+		case key.Matches(msg, Keys.Enter):
+			rel := m.releases.selectedRelease()
+			if rel != "" {
+				if env := m.activeEnvCfg(); env != nil {
+					relPath := filepath.ToSlash(filepath.Join(env.RemotePath, "releases", rel))
+					m.currentView = viewBrowser
+					m.browser.init(relPath)
+					if client := m.activeClient(); client != nil {
+						cmds = append(cmds, listDir(client, relPath))
+					}
+				}
+			}
 		case key.Matches(msg, Keys.Rollback):
 			rel := m.releases.selectedRelease()
 			if rel != "" && rel != m.releases.current {
@@ -414,6 +494,76 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		}
 
 	case viewBrowser:
+		// ── Transfer panel active ──────────────────────────────────────────
+		if m.browser.xfer.dir != xferNone {
+			x := &m.browser.xfer
+
+			// Log view (running or done): Esc always closes, Enter closes when done
+			if x.running || x.done {
+				switch msg.String() {
+				case "esc":
+					m.browser.cancelXfer()
+				case "enter":
+					if x.done {
+						m.browser.cancelXfer()
+					}
+				}
+				break
+			}
+
+			// Both upload and download use the local browser for navigation
+			switch msg.String() {
+			case "esc":
+				m.browser.cancelXfer()
+			case "up", "k":
+				x.local.moveUp()
+			case "down", "j":
+				x.local.moveDown()
+			case "enter":
+				// Navigate into directories; for upload also toggles file selection
+				x.local.enterSelected()
+			case " ":
+				// Toggle file selection (upload only; ignored for download)
+				if x.dir == xferUpload {
+					x.local.spaceSelect()
+				}
+			case "backspace":
+				x.local.popDir()
+			case "t":
+				env := m.activeEnvCfg()
+				if env == nil {
+					break
+				}
+				if x.dir == xferUpload {
+					sel := x.local.selectedFiles()
+					if len(sel) > 0 {
+						dst := fmt.Sprintf("%s@%s:%s/", x.sshUser, x.sshHost, x.remotePath)
+						x.running = true
+						cmds = append(cmds,
+							startRsyncCmd(x.sshCfg, sel, dst, x.logCh, x.doneCh),
+							waitForXferDone(x.doneCh),
+						)
+					}
+				} else {
+					// Download: save remote file into the currently browsed local dir
+					src := fmt.Sprintf("%s@%s:%s", x.sshUser, x.sshHost, x.remotePath)
+					dst := x.local.currentPath() + "/"
+					x.running = true
+					cmds = append(cmds,
+						startRsyncCmd(x.sshCfg, []string{src}, dst, x.logCh, x.doneCh),
+						waitForXferDone(x.doneCh),
+					)
+				}
+			}
+			break
+		}
+
+		// ── Normal remote browser ──────────────────────────────────────────
+		// Esc closes the file viewer
+		if msg.String() == "esc" && m.browser.viewing {
+			m.browser.viewing = false
+			break
+		}
 		switch {
 		case key.Matches(msg, Keys.Up):
 			m.browser.moveUp()
@@ -424,20 +574,17 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 			dirPath, filePath, fileInfo := m.browser.enterSelected()
 			switch {
 			case dirPath != "":
-				// Navigate into directory
 				m.browser.pushDir(dirPath)
 				if client != nil {
 					cmds = append(cmds, listDir(client, dirPath))
 				}
 			case filePath != "" && client != nil:
-				// Open file viewer
 				m.browser.viewing = true
 				m.browser.viewPath = filePath
 				m.browser.viewLoading = true
 				m.statusMsg = "Loading " + filePath + "…"
 				cmds = append(cmds, loadFileContent(client, filePath, fileInfo))
 			default:
-				// ".." virtual entry or no selection — go up
 				if m.browser.hasParent() && !m.browser.viewing {
 					m.browser.popDir()
 					if client != nil {
@@ -448,10 +595,57 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		case key.Matches(msg, Keys.Back):
 			prevPath := m.browser.currentPath()
 			m.browser.popDir()
-			// Only reload if we actually moved up (not just closed viewer)
 			if !m.browser.viewing && m.browser.currentPath() != prevPath {
 				if client := m.activeClient(); client != nil {
 					cmds = append(cmds, listDir(client, m.browser.currentPath()))
+				}
+			}
+		default:
+			env := m.activeEnvCfg()
+			if env == nil {
+				break
+			}
+			switch msg.String() {
+			case "d":
+				var remotePath string
+				if m.browser.viewing {
+					remotePath = m.browser.viewPath
+				} else {
+					remotePath = m.browser.selectedRemoteFile()
+				}
+				if remotePath != "" {
+					m.browser.initDownload(remotePath, env.SSH.User, env.SSH.Host, &env.SSH)
+				}
+			case "u":
+				if !m.browser.viewing {
+					m.browser.initUpload(m.browser.currentPath(), env.SSH.User, env.SSH.Host, &env.SSH)
+				}
+			case "delete":
+				remotePath := m.browser.selectedRemoteFile()
+				if remotePath != "" {
+					if client := m.activeClient(); client != nil {
+						m.browser.statusMsg = StyleMuted.Render("Deleting…")
+						cmds = append(cmds, deleteFileCmd(client, remotePath))
+					}
+				}
+			}
+		}
+
+	case viewShared:
+		switch {
+		case key.Matches(msg, Keys.Up):
+			m.shared.moveUp()
+		case key.Matches(msg, Keys.Down):
+			m.shared.moveDown()
+		case key.Matches(msg, Keys.Enter):
+			if entry := m.shared.selectedEntry(); entry != nil && entry.isDir {
+				if env := m.activeEnvCfg(); env != nil {
+					dirPath := filepath.ToSlash(filepath.Join(env.RemotePath, "shared", entry.name))
+					m.currentView = viewBrowser
+					m.browser.init(dirPath)
+					if client := m.activeClient(); client != nil {
+						cmds = append(cmds, listDir(client, dirPath))
+					}
 				}
 			}
 		}
@@ -459,6 +653,12 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 	case viewOperations:
 		cmds = append(cmds, m.handleOperationsKey(msg)...)
 	case viewConfig:
+		// Esc in read-only mode navigates back to dashboard
+		if msg.String() == "esc" && !m.config.isEditing {
+			m.currentView = viewDashboard
+			cmds = append(cmds, m.loadCurrentViewCmds()...)
+			return m, tea.Batch(cmds...)
+		}
 		handled, stop := (&m.config).handleKey(msg)
 		cmds = append(cmds, handled...)
 		if stop {
@@ -490,7 +690,11 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 					sort.Strings(m.envNames)
 					m.currentView = viewDashboard
 					m.statusMsg = "Switched to " + filepath.Base(path)
-					cmds = append(cmds, m.loadCurrentViewCmds()...)
+					// Reset SSH state for the new config environments
+					m.sshClients = make(map[string]*versassh.Client)
+					m.connStates = make(map[string]connState)
+					m.connErrors = make(map[string]error)
+					cmds = append(cmds, m.autoConnectCmds()...)
 				} else {
 					m.statusMsg = "Error loading config: " + err.Error()
 				}
@@ -507,6 +711,16 @@ func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
 
 	if m.operations.running {
+		// Allow Esc to close the log even while running
+		if msg.String() == "esc" {
+			m.operations.clearLog()
+		}
+		return cmds
+	}
+
+	// Esc clears the log output and returns to the idle control panel
+	if msg.String() == "esc" && m.operations.done {
+		m.operations.clearLog()
 		return cmds
 	}
 
@@ -538,6 +752,30 @@ func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 				if client := m.sshClients[envName]; client != nil {
 					m.operations.status = StyleWarning.Render("Rolling back to previous release…")
 					cmds = append(cmds, doRollbackToPrevious(client, env.RemotePath))
+				}
+			}
+		}
+	}
+
+	// Quick actions
+	if !m.operations.running {
+		switch msg.String() {
+		case "s":
+			if m.cfg != nil {
+				m.operations.startDeploy()
+				m.operations.logCh = make(chan string, 256)
+				cmds = append(cmds, doSSHTest(m.cfg, m.activeEnvName(), m.operations.logCh))
+			}
+		case "u":
+			m.operations.startDeploy()
+			m.operations.logCh = make(chan string, 256)
+			cmds = append(cmds, doSelfUpdate(m.operations.logCh))
+		case "t":
+			if client := m.activeClient(); client != nil {
+				if env := m.activeEnvCfg(); env != nil {
+					m.operations.startDeploy()
+					m.operations.logCh = make(chan string, 256)
+					cmds = append(cmds, doStatus(client, env.RemotePath, m.operations.logCh))
 				}
 			}
 		}
@@ -592,6 +830,21 @@ func (m appModel) loadCurrentViewCmds() []tea.Cmd {
 	return nil
 }
 
+// switchToView switches to the given view and triggers appropriate data loading.
+func (m *appModel) switchToView(v viewID) []tea.Cmd {
+	m.currentView = v
+	if v == viewBrowser {
+		if env := m.activeEnvCfg(); env != nil {
+			m.browser.init(env.RemotePath)
+		}
+	}
+	if v == viewConfig {
+		m.config.loading = true
+		return []tea.Cmd{m.config.load()}
+	}
+	return m.loadCurrentViewCmds()
+}
+
 func (m appModel) renderTabBar(contentW int) string {
 	var parts []string
 	for i, v := range viewLabels {
@@ -634,15 +887,17 @@ func (m appModel) View() string {
 	var content string
 	switch m.currentView {
 	case viewDashboard:
-		content = m.dashboard.view(contentW)
+		content = m.dashboard.view(contentW, contentH)
 	case viewReleases:
-		content = m.releases.view(contentW)
+		content = m.releases.view(contentW, contentH)
 	case viewBrowser:
-		content = m.browser.view(contentW)
+		content = m.browser.view(contentW, contentH)
 	case viewShared:
-		content = m.shared.view(contentW)
+		content = m.shared.view(contentW, contentH)
 	case viewOperations:
-		content = m.operations.view(contentW, m.releases.current)
+		content = m.operations.view(contentW, contentH, m.releases.current)
+	case viewConfig:
+		content = m.config.view(contentW)
 	case viewConfigSelector:
 		content = m.renderConfigSelector(contentW)
 	}

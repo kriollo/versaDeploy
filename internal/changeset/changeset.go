@@ -175,8 +175,12 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 		err     error
 	}
 
-	jobs := make(chan fileToHash, len(filesToHash))
-	results := make(chan hashResult, len(filesToHash))
+	bufSize := len(filesToHash)
+	if bufSize > 1000 {
+		bufSize = 1000
+	}
+	jobs := make(chan fileToHash, bufSize)
+	results := make(chan hashResult, bufSize)
 
 	// Start workers
 	const hashTimeout = 30 * time.Second
@@ -199,11 +203,13 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 		}()
 	}
 
-	// Send jobs
-	for _, file := range filesToHash {
-		jobs <- file
-	}
-	close(jobs)
+	// Send jobs in goroutine to avoid blocking when buffer is smaller than filesToHash
+	go func() {
+		for _, file := range filesToHash {
+			jobs <- file
+		}
+		close(jobs)
+	}()
 
 	// Wait for all workers to finish
 	go func() {

@@ -6,6 +6,8 @@ import "github.com/charmbracelet/bubbles/key"
 type KeyMap struct {
 	Up       key.Binding
 	Down     key.Binding
+	Left     key.Binding
+	Right    key.Binding
 	Enter    key.Binding
 	Tab      key.Binding
 	Deploy   key.Binding
@@ -16,6 +18,7 @@ type KeyMap struct {
 	Help     key.Binding
 	Edit     key.Binding
 	Save     key.Binding
+	Refresh  key.Binding
 	PageUp   key.Binding
 	PageDown key.Binding
 	Home     key.Binding
@@ -26,6 +29,8 @@ type KeyMap struct {
 var Keys = KeyMap{
 	Up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 	Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	Left:     key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev view")),
+	Right:    key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next view")),
 	Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "select/toggle")),
 	Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle sidebar")),
 	Deploy:   key.NewBinding(key.WithKeys("d"), key.WithHelp("D", "deploy")),
@@ -36,6 +41,7 @@ var Keys = KeyMap{
 	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Edit:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 	Save:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("Ctrl+S", "save")),
+	Refresh:  key.NewBinding(key.WithKeys("f5"), key.WithHelp("F5", "refresh")),
 	PageUp:   key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
 	PageDown: key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
 	Home:     key.NewBinding(key.WithKeys("home"), key.WithHelp("home", "go to start")),
@@ -44,5 +50,5 @@ var Keys = KeyMap{
 
 // ShortHelp returns the key hints displayed in the status bar.
 func (k KeyMap) ShortHelp() string {
-	return "1-6:views  Tab:sidebar  ↑/↓:navigate  ↵:select  e:edit  Ctrl+S:save  D:deploy  R:rollback  c:connect  q:quit"
+	return "1-6:views  ←/→:prev/next  Tab:sidebar  ↑/↓:navigate  ↵:select  F5:refresh  D:deploy  R:rollback  c:connect  q:quit"
 }

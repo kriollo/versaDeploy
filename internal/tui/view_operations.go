@@ -11,6 +11,7 @@ import (
 	"github.com/user/versaDeploy/internal/deployer"
 	"github.com/user/versaDeploy/internal/logger"
 	versassh "github.com/user/versaDeploy/internal/ssh"
+	"github.com/user/versaDeploy/internal/selfupdate"
 )
 
 // logCapture is an io.Writer that forwards each write to a channel.
@@ -35,7 +36,7 @@ type deployFlag struct {
 type operationsModel struct {
 	// viewport for deploy log output
 	viewport viewport.Model
-	logBuf   strings.Builder
+	logBuf   *strings.Builder
 	logCh    chan string
 	running  bool
 	done     bool
@@ -45,12 +46,14 @@ type operationsModel struct {
 	// cursor navigates deploy options (0..2)
 	cursor int
 
-	flags []deployFlag
+	flags           []deployFlag
+	deployLockExists bool
 }
 
 func newOperationsModel() operationsModel {
 	return operationsModel{
-		logCh: make(chan string, 256),
+		logBuf: &strings.Builder{},
+		logCh:  make(chan string, 256),
 		flags: []deployFlag{
 			{"Dry run", "Preview changes only — nothing is deployed", false},
 			{"Force redeploy", "Redeploy even when no file changes are detected", false},
@@ -60,7 +63,7 @@ func newOperationsModel() operationsModel {
 }
 
 func (o *operationsModel) initViewport(width, height int) {
-	vH := height - 22 // reserve rows for options + headers
+	vH := height - 10 // reserve rows for header + status + footer
 	if vH < 4 {
 		vH = 4
 	}
@@ -80,9 +83,14 @@ func (o *operationsModel) moveDown() {
 }
 
 func (o *operationsModel) toggleOption() {
-	if o.cursor < len(o.flags) {
-		o.flags[o.cursor].enabled = !o.flags[o.cursor].enabled
+	if o.cursor >= len(o.flags) {
+		return
 	}
+	// Block toggling "Initial deploy" when deploy.lock exists on server
+	if o.cursor == 2 && o.deployLockExists {
+		return
+	}
+	o.flags[o.cursor].enabled = !o.flags[o.cursor].enabled
 }
 
 func (o *operationsModel) deployRunning() bool   { return o.running }
@@ -90,11 +98,20 @@ func (o operationsModel) dryRunVal() bool        { return o.flags[0].enabled }
 func (o operationsModel) forceVal() bool         { return o.flags[1].enabled }
 func (o operationsModel) initialDeployVal() bool { return o.flags[2].enabled }
 
+func (o *operationsModel) clearLog() {
+	o.running = false
+	o.done = false
+	o.err = nil
+	o.status = ""
+	o.logBuf = &strings.Builder{}
+	o.viewport.SetContent("")
+}
+
 func (o *operationsModel) startDeploy() {
 	o.running = true
 	o.done = false
 	o.err = nil
-	o.logBuf.Reset()
+	o.logBuf = &strings.Builder{}
 	o.status = ""
 	o.logCh = make(chan string, 256)
 	o.viewport.SetContent("")
@@ -134,6 +151,76 @@ func waitForLogLine(ch <-chan string) tea.Cmd {
 			return msgDeployDone{}
 		}
 		return msgDeployLogLine{line: line}
+	}
+}
+
+// Quick action commands
+
+func doSSHTest(cfg *config.Config, envName string, ch chan string) tea.Cmd {
+	return func() tea.Msg {
+		go func() {
+			env, err := cfg.GetEnvironment(envName)
+			if err != nil {
+				ch <- fmt.Sprintf("[ERROR] %v\n", err)
+				close(ch)
+				return
+			}
+			log := logger.NewTUILogger(&logCapture{ch: ch}, true, false)
+			client, err := versassh.NewClient(&env.SSH, log)
+			if err != nil {
+				ch <- fmt.Sprintf("[ERROR] SSH connection failed: %v\n", err)
+				close(ch)
+				return
+			}
+			defer client.Close()
+			ch <- "[INFO] SSH connection established\n"
+			out, _ := client.ExecuteCommand("uname -a")
+			if out != "" {
+				ch <- fmt.Sprintf("[INFO] Remote: %s\n", strings.TrimSpace(out))
+			}
+			ch <- "[✓] SSH test passed\n"
+			close(ch)
+		}()
+		return waitForLogLine(ch)()
+	}
+}
+
+func doSelfUpdate(ch chan string) tea.Cmd {
+	return func() tea.Msg {
+		go func() {
+			log := logger.NewTUILogger(&logCapture{ch: ch}, true, false)
+			updater := selfupdate.NewUpdater(log)
+			if err := updater.Update(); err != nil {
+				ch <- fmt.Sprintf("[ERROR] Self-update failed: %v\n", err)
+			} else {
+				ch <- "[✓] Self-update completed\n"
+			}
+			close(ch)
+		}()
+		return waitForLogLine(ch)()
+	}
+}
+
+func doStatus(client *versassh.Client, remotePath string, ch chan string) tea.Cmd {
+	return func() tea.Msg {
+		go func() {
+			currentSymlink := filepath.ToSlash(filepath.Join(remotePath, "current"))
+			target, err := client.ReadSymlink(currentSymlink)
+			if err != nil {
+				ch <- fmt.Sprintf("[WARN] No current symlink: %v\n", err)
+			} else {
+				ch <- fmt.Sprintf("[INFO] Current release: %s\n", filepath.Base(target))
+			}
+			releasesDir := filepath.ToSlash(filepath.Join(remotePath, "releases"))
+			releases, err := client.ListReleases(releasesDir)
+			if err != nil {
+				ch <- fmt.Sprintf("[WARN] Could not list releases: %v\n", err)
+			} else {
+				ch <- fmt.Sprintf("[INFO] Total releases: %d\n", len(releases))
+			}
+			close(ch)
+		}()
+		return waitForLogLine(ch)()
 	}
 }
 
@@ -194,15 +281,23 @@ func sortReleases(releases []string) {
 	}
 }
 
-func (o operationsModel) view(width int, currentRelease string) string {
-	sep := StyleMuted.Render(strings.Repeat("─", max(width-4, 4)))
-	title := StyleTitle.Render("  Operations")
+func (o operationsModel) view(width, height int, currentRelease string) string {
+	// When running or showing log output: compact header + full-width log viewport
+	if o.running || o.done || o.logBuf.Len() > 0 {
+		return o.viewRunning(width, currentRelease)
+	}
+	return o.viewIdle(width, currentRelease)
+}
 
-	rows := []string{"", title, ""}
+// viewIdle renders the control panel (deploy options, rollback, quick actions).
+func (o operationsModel) viewIdle(width int, currentRelease string) string {
+	sep := StyleMuted.Render(strings.Repeat("─", max(width-4, 4)))
+
+	rows := []string{"", StyleTitle.Render("  Operations"), ""}
 
 	// ── DEPLOY SECTION ─────────────────────────────
 	rows = append(rows,
-		StyleSection.Render("  ▶  Deploy"),
+		StyleSection.Render("  ▸  Deploy"),
 		StyleHint.Render("     Deploy current repository state to the remote server"),
 		"",
 	)
@@ -212,66 +307,104 @@ func (o operationsModel) view(width int, currentRelease string) string {
 		if f.enabled {
 			check = StyleSuccess.Render("[✓]")
 		}
-		desc := StyleHint.Render("  " + f.desc)
-		line := fmt.Sprintf("  %s  %-20s%s", check, f.label, desc)
-		if i == o.cursor && !o.running {
-			line = StyleSelected.Render(fmt.Sprintf("  %s  %-20s", check, f.label)) + desc
+		label := f.label
+		desc := f.desc
+		if i == 2 && o.deployLockExists {
+			label = f.label + StyleMuted.Render(" (deploy.lock exists)")
+			check = StyleMuted.Render("[✗]")
+		}
+		descRender := StyleHint.Render("  " + desc)
+		line := fmt.Sprintf("  %s  %-30s%s", check, label, descRender)
+		if i == o.cursor {
+			line = StyleSelected.Render(fmt.Sprintf("  %s  %-30s", check, label)) + descRender
 		}
 		rows = append(rows, line)
 	}
-
-	deployKey := StyleCmd.Render("[D]")
-	if o.running {
-		deployKey = StyleWarning.Render("[D] running…")
-	} else if o.done {
-		deployKey = StyleMuted.Render("[D] done — press D again to re-deploy")
-	}
-	rows = append(rows, "", fmt.Sprintf("  %s Start deploy   ", deployKey))
+	rows = append(rows, "", fmt.Sprintf("  %s Start deploy", StyleCmd.Render("[D]")))
 
 	// ── ROLLBACK SECTION ───────────────────────────
-	rows = append(rows,
-		"",
-		sep,
-		"",
-		StyleSection.Render("  ◀  Rollback"),
-	)
+	rows = append(rows, "", sep, "", StyleSection.Render("  ◂  Rollback"))
 	if currentRelease != "" {
-		rows = append(rows, StyleHint.Render("     Current release: "+currentRelease))
+		rows = append(rows, StyleHint.Render("     Current: "+currentRelease))
 	}
 	rows = append(rows,
-		StyleHint.Render("     Revert to the release immediately before the current one"),
 		"",
 		fmt.Sprintf("  %s Rollback to previous release", StyleCmd.Render("[R]")),
-		"",
-		StyleMuted.Render("     To rollback to a specific version → go to view 2 (Releases)"),
+		StyleMuted.Render("     For specific version → view 2 (Releases)"),
 	)
 
-	rows = append(rows, "", sep)
+	// ── QUICK ACTIONS ──────────────────────────────
+	rows = append(rows,
+		"", sep, "",
+		StyleSection.Render("  »  Quick Actions"),
+		"",
+		fmt.Sprintf("  %s SSH connection test", StyleCmd.Render("[s]")),
+		fmt.Sprintf("  %s Check for updates", StyleCmd.Render("[u]")),
+		fmt.Sprintf("  %s Show deployment status", StyleCmd.Render("[t]")),
+	)
 
-	// ── STATUS MESSAGE ─────────────────────────────
 	if o.status != "" {
 		rows = append(rows, "", "  "+o.status)
 	}
 
-	// ── LOG VIEWPORT ───────────────────────────────
-	if o.running || o.done || o.logBuf.Len() > 0 {
-		rows = append(rows, "", StyleSection.Render("  Output log:"), "")
-		rows = append(rows, o.viewport.View())
+	rows = append(rows, "", sep, "",
+		StyleMuted.Render("  ↑/↓ navigate   ↵ toggle   D deploy   R rollback   s/u/t quick actions"),
+	)
+
+	return strings.Join(rows, "\n")
+}
+
+// viewRunning renders the log viewport full-screen with a compact status bar at top.
+func (o operationsModel) viewRunning(width int, currentRelease string) string {
+	sep := StyleMuted.Render(strings.Repeat("─", max(width-4, 4)))
+
+	// Compact flag summary on one line
+	flagSummary := ""
+	for _, f := range o.flags {
+		if f.enabled {
+			if flagSummary != "" {
+				flagSummary += "  "
+			}
+			flagSummary += StyleSuccess.Render("[✓]") + " " + f.label
+		}
+	}
+	if flagSummary == "" {
+		flagSummary = StyleMuted.Render("default flags")
 	}
 
+	stateStr := StyleWarning.Render("● running…")
 	if o.done {
-		rows = append(rows, "")
 		if o.err != nil {
-			rows = append(rows, StyleError.Render("  ✕ Deploy failed: "+o.err.Error()))
+			stateStr = StyleError.Render("✕ failed")
 		} else {
-			rows = append(rows, StyleSuccess.Render("  ✓ Operation completed successfully"))
+			stateStr = StyleSuccess.Render("✓ done")
 		}
 	}
 
-	// ── HINTS ──────────────────────────────────────
-	rows = append(rows, "",
-		StyleMuted.Render("  ↑/↓ navigate options   ↵ toggle   D deploy   R rollback"),
-	)
+	rows := []string{
+		"",
+		StyleTitle.Render("  Operations") + "  " + stateStr,
+		StyleHint.Render("  " + flagSummary),
+		"",
+		sep,
+		"",
+		StyleSection.Render("  Output log:"),
+		"",
+		o.viewport.View(),
+		"",
+		sep,
+	}
+
+	if o.done {
+		if o.err != nil {
+			rows = append(rows, StyleError.Render("  ✕ "+o.err.Error()))
+		} else {
+			rows = append(rows, StyleSuccess.Render("  ✓ Operation completed successfully"))
+		}
+		rows = append(rows, "", StyleMuted.Render("  Esc=close log   D=re-deploy  R=rollback  ←/→=navigate views"))
+	} else {
+		rows = append(rows, StyleMuted.Render("  Esc=close   ←/→=switch views   (running…)"))
+	}
 
 	return strings.Join(rows, "\n")
 }

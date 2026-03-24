@@ -28,6 +28,7 @@ import (
 type Client struct {
 	sshClient  *ssh.Client
 	sftpClient *sftp.Client
+	agentConn  net.Conn
 	config     *config.SSHConfig
 	log        *logger.Logger
 }
@@ -37,11 +38,13 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 	authMethods := []ssh.AuthMethod{}
 
 	// Support SSH Agent
+	var agentConn net.Conn
 	if cfg.UseSSHAgent {
 		sock := os.Getenv("SSH_AUTH_SOCK")
 		if sock != "" {
-			if agentConn, err := net.Dial("unix", sock); err == nil {
-				authMethods = append(authMethods, ssh.PublicKeysCallback(agent.NewClient(agentConn).Signers))
+			if conn, err := net.Dial("unix", sock); err == nil {
+				agentConn = conn
+				authMethods = append(authMethods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
 			}
 		}
 	}
@@ -110,6 +113,7 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 	return &Client{
 		sshClient:  sshClient,
 		sftpClient: sftpClient,
+		agentConn:  agentConn,
 		config:     cfg,
 		log:        log,
 	}, nil
@@ -119,6 +123,9 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 func (c *Client) Close() error {
 	if c.sftpClient != nil {
 		c.sftpClient.Close()
+	}
+	if c.agentConn != nil {
+		c.agentConn.Close()
 	}
 	if c.sshClient != nil {
 		return c.sshClient.Close()
@@ -484,7 +491,7 @@ func (c *Client) CleanupOldReleases(releasesDir string, keepCount int) error {
 // CheckDiskSpace verifies sufficient disk space is available on remote server
 func (c *Client) CheckDiskSpace(path string, requiredBytes int64) error {
 	// Get disk usage for the path
-	cmd := fmt.Sprintf("df -B1 %s | tail -1 | awk '{print $4}'", path)
+	cmd := fmt.Sprintf("df -B1 %q | tail -1 | awk '{print $4}'", path)
 	output, err := c.ExecuteCommand(cmd)
 	if err != nil {
 		// Non-fatal: just warn and continue

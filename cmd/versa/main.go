@@ -24,6 +24,7 @@ var (
 	debug      bool
 	logFile    string
 	guiMode    bool
+	noGUI      bool
 )
 
 var rootCmd = &cobra.Command{
@@ -36,7 +37,7 @@ var rootCmd = &cobra.Command{
 - Deploys atomically using symlink switching
 - Supports instant rollback`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !guiMode {
+		if noGUI {
 			return cmd.Help()
 		}
 
@@ -311,13 +312,8 @@ environments:
 
     remote_path: "/var/www/app"
 
-    # Timeout for each post_deploy hook in seconds (optional, default: 300)
+    # Timeout for each hook in seconds (optional, default: 300)
     hook_timeout: 300
-
-	# Hook execution strategy
-	# - after_switch (default): switch current first, then run hooks (rollback-aware)
-	# - before_switch: run hooks first, switch only if all hooks pass
-	hook_execution_mode: "after_switch"
 
     # Paths to ignore for SHA256 tracking
     ignored_paths:
@@ -400,7 +396,16 @@ environments:
         reusable_paths:
           - ".venv"
 
-    # Hooks to run on remote server after symlink switch
+    # Hooks to run locally before cloning (abort on failure)
+    # pre_deploy_local:
+    #   - "make test"
+    #   - "go vet ./..."
+
+    # Hooks to run on remote server before symlink switch (non-fatal warnings)
+    # pre_deploy_server:
+    #   - "sudo systemctl stop myapp || true"
+
+    # Hooks to run on remote server after symlink switch (rollback on failure)
     post_deploy:
       # Restart systemd service after each deploy (requires service_name to be set above)
       # - "sudo systemctl restart myapp"
@@ -474,7 +479,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "Verbose output")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Debug mode")
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "Log file path")
-	rootCmd.PersistentFlags().BoolVar(&guiMode, "gui", false, "Launch interactive TUI")
+	rootCmd.PersistentFlags().BoolVar(&guiMode, "gui", false, "Launch interactive TUI (default behavior; kept for backward compat)")
+	rootCmd.PersistentFlags().BoolVar(&noGUI, "no-gui", false, "Disable TUI and show help")
 
 	deployCmd.Flags().Bool("dry-run", false, "Show changes without deploying")
 	deployCmd.Flags().Bool("initial-deploy", false, "Flag for first deployment")

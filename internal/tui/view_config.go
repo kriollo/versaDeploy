@@ -21,6 +21,7 @@ type configModel struct {
 	cursorCol  int
 	hasChanges bool
 	viewStart  int
+	contentH   int // actual available content height, set from WindowSizeMsg
 }
 
 func newConfigModel(repoPath string) configModel {
@@ -99,25 +100,25 @@ func (m *configModel) view(width int) string {
 
 	var status string
 	if m.isEditing {
-		status = StyleWarning.Render(" [EDIT: arrows=move, type=insert, Ctrl+S=save, Esc=cancel] ")
+		status = StyleWarning.Render(" [EDIT: arrows/move  type/insert  Ctrl+S/save  Esc/cancel] ")
 	} else if m.hasChanges {
-		status = StyleWarning.Render(" [modified - will be lost if not saved] ")
+		status = StyleWarning.Render(" [modified — unsaved changes] ")
 	} else if m.err != nil {
 		status = StyleError.Render(fmt.Sprintf(" [%v]", m.err))
 	} else {
-		status = StyleMuted.Render(" [e=edit, r=reload, q=quit view] ")
+		status = StyleMuted.Render(" [e=edit  r=reload  Esc=back  ←/→=switch views] ")
 	}
 
 	header := StyleHeader.Width(width).Render("Config: "+m.configPath) + "\n"
-	footer := StyleSurface.Width(width).Render(status)
 
 	contentW := width - 10
 	if contentW < 20 {
 		contentW = 20
 	}
-	contentH := heightFromWidth(width) - 2
+	// Use actual terminal content height if available, else fallback to a safe default
+	contentH := m.contentH - 3 // subtract header + footer rows
 	if contentH < 5 {
-		contentH = 5
+		contentH = 20
 	}
 
 	lines := strings.Split(m.content, "\n")
@@ -125,6 +126,7 @@ func (m *configModel) view(width int) string {
 		lines = []string{""}
 	}
 
+	// Clamp cursor
 	if m.cursorLine >= len(lines) {
 		m.cursorLine = len(lines) - 1
 	}
@@ -138,39 +140,32 @@ func (m *configModel) view(width int) string {
 		m.cursorCol = len(lines[m.cursorLine])
 	}
 
-	visibleStart := m.viewStart
-	visibleEnd := m.viewStart + contentH - 1
-	if visibleEnd >= len(lines) {
-		visibleEnd = len(lines) - 1
-	}
-
 	maxViewStart := len(lines) - contentH
 	if maxViewStart < 0 {
 		maxViewStart = 0
 	}
-
 	if m.viewStart > maxViewStart {
 		m.viewStart = maxViewStart
 	}
+	if m.viewStart < 0 {
+		m.viewStart = 0
+	}
 
-	// Always track the cursor on-screen
-	if m.cursorLine > visibleEnd && m.viewStart < maxViewStart {
-		m.viewStart = m.cursorLine - contentH + 1
+	// Scroll only when cursor leaves the visible window (1-line scroll, never jumps)
+	visibleEnd := m.viewStart + contentH - 1
+	if m.cursorLine > visibleEnd {
+		m.viewStart += m.cursorLine - visibleEnd // scroll down by the overshoot
 		if m.viewStart > maxViewStart {
 			m.viewStart = maxViewStart
 		}
 	} else if m.cursorLine < m.viewStart {
-		m.viewStart = m.cursorLine
+		m.viewStart -= m.viewStart - m.cursorLine // scroll up by the overshoot
+		if m.viewStart < 0 {
+			m.viewStart = 0
+		}
 	}
 
-	if m.viewStart < 0 {
-		m.viewStart = 0
-	}
-	if m.viewStart >= len(lines) {
-		m.viewStart = len(lines) - 1
-	}
-
-	visibleStart = m.viewStart
+	visibleStart := m.viewStart
 	visibleEnd = m.viewStart + contentH
 	if visibleEnd > len(lines) {
 		visibleEnd = len(lines)
@@ -196,10 +191,16 @@ func (m *configModel) view(width int) string {
 			} else {
 				lineContent = before + StyleSelected.Render(" ")
 			}
+		} else if !m.isEditing && i == m.cursorLine {
+			// Highlight current line in read-only mode too
+			lineContent = StyleActive.Render(lineContent)
 		}
 
 		if len(lineContent) > contentW-5 {
-			lineContent = lineContent[:contentW-8] + "..."
+			// Only truncate plain strings (styled ones may have escape codes)
+			if !strings.Contains(lineContent, "\x1b") {
+				lineContent = lineContent[:contentW-8] + "..."
+			}
 		}
 
 		bodyLines = append(bodyLines, lineNum+lineContent)
@@ -209,21 +210,22 @@ func (m *configModel) view(width int) string {
 		bodyLines = append(bodyLines, strings.Repeat(" ", contentW))
 	}
 
+	// Scrollbar hint
+	scrollInfo := ""
+	if len(lines) > contentH {
+		pct := 0
+		if maxViewStart > 0 {
+			pct = int(float64(m.viewStart) / float64(maxViewStart) * 100)
+		}
+		scrollInfo = fmt.Sprintf("  line %d/%d  %d%%", m.cursorLine+1, len(lines), pct)
+	}
+	footerWithScroll := StyleSurface.Width(width).Render(status + StyleMuted.Render(scrollInfo))
+
 	body := lipgloss.JoinVertical(lipgloss.Left, bodyLines...)
 
-	return header + body + "\n" + footer
+	return header + body + "\n" + footerWithScroll
 }
 
-func heightFromWidth(width int) int {
-	h := width / 3
-	if h < 10 {
-		h = 10
-	}
-	if h > 40 {
-		h = 40
-	}
-	return h
-}
 
 func (m *configModel) handleKey(msg tea.Msg) ([]tea.Cmd, bool) {
 	cmds := []tea.Cmd{}

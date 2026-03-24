@@ -87,9 +87,6 @@ func (p *PythonBuilder) installDependencies(ctx *BuilderContext, appDir string, 
 
 		if _, err := os.Stat(reqFile); err == nil {
 			args = []string{"-m", "pip", "install", "-r", cfg.RequirementsFile}
-			if !cfg.InstallDevDeps {
-				args = append(args, "--no-dev")
-			}
 			if cfg.UseCache {
 				args = append(args, "--cache-dir", "/tmp/pip-cache")
 			}
@@ -109,7 +106,17 @@ func (p *PythonBuilder) installDependencies(ctx *BuilderContext, appDir string, 
 		}
 	}
 
-	// Install extra requirements files
+	if installCmd != "" {
+		ctx.Log.Info("Installing Python dependencies with %s...", cfg.PackageManager)
+
+		output, err := executeCommand(installCmd+" "+strings.Join(args, " "), appDir)
+		if err != nil {
+			ctx.Log.Debug("Python install output: %s", string(output))
+			return fmt.Errorf("failed to install Python dependencies: %w", err)
+		}
+	}
+
+	// Install extra requirements files (after main deps)
 	for _, extraReq := range cfg.ExtraRequirements {
 		extraReqFile := filepath.Join(appDir, extraReq)
 		if _, err := os.Stat(extraReqFile); err == nil {
@@ -124,16 +131,6 @@ func (p *PythonBuilder) installDependencies(ctx *BuilderContext, appDir string, 
 				ctx.Log.Debug("Extra requirements install output: %s", string(output))
 				return fmt.Errorf("failed to install extra requirements %s: %w", extraReq, err)
 			}
-		}
-	}
-
-	if installCmd != "" {
-		ctx.Log.Info("Installing Python dependencies with %s...", cfg.PackageManager)
-
-		output, err := executeCommand(installCmd+" "+strings.Join(args, " "), appDir)
-		if err != nil {
-			ctx.Log.Debug("Python install output: %s", string(output))
-			return fmt.Errorf("failed to install Python dependencies: %w", err)
 		}
 	}
 

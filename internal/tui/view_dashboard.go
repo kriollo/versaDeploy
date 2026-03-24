@@ -13,14 +13,25 @@ type dashboardModel struct {
 	current  string
 	disk     string
 	releases []string
-	loaded   bool
-	err      error
+	// Server stats
+	ram     string
+	cpu     string
+	load    string
+	uptime  string
+	os      string
+	loaded  bool
+	err     error
 }
 
 type msgDashboardData struct {
 	current  string
 	disk     string
 	releases []string
+	ram      string
+	cpu      string
+	load     string
+	uptime   string
+	os       string
 	err      error
 }
 
@@ -28,6 +39,11 @@ func loadDashboard(client *versassh.Client, remotePath string) tea.Cmd {
 	return func() tea.Msg {
 		current := ""
 		disk := ""
+		ram := ""
+		cpu := ""
+		load := ""
+		uptime := ""
+		osInfo := ""
 		var releases []string
 
 		currentSymlink := filepath.ToSlash(filepath.Join(remotePath, "current"))
@@ -35,6 +51,7 @@ func loadDashboard(client *versassh.Client, remotePath string) tea.Cmd {
 			current = filepath.Base(target)
 		}
 
+		// Disk usage for remote path
 		dfCmd := fmt.Sprintf("df -h %q | tail -1 | awk '{print $3\"/\"$2\" (\"$5\" used)\"}'", remotePath)
 		if out, err := client.ExecuteCommand(dfCmd); err == nil {
 			disk = strings.TrimSpace(out)
@@ -43,7 +60,55 @@ func loadDashboard(client *versassh.Client, remotePath string) tea.Cmd {
 		releasesDir := filepath.ToSlash(filepath.Join(remotePath, "releases"))
 		releases, _ = client.ListReleases(releasesDir)
 
-		return msgDashboardData{current: current, disk: disk, releases: releases}
+		// RAM: free -h → total and used
+		if out, err := client.ExecuteCommand("free -h 2>/dev/null | awk '/^Mem:/{print $3\"/\"$2\" used\"}'"); err == nil {
+			if v := strings.TrimSpace(out); v != "" {
+				ram = v
+			}
+		}
+
+		// CPU: single-shot mpstat or fallback to /proc/stat
+		cpuCmd := `mpstat 1 1 2>/dev/null | awk '/Average:/{printf "%.1f%%", 100-$NF}' || awk '/cpu /{u=$2+$4; t=$2+$3+$4+$5; printf "%.1f%%", (u/t)*100; exit}' /proc/stat`
+		if out, err := client.ExecuteCommand(cpuCmd); err == nil {
+			if v := strings.TrimSpace(out); v != "" {
+				cpu = v
+			}
+		}
+
+		// Load average
+		if out, err := client.ExecuteCommand("cat /proc/loadavg 2>/dev/null | awk '{print $1\", \"$2\", \"$3}'"); err == nil {
+			if v := strings.TrimSpace(out); v != "" {
+				load = v
+			}
+		}
+
+		// Uptime
+		if out, err := client.ExecuteCommand("uptime -p 2>/dev/null || uptime"); err == nil {
+			if v := strings.TrimSpace(out); v != "" {
+				if len(v) > 40 {
+					v = v[:40] + "…"
+				}
+				uptime = v
+			}
+		}
+
+		// OS info
+		if out, err := client.ExecuteCommand("cat /etc/os-release 2>/dev/null | grep '^PRETTY_NAME' | cut -d= -f2 | tr -d '\"'"); err == nil {
+			if v := strings.TrimSpace(out); v != "" {
+				osInfo = v
+			}
+		}
+
+		return msgDashboardData{
+			current:  current,
+			disk:     disk,
+			releases: releases,
+			ram:      ram,
+			cpu:      cpu,
+			load:     load,
+			uptime:   uptime,
+			os:       osInfo,
+		}
 	}
 }
 
@@ -51,11 +116,24 @@ func (d *dashboardModel) applyData(msg msgDashboardData) {
 	d.current = msg.current
 	d.disk = msg.disk
 	d.releases = msg.releases
+	d.ram = msg.ram
+	d.cpu = msg.cpu
+	d.load = msg.load
+	d.uptime = msg.uptime
+	d.os = msg.os
 	d.err = msg.err
 	d.loaded = true
 }
 
-func (d dashboardModel) view(width int) string {
+func stat(label, value string) string {
+	v := value
+	if v == "" {
+		v = StyleMuted.Render("—")
+	}
+	return fmt.Sprintf("  %-24s %s", label, v)
+}
+
+func (d dashboardModel) view(width, _ int) string {
 	if !d.loaded {
 		return StyleMuted.Render("\n  Loading dashboard…")
 	}
@@ -66,13 +144,9 @@ func (d dashboardModel) view(width int) string {
 	sep := StyleMuted.Render(strings.Repeat("─", max(width-4, 4)))
 	title := StyleTitle.Render("  Dashboard")
 
-	current := StyleMuted.Render("—")
+	currentVal := StyleMuted.Render("—")
 	if d.current != "" {
-		current = StyleSuccess.Render(d.current)
-	}
-	disk := "—"
-	if d.disk != "" {
-		disk = d.disk
+		currentVal = StyleSuccess.Render(d.current)
 	}
 
 	releaseCount := fmt.Sprintf("%d", len(d.releases))
@@ -83,14 +157,34 @@ func (d dashboardModel) view(width int) string {
 		"",
 		sep,
 		"",
-		fmt.Sprintf("  %-24s %s", "Current release:", current),
-		fmt.Sprintf("  %-24s %s", "Disk usage:", disk),
-		fmt.Sprintf("  %-24s %s", "Total releases:", releaseCount),
+		StyleSection.Render("  Deployment"),
+		"",
+		stat("Current release:", currentVal),
+		stat("Total releases:", releaseCount),
 		"",
 		sep,
 		"",
-		StyleMuted.Render("  Press 2 to manage releases, 5 to deploy"),
+		StyleSection.Render("  Server Resources"),
+		"",
 	}
+
+	if d.os != "" {
+		lines = append(lines, stat("OS:", d.os))
+	}
+	lines = append(lines,
+		stat("CPU usage:", d.cpu),
+		stat("RAM usage:", d.ram),
+		stat("Load (1/5/15m):", d.load),
+		stat("Uptime:", d.uptime),
+		stat("Disk (deploy):", d.disk),
+	)
+
+	lines = append(lines,
+		"",
+		sep,
+		"",
+		StyleMuted.Render("  2=releases  5=deploy  F5=refresh"),
+	)
 
 	return strings.Join(lines, "\n")
 }

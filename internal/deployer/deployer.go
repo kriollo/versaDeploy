@@ -1,6 +1,7 @@
 package deployer
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -70,6 +71,11 @@ func (d *Deployer) Deploy() error {
 		return fmt.Errorf("repository validation failed: %w", err)
 	}
 
+	// Step 1.5: Run pre_deploy_local hooks (abort on failure)
+	if err := d.executePreDeployLocal(); err != nil {
+		return err
+	}
+
 	// Step 2: Check if working directory is clean
 	if !d.skipDirtyCheck {
 		clean, err := git.IsClean(d.repoPath)
@@ -130,7 +136,7 @@ func (d *Deployer) Deploy() error {
 
 	if exists {
 		d.log.Debug("Fetching deploy.lock from remote...")
-		tmpLockFile := filepath.Join(os.TempDir(), "deploy.lock")
+		tmpLockFile := filepath.Join(os.TempDir(), fmt.Sprintf("deploy-%s.lock", d.envName))
 		if err := sshClient.DownloadFile(lockPath, tmpLockFile); err != nil {
 			return err
 		}
@@ -299,12 +305,8 @@ func (d *Deployer) Deploy() error {
 		return err
 	}
 
-	// Step 12: Run hooks before switch when configured (migration-safe mode)
-	if d.env.HookExecutionMode == "before_switch" {
-		if err := d.executePostDeployHooks(sshClient, finalDir, nil); err != nil {
-			return err
-		}
-	}
+	// Step 12: Run pre_deploy_server hooks (non-fatal, before symlink switch)
+	d.executePreDeployServer(sshClient, finalDir)
 
 	// Step 13: Atomic symlink switch
 	d.log.Info("Activating release...")
@@ -318,11 +320,9 @@ func (d *Deployer) Deploy() error {
 		return err
 	}
 
-	// Step 14: Execute post-deploy hooks in default mode (after switch)
-	if d.env.HookExecutionMode != "before_switch" {
-		if err := d.executePostDeployHooks(sshClient, finalDir, previousLock); err != nil {
-			return err
-		}
+	// Step 14: Execute post-deploy hooks (after symlink switch)
+	if err := d.executePostDeployHooks(sshClient, finalDir, previousLock); err != nil {
+		return err
 	}
 
 	// Step 15: Update deploy.lock
@@ -411,7 +411,7 @@ func (d *Deployer) executePostDeployHooks(sshClient *ssh.Client, finalDir string
 		return nil
 	}
 
-	d.log.Info("Running post-deploy hooks (%s)...", d.env.HookExecutionMode)
+	d.log.Info("Running post-deploy hooks...")
 
 	for _, hookConfig := range d.env.PostDeploy {
 		if hookConfig.Command != "" {
@@ -434,6 +434,64 @@ func (d *Deployer) executePostDeployHooks(sshClient *ssh.Client, finalDir string
 	}
 
 	return nil
+}
+
+// executePreDeployLocal runs pre_deploy_local hooks locally; aborts deploy on failure.
+func (d *Deployer) executePreDeployLocal() error {
+	if len(d.env.PreDeployLocal) == 0 {
+		return nil
+	}
+
+	d.log.Info("Running pre_deploy_local hooks...")
+	for _, hookConfig := range d.env.PreDeployLocal {
+		cmds := []string{}
+		if hookConfig.Command != "" {
+			cmds = []string{hookConfig.Command}
+		} else {
+			cmds = hookConfig.Parallel
+		}
+		for _, cmd := range cmds {
+			d.log.Info("  Local: %s", cmd)
+			var outBuf bytes.Buffer
+			c := exec.Command("sh", "-c", cmd)
+			c.Dir = d.repoPath
+			c.Stdout = &outBuf
+			c.Stderr = &outBuf
+			if err := c.Run(); err != nil {
+				d.log.Error("pre_deploy_local hook failed: %s\nOutput: %s", cmd, outBuf.String())
+				return fmt.Errorf("pre_deploy_local hook failed: %w", err)
+			}
+			d.log.Info("  Output: %s", strings.TrimSpace(outBuf.String()))
+		}
+	}
+	return nil
+}
+
+// executePreDeployServer runs pre_deploy_server hooks on the remote; never aborts deploy.
+func (d *Deployer) executePreDeployServer(sshClient *ssh.Client, finalDir string) {
+	if len(d.env.PreDeployServer) == 0 {
+		return
+	}
+
+	d.log.Info("Running pre_deploy_server hooks (non-fatal)...")
+	for _, hookConfig := range d.env.PreDeployServer {
+		if hookConfig.Command != "" {
+			if err := d.runHook(sshClient, finalDir, hookConfig.Command, nil); err != nil {
+				d.log.Warn("pre_deploy_server hook failed (continuing): %v", err)
+			}
+		} else if len(hookConfig.Parallel) > 0 {
+			var g errgroup.Group
+			for _, h := range hookConfig.Parallel {
+				cmd := h
+				g.Go(func() error {
+					return d.runHook(sshClient, finalDir, cmd, nil)
+				})
+			}
+			if err := g.Wait(); err != nil {
+				d.log.Warn("pre_deploy_server parallel hook failed (continuing): %v", err)
+			}
+		}
+	}
 }
 
 // Rollback rolls back to the previous release

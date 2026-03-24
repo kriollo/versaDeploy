@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,8 +110,8 @@ func GenerateReleaseVersion() string {
 
 // Compress creates a single-part .tar.gz archive of the artifact directory
 func (g *Generator) Compress(archivePath string) error {
-	// Use 100MB chunk size to reduce peak memory during compression
-	chunks, err := g.CompressChunked(archivePath, 100*1024*1024)
+	// Use MaxInt64 to ensure a single chunk is always produced
+	chunks, err := g.CompressChunked(archivePath, math.MaxInt64)
 	if err != nil {
 		return err
 	}
@@ -287,10 +288,10 @@ func (g *Generator) CompressChunked(archivePath string, chunkSize int64) ([]stri
 				fmt.Printf("[WARN] Skipping file (cannot open): %s - %v\n", relPath, err)
 				return nil
 			}
-			defer f.Close()
-
-			if _, err = io.Copy(tw, f); err != nil {
-				return fmt.Errorf("failed to copy content for %s: %w", relPath, err)
+			_, copyErr := io.Copy(tw, f)
+			f.Close()
+			if copyErr != nil {
+				return fmt.Errorf("failed to copy content for %s: %w", relPath, copyErr)
 			}
 			bar.Add(1)
 		}

@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0rc] - 2026-03-24
+
+### Added
+
+- **`--no-gui` flag**: TUI now launches by default when running `versa` with no subcommand. Use `--no-gui` to get the help output instead. `--gui` is kept for backward compatibility.
+- **`pre_deploy_local` hooks**: New hook type that runs local shell commands before cloning the repo. Aborts the deployment on failure. Ideal for running tests, linters, or pre-flight checks locally.
+- **`pre_deploy_server` hooks**: New hook type that runs remote commands before the symlink switch (non-fatal — warnings only). Ideal for gracefully stopping services before activation.
+- **`hook_execution_mode` migration**: Deprecated `hook_execution_mode: before_switch` configurations are now automatically migrated to `pre_deploy_server` at validation time with a printed warning.
+
+### TUI Overhaul
+
+- **Real terminal height**: All views now receive the actual content height from the window size message instead of using the `heightFromWidth()` heuristic (`width / 3`, clamped 10–40). Layouts no longer break on wide or narrow terminals.
+- **Esc handling — universal dismiss**:
+  - File viewer (browser): `Esc` closes the viewer and returns to the directory listing.
+  - Config view (read-only): `Esc` returns to the Dashboard.
+  - Operations (running): `Esc` closes the log output even while an operation is in progress.
+- **Left/Right navigation unblocked for config read-only**: Arrow key view-cycling now works from the Config view when not in edit mode.
+- **Releases view — scroll window**: Added `viewStart` tracking so large release lists scroll correctly rather than overflowing the terminal.
+- **Shared view — scroll window**: Same scroll window added; long shared-path lists no longer overflow.
+- **Shared view — Nerd Font icons**: Replaced `📄`/`📁` emoji with `iconForEntry()` calls (consistent with the file browser).
+- **Icon codepoint replacement**: Replaced all MDI-range Nerd Font codepoints (`\uf7xx`, `\uf9xx`, `\uea6c`, `\ufc1e`, `\ufd42`) — which render as empty boxes in many terminal/font combinations — with widely supported Font Awesome and Devicon codepoints. Key changes: folders use `\uf07b`/`\uf07c`, shell files use `\uf120` (terminal), lock files use `\uf023`, images use `\uf03e`, Docker uses `\ue7b0`, generic files use `\uf15b`.
+- **Sidebar — connection indicators for all envs**: Every environment in the sidebar now shows its connection state dot (connected/connecting/error/idle), not just the active one.
+- **Operations footer fix**: While an operation is running, the footer now reads `Esc=close   ←/→=switch views   (running…)` instead of the previous misleading message.
+- **Operations emoji cleanup**: Replaced `▶`/`◀`/`⚡` section markers with plain-text `▸`/`◂`/`»` to avoid rendering issues.
+- **Config footer fix**: Read-only mode footer now shows `Esc=back` and `←/→=switch views`.
+- **Removed `heightFromWidth()`**: The width-based height heuristic function is gone; all views use real terminal dimensions.
+
+### Fixed
+
+- **Builder race condition**: Concurrent PHP/Go/Frontend/Python build goroutines previously wrote directly to `b.result` fields while running in parallel, creating a data race. Results are now collected in goroutine-local variables and merged into `b.result` after `errgroup.Wait()`.
+- **Changeset channel deadlock**: Hash worker channels were sized to `len(filesToHash)` which could be arbitrarily large. Channel buffer is now capped at 1000 and jobs are sent in a separate goroutine, preventing blocked sends on repositories with many files.
+- **Artifact single-chunk compression**: `Compress()` was calling `CompressChunked` with a 100 MB limit, potentially producing multiple chunks for large artifacts. Now uses `math.MaxInt64` to always produce a single `.tar.gz`.
+- **Artifact defer-in-loop**: `defer f.Close()` inside a `filepath.Walk` callback was leaking file descriptors until the walk completed. Replaced with an explicit `f.Close()` immediately after `io.Copy`.
+- **SSH agent connection leak**: The `net.Conn` to `SSH_AUTH_SOCK` was never stored and therefore never closed. It is now tracked in `Client.agentConn` and closed in `Client.Close()`.
+- **`CheckDiskSpace` path injection**: Remote path was interpolated into the shell command without quoting (`%s`). Changed to `%q` to prevent command injection via unusual path characters.
+- **Temp lock file collision**: Multiple concurrent deployments to different environments shared the same `deploy.lock` temp file path (`os.TempDir()/deploy.lock`). Now namespaced as `deploy-<envName>.lock`.
+
+### Changed
+
+- **`hook_execution_mode` deprecated**: The field is still parsed for backward compatibility but triggers a migration warning. Use `pre_deploy_local`, `pre_deploy_server`, and `post_deploy` instead.
+- **Internal Version**: Version bumped to 1.3.0rc.
+
 ## [1.2.0rc] - 2026-03-23
 
 ### Added

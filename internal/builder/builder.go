@@ -75,6 +75,19 @@ func (b *Builder) Build() (*BuildResult, error) {
 
 	var g errgroup.Group
 
+	// Local result holders — written only by their own goroutine, merged after Wait().
+	var (
+		phpCount      int
+		phpComposer   bool
+		phpTwig       bool
+		phpRoutes     bool
+		goBin         bool
+		feCount       int
+		feNPM         bool
+		pyCount       int
+		pyPip         bool
+	)
+
 	if b.config.Builds.PHP.Enabled {
 		g.Go(func() error {
 			builder := &lang.PHPBuilder{}
@@ -82,10 +95,10 @@ func (b *Builder) Build() (*BuildResult, error) {
 			if err != nil {
 				return err
 			}
-			b.result.PHPFilesChanged = count
-			b.result.ComposerUpdated = updated
-			b.result.TwigCacheCleanup = len(b.changeset.TwigFiles) > 0
-			b.result.RouteCacheRegenerate = b.changeset.RoutesChanged
+			phpCount = count
+			phpComposer = updated
+			phpTwig = len(b.changeset.TwigFiles) > 0
+			phpRoutes = b.changeset.RoutesChanged
 			return nil
 		})
 	}
@@ -97,7 +110,7 @@ func (b *Builder) Build() (*BuildResult, error) {
 			if err != nil {
 				return err
 			}
-			b.result.GoBinaryRebuilt = updated
+			goBin = updated
 			return nil
 		})
 	}
@@ -109,8 +122,8 @@ func (b *Builder) Build() (*BuildResult, error) {
 			if err != nil {
 				return err
 			}
-			b.result.FrontendCompiled = count
-			b.result.NPMUpdated = updated
+			feCount = count
+			feNPM = updated
 			return nil
 		})
 	}
@@ -122,16 +135,26 @@ func (b *Builder) Build() (*BuildResult, error) {
 			if err != nil {
 				return err
 			}
-			b.result.PythonFilesBuilt = count
-			b.result.PipUpdated = updated
+			pyCount = count
+			pyPip = updated
 			return nil
 		})
 	}
 
-	// Wait for all builds to complete
+	// Wait for all builds to complete, then merge results (no data races).
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
+
+	b.result.PHPFilesChanged = phpCount
+	b.result.ComposerUpdated = phpComposer
+	b.result.TwigCacheCleanup = phpTwig
+	b.result.RouteCacheRegenerate = phpRoutes
+	b.result.GoBinaryRebuilt = goBin
+	b.result.FrontendCompiled = feCount
+	b.result.NPMUpdated = feNPM
+	b.result.PythonFilesBuilt = pyCount
+	b.result.PipUpdated = pyPip
 
 	// Step 5: Cleanup ignored paths after builds complete
 	b.log.Info("Cleaning up build-time dependencies...")

@@ -22,13 +22,15 @@ type Environment struct {
 	SSH            SSHConfig    `yaml:"ssh"`
 	RemotePath     string       `yaml:"remote_path"`
 	Builds         BuildsConfig `yaml:"builds"`
+	PreDeployLocal []HookConfig `yaml:"pre_deploy_local"`  // Local commands run before cloning; abort on error
+	PreDeployServer []HookConfig `yaml:"pre_deploy_server"` // Remote commands run before symlink switch; non-fatal
 	PostDeploy     []HookConfig `yaml:"post_deploy"`
 	Ignored        []string     `yaml:"ignored_paths"`
 	SharedPaths    []string     `yaml:"shared_paths"`    // Paths to persist between releases (e.g. storage, uploads)
 	PreservedPaths []string     `yaml:"preserved_paths"` // Paths to KEEP from previous release (overwriting artifact)
 	RouteFiles     []string     `yaml:"route_files"`     // Files that trigger route cache regeneration
 	HookTimeout    int          `yaml:"hook_timeout"`    // Timeout for post-deploy hooks in seconds
-	HookExecutionMode string    `yaml:"hook_execution_mode"` // Hook execution mode: after_switch (default) or before_switch
+	HookExecutionMode string    `yaml:"hook_execution_mode"` // Deprecated: use pre_deploy_local/pre_deploy_server instead
 }
 
 // SSHConfig holds SSH connection details
@@ -223,11 +225,24 @@ func (e *Environment) Validate(envName string) error {
 		return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: remote_path must be an absolute path", envName), "Ensure 'remote_path' starts with / (for Linux) or a drive letter (for Windows).", nil)
 	}
 
-	if e.HookExecutionMode == "" {
-		e.HookExecutionMode = "after_switch"
+	// Hook system migration: handle deprecated hook_execution_mode
+	hasNewHooks := len(e.PreDeployLocal) > 0 || len(e.PreDeployServer) > 0
+	if e.HookExecutionMode != "" && hasNewHooks {
+		return fmt.Errorf("environment %s: cannot use hook_execution_mode together with pre_deploy_local/pre_deploy_server; remove hook_execution_mode", envName)
 	}
-	if e.HookExecutionMode != "after_switch" && e.HookExecutionMode != "before_switch" {
+	if e.HookExecutionMode == "before_switch" && !hasNewHooks {
+		// Migrate: move PostDeploy to PreDeployServer
+		fmt.Printf("[WARN] environment %s: hook_execution_mode 'before_switch' is deprecated. Migrating post_deploy to pre_deploy_server.\n", envName)
+		e.PreDeployServer = e.PostDeploy
+		e.PostDeploy = nil
+		e.HookExecutionMode = ""
+	} else if e.HookExecutionMode == "after_switch" && !hasNewHooks {
+		fmt.Printf("[WARN] environment %s: hook_execution_mode is deprecated. Remove it and use post_deploy directly.\n", envName)
+		e.HookExecutionMode = ""
+	} else if e.HookExecutionMode != "" && e.HookExecutionMode != "after_switch" && e.HookExecutionMode != "before_switch" {
 		return fmt.Errorf("environment %s: hook_execution_mode must be 'after_switch' or 'before_switch'", envName)
+	} else {
+		e.HookExecutionMode = ""
 	}
 
 	// At least one build type must be enabled
