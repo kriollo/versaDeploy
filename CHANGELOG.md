@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.3.0rc] - 2026-03-24
+## [1.3.1rc] - 2026-03-24
 
 ### Added
 
@@ -42,7 +42,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - **`hook_execution_mode` deprecated**: The field is still parsed for backward compatibility but triggers a migration warning. Use `pre_deploy_local`, `pre_deploy_server`, and `post_deploy` instead.
-- **Internal Version**: Version bumped to 1.3.0rc.
+- **Internal Version**: Version bumped to 1.3.1rc.
 
 ## [1.2.0rc] - 2026-03-23
 

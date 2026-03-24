@@ -151,22 +151,32 @@ func (m *configModel) view(width int) string {
 		m.viewStart = 0
 	}
 
-	// Scroll only when cursor leaves the visible window (1-line scroll, never jumps)
-	visibleEnd := m.viewStart + contentH - 1
-	if m.cursorLine > visibleEnd {
-		m.viewStart += m.cursorLine - visibleEnd // scroll down by the overshoot
+	// Keep a small vertical margin around the cursor to avoid aggressive follow-scroll.
+	// This makes upward navigation near the file end easier to read.
+	topMargin := 2
+	bottomMargin := 2
+	if contentH < 8 {
+		topMargin = 0
+		bottomMargin = 0
+	}
+
+	visibleTop := m.viewStart + topMargin
+	visibleBottom := m.viewStart + contentH - 1 - bottomMargin
+
+	if m.cursorLine > visibleBottom {
+		m.viewStart = m.cursorLine - (contentH - 1 - bottomMargin)
 		if m.viewStart > maxViewStart {
 			m.viewStart = maxViewStart
 		}
-	} else if m.cursorLine < m.viewStart {
-		m.viewStart -= m.viewStart - m.cursorLine // scroll up by the overshoot
+	} else if m.cursorLine < visibleTop {
+		m.viewStart = m.cursorLine - topMargin
 		if m.viewStart < 0 {
 			m.viewStart = 0
 		}
 	}
 
 	visibleStart := m.viewStart
-	visibleEnd = m.viewStart + contentH
+	visibleEnd := m.viewStart + contentH
 	if visibleEnd > len(lines) {
 		visibleEnd = len(lines)
 	}
@@ -225,7 +235,6 @@ func (m *configModel) view(width int) string {
 
 	return header + body + "\n" + footerWithScroll
 }
-
 
 func (m *configModel) handleKey(msg tea.Msg) ([]tea.Cmd, bool) {
 	cmds := []tea.Cmd{}

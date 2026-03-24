@@ -344,6 +344,13 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// While editing config, route all key input to the editor and block global shortcuts.
+	if m.currentView == viewConfig && m.config.isEditing {
+		handled, _ := (&m.config).handleKey(msg)
+		cmds = append(cmds, handled...)
+		return m, tea.Batch(cmds...)
+	}
+
 	if key.Matches(msg, Keys.Quit) {
 		return m, tea.Quit
 	}

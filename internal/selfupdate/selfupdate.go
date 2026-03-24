@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/user/versaDeploy/internal/logger"
 	"github.com/user/versaDeploy/internal/version"
@@ -33,7 +34,8 @@ type Asset struct {
 
 // Updater handles the self-update process
 type Updater struct {
-	log *logger.Logger
+	log               *logger.Logger
+	restartBinaryPath string
 }
 
 // NewUpdater creates a new updater
@@ -116,6 +118,7 @@ func (u *Updater) performUpdate(url string) error {
 	if err != nil {
 		return err
 	}
+	u.restartBinaryPath = currentPath
 	currentDir := filepath.Dir(currentPath)
 
 	// Download the new binary to a temp file in the same directory as the binary.
@@ -193,9 +196,38 @@ func copyFile(src, dst string) error {
 }
 
 func (u *Updater) restart() error {
-	cmdPath, err := os.Executable()
-	if err != nil {
-		return err
+	var candidates []string
+
+	if u.restartBinaryPath != "" {
+		candidates = append(candidates, u.restartBinaryPath)
+	}
+
+	if exePath, err := os.Executable(); err == nil {
+		candidates = append(candidates, exePath)
+	}
+
+	if len(os.Args) > 0 {
+		if filepath.IsAbs(os.Args[0]) {
+			candidates = append(candidates, os.Args[0])
+		} else if lookPath, err := exec.LookPath(os.Args[0]); err == nil {
+			candidates = append(candidates, lookPath)
+		}
+	}
+
+	cmdPath := ""
+	for _, c := range candidates {
+		candidate := c
+		if strings.HasSuffix(candidate, ".old") {
+			candidate = strings.TrimSuffix(candidate, ".old")
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			cmdPath = candidate
+			break
+		}
+	}
+
+	if cmdPath == "" {
+		return fmt.Errorf("could not determine restart binary path")
 	}
 
 	cmd := exec.Command(cmdPath, os.Args[1:]...)
