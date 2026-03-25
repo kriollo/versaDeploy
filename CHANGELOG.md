@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.2rc] - 2026-03-25
+
+### Added
+
+- **TUI — Log view scrolling**: Deploy log viewport now supports user-controlled scrolling. Arrow keys (`↑`/`↓`) and `PgUp`/`PgDn` scroll through the log while a deploy is running or after completion. Auto-scroll to bottom resumes when the user scrolls back to the end. Footer shows `↑↓:scroll  PgUp/PgDn:page` hints.
+- **TUI — File editor (View 3)**: Text files in the remote file browser can now be edited inline. Press `e` while viewing a text file to open an editable textarea, `Ctrl+S` to save back to the remote server via SFTP, and `Esc` to cancel. Only available for text files with valid UTF-8 content that are not truncated. Original file permissions are preserved after write.
+- **TUI — Deploy options: Skip dirty check**: New toggle in the Operations view (`Skip dirty check`) to bypass the uncommitted-changes validation, equivalent to the CLI `--skip-dirty-check` flag.
+- **TUI — Deploy options: Debug mode**: New toggle in the Operations view (`Debug mode`) that activates verbose debug logging during the deploy, equivalent to the CLI `--debug` flag.
+- **TUI — Deploy options: Log file path**: New text field in the Operations view to specify an optional log file path. When set, deploy log output is written simultaneously to the TUI viewport and to the specified file via `io.MultiWriter`.
+- **SSH `WriteRemoteBytes`**: New method on the SSH client to write arbitrary bytes to a remote file path via SFTP, with permission preservation via `Chmod`.
+
+### Changed
+
+- **TUI — Icons overhaul (Material Design Icons + colors)**: All file browser and sidebar icons replaced with Material Design Icons (Nerd Fonts v3, codepoints `\U000Fxxxx`) with language brand colors (Go `#00ADD8`, Python `#3776AB`, JS `#F7DF1E`, TS `#3178C6`, PHP `#777BB4`, Rust `#DEA584`, folder `#7aa2f7`, etc.). Status indicators use MDI glyphs: running `\U000F0765`, success `\U000F012C`, error `\U000F0159`.
+- **TUI — Expanded directory icon mappings**: Added icon mappings for `test/tests/__tests__`, `docs/documentation`, `assets/static/public`, `scripts/bin`, `migrations`, `.vscode`, `tmp/temp/cache`, `deploy/deployments`, `api`.
+- **Internal Version**: Version bumped to 1.3.2rc.
+
 ## [1.3.1rc] - 2026-03-24
 
 ### Fixed
