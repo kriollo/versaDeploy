@@ -2,9 +2,12 @@ package tui
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/user/versaDeploy/internal/config"
@@ -35,29 +38,42 @@ type deployFlag struct {
 
 type operationsModel struct {
 	// viewport for deploy log output
-	viewport viewport.Model
-	logBuf   *strings.Builder
-	logCh    chan string
-	running  bool
-	done     bool
-	err      error
-	status   string
+	viewport      viewport.Model
+	logBuf        *strings.Builder
+	logCh         chan string
+	running       bool
+	done          bool
+	err           error
+	status        string
+	userScrolledUp bool
 
-	// cursor navigates deploy options (0..2)
+	logFilePath    string
+	editingLogFile bool
+	logFileInput   textinput.Model
+	debugMode      bool
+
+	// cursor navigates deploy options (0..5: 0-4 are bool flags, 5 is log file path)
 	cursor int
 
-	flags           []deployFlag
+	flags            []deployFlag
 	deployLockExists bool
 }
 
 func newOperationsModel() operationsModel {
+	li := textinput.New()
+	li.Placeholder = "/path/to/deploy.log (optional)"
+	li.CharLimit = 255
+
 	return operationsModel{
-		logBuf: &strings.Builder{},
-		logCh:  make(chan string, 256),
+		logBuf:       &strings.Builder{},
+		logCh:        make(chan string, 256),
+		logFileInput: li,
 		flags: []deployFlag{
 			{"Dry run", "Preview changes only — nothing is deployed", false},
 			{"Force redeploy", "Redeploy even when no file changes are detected", false},
 			{"Initial deploy", "First-time deployment — skips deploy.lock check", false},
+			{"Skip dirty check", "Skip uncommitted changes validation", false},
+			{"Debug mode", "Show verbose debug output in logs", false},
 		},
 	}
 }
@@ -77,13 +93,18 @@ func (o *operationsModel) moveUp() {
 }
 
 func (o *operationsModel) moveDown() {
-	if o.cursor < len(o.flags)-1 {
+	// cursor max is len(o.flags) which is the log file path row (index 5)
+	if o.cursor < len(o.flags) {
 		o.cursor++
 	}
 }
 
 func (o *operationsModel) toggleOption() {
 	if o.cursor >= len(o.flags) {
+		// cursor is on the log file path row — enter edit mode
+		if o.cursor == len(o.flags) {
+			o.enterLogFileEdit()
+		}
 		return
 	}
 	// Block toggling "Initial deploy" when deploy.lock exists on server
@@ -93,10 +114,29 @@ func (o *operationsModel) toggleOption() {
 	o.flags[o.cursor].enabled = !o.flags[o.cursor].enabled
 }
 
-func (o *operationsModel) deployRunning() bool   { return o.running }
-func (o operationsModel) dryRunVal() bool        { return o.flags[0].enabled }
-func (o operationsModel) forceVal() bool         { return o.flags[1].enabled }
-func (o operationsModel) initialDeployVal() bool { return o.flags[2].enabled }
+func (o *operationsModel) deployRunning() bool    { return o.running }
+func (o operationsModel) dryRunVal() bool         { return o.flags[0].enabled }
+func (o operationsModel) forceVal() bool          { return o.flags[1].enabled }
+func (o operationsModel) initialDeployVal() bool  { return o.flags[2].enabled }
+func (o operationsModel) skipDirtyCheckVal() bool { return o.flags[3].enabled }
+func (o operationsModel) debugModeVal() bool      { return o.flags[4].enabled }
+
+func (o *operationsModel) enterLogFileEdit() {
+	o.editingLogFile = true
+	o.logFileInput.SetValue(o.logFilePath)
+	o.logFileInput.Focus()
+}
+
+func (o *operationsModel) confirmLogFile() {
+	o.logFilePath = strings.TrimSpace(o.logFileInput.Value())
+	o.editingLogFile = false
+	o.logFileInput.Blur()
+}
+
+func (o *operationsModel) cancelLogFileEdit() {
+	o.editingLogFile = false
+	o.logFileInput.Blur()
+}
 
 func (o *operationsModel) clearLog() {
 	o.running = false
@@ -105,6 +145,7 @@ func (o *operationsModel) clearLog() {
 	o.status = ""
 	o.logBuf = &strings.Builder{}
 	o.viewport.SetContent("")
+	o.userScrolledUp = false
 }
 
 func (o *operationsModel) startDeploy() {
@@ -115,20 +156,51 @@ func (o *operationsModel) startDeploy() {
 	o.status = ""
 	o.logCh = make(chan string, 256)
 	o.viewport.SetContent("")
+	o.userScrolledUp = false
 }
 
 func (o *operationsModel) appendLog(chunk string) {
 	o.logBuf.WriteString(chunk)
 	o.viewport.SetContent(o.logBuf.String())
-	o.viewport.GotoBottom()
+	if !o.userScrolledUp {
+		o.viewport.GotoBottom()
+	}
+}
+
+func (o *operationsModel) scrollUp() {
+	o.viewport.LineUp(3)
+	o.userScrolledUp = o.viewport.ScrollPercent() < 1.0
+}
+
+func (o *operationsModel) scrollDown() {
+	o.viewport.LineDown(3)
+	o.userScrolledUp = o.viewport.ScrollPercent() < 1.0
+}
+
+func (o *operationsModel) scrollPageUp() {
+	o.viewport.ViewUp()
+	o.userScrolledUp = true
+}
+
+func (o *operationsModel) scrollPageDown() {
+	o.viewport.ViewDown()
+	o.userScrolledUp = o.viewport.ScrollPercent() < 1.0
 }
 
 // startDeploy launches the deployer in a goroutine and returns the first log tea.Cmd.
-func startDeploy(cfg *config.Config, envName, repoPath string, dryRun, force, initialDeploy bool, ch chan string) tea.Cmd {
+func startDeploy(cfg *config.Config, envName, repoPath string, dryRun, force, initialDeploy, skipDirtyCheck, debug bool, logFilePath string, ch chan string) tea.Cmd {
 	return func() tea.Msg {
 		go func() {
-			log := logger.NewTUILogger(&logCapture{ch: ch}, true, false)
-			d, err := deployer.NewDeployer(cfg, envName, repoPath, dryRun, initialDeploy, force, false, log)
+			var w io.Writer = &logCapture{ch: ch}
+			if logFilePath != "" {
+				f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+				if err == nil {
+					w = io.MultiWriter(&logCapture{ch: ch}, f)
+					defer f.Close()
+				}
+			}
+			log := logger.NewTUILogger(w, true, debug)
+			d, err := deployer.NewDeployer(cfg, envName, repoPath, dryRun, initialDeploy, force, skipDirtyCheck, log)
 			if err != nil {
 				ch <- fmt.Sprintf("[ERROR] %v\n", err)
 				close(ch)
@@ -305,13 +377,13 @@ func (o operationsModel) viewIdle(width int, currentRelease string) string {
 	for i, f := range o.flags {
 		check := StyleMuted.Render("[ ]")
 		if f.enabled {
-			check = StyleSuccess.Render("[✓]")
+			check = StyleSuccess.Render("[\U000F012C]") // mdi-check-circle
 		}
 		label := f.label
 		desc := f.desc
 		if i == 2 && o.deployLockExists {
 			label = f.label + StyleMuted.Render(" (deploy.lock exists)")
-			check = StyleMuted.Render("[✗]")
+			check = StyleMuted.Render("[\U000F0159]") // mdi-close-circle
 		}
 		descRender := StyleHint.Render("  " + desc)
 		line := fmt.Sprintf("  %s  %-30s%s", check, label, descRender)
@@ -320,6 +392,23 @@ func (o operationsModel) viewIdle(width int, currentRelease string) string {
 		}
 		rows = append(rows, line)
 	}
+
+	// Log file path row (cursor index == len(o.flags) == 5)
+	logFileIdx := len(o.flags)
+	if o.editingLogFile {
+		rows = append(rows, fmt.Sprintf("  \U0001F4C4 Log file path: %s", o.logFileInput.View()))
+	} else {
+		logVal := o.logFilePath
+		if logVal == "" {
+			logVal = StyleMuted.Render("(not set)")
+		}
+		logLine := fmt.Sprintf("  \U0001F4C4 Log file path: %s", logVal)
+		if o.cursor == logFileIdx {
+			logLine = StyleSelected.Render(fmt.Sprintf("  \U0001F4C4 Log file path: %-40s", logVal))
+		}
+		rows = append(rows, logLine)
+	}
+
 	rows = append(rows, "", fmt.Sprintf("  %s Start deploy", StyleCmd.Render("[D]")))
 
 	// ── ROLLBACK SECTION ───────────────────────────
@@ -348,7 +437,7 @@ func (o operationsModel) viewIdle(width int, currentRelease string) string {
 	}
 
 	rows = append(rows, "", sep, "",
-		StyleMuted.Render("  ↑/↓ navigate   ↵ toggle   D deploy   R rollback   s/u/t quick actions"),
+		StyleMuted.Render("  ↑/↓ navigate   ↵ toggle/edit   D deploy   R rollback   s/u/t quick actions"),
 	)
 
 	return strings.Join(rows, "\n")
@@ -365,19 +454,19 @@ func (o operationsModel) viewRunning(width int, currentRelease string) string {
 			if flagSummary != "" {
 				flagSummary += "  "
 			}
-			flagSummary += StyleSuccess.Render("[✓]") + " " + f.label
+			flagSummary += StyleSuccess.Render("[\U000F012C]") + " " + f.label // mdi-check-circle
 		}
 	}
 	if flagSummary == "" {
 		flagSummary = StyleMuted.Render("default flags")
 	}
 
-	stateStr := StyleWarning.Render("● running…")
+	stateStr := StyleWarning.Render("\U000F0765 running…") // mdi-circle
 	if o.done {
 		if o.err != nil {
-			stateStr = StyleError.Render("✕ failed")
+			stateStr = StyleError.Render("\U000F0159 failed") // mdi-close-circle
 		} else {
-			stateStr = StyleSuccess.Render("✓ done")
+			stateStr = StyleSuccess.Render("\U000F012C done") // mdi-check-circle
 		}
 	}
 
@@ -401,9 +490,9 @@ func (o operationsModel) viewRunning(width int, currentRelease string) string {
 		} else {
 			rows = append(rows, StyleSuccess.Render("  ✓ Operation completed successfully"))
 		}
-		rows = append(rows, "", StyleMuted.Render("  Esc=close log   D=re-deploy  R=rollback  ←/→=navigate views"))
+		rows = append(rows, "", StyleMuted.Render("  Esc=close log   D=re-deploy  R=rollback  ←/→=navigate views   ↑↓:scroll  PgUp/PgDn:page"))
 	} else {
-		rows = append(rows, StyleMuted.Render("  Esc=close   ←/→=switch views   (running…)"))
+		rows = append(rows, StyleMuted.Render("  Esc=close   ←/→=switch views   ↑↓:scroll  PgUp/PgDn:page   (running…)"))
 	}
 
 	return strings.Join(rows, "\n")

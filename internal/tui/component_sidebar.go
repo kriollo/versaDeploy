@@ -48,12 +48,12 @@ func renderSidebar(height int, envNames []string, activeEnv int, focused bool, s
 func connIndicator(s connState) string {
 	switch s {
 	case connConnected:
-		return StyleConnected.Render("●")
+		return StyleConnected.Render("\U000F012C") // mdi-check-circle
 	case connConnecting:
-		return StyleConnecting.Render("◌")
+		return StyleConnecting.Render("\U000F0765") // mdi-circle
 	case connError:
-		return StyleErrorState.Render("✕")
+		return StyleErrorState.Render("\U000F0159") // mdi-close-circle
 	default:
-		return StyleDisconnected.Render("○")
+		return StyleDisconnected.Render("\U000F0765") // mdi-circle (dim)
 	}
 }

@@ -5,9 +5,8 @@ import (
 	"strings"
 )
 
-// iconForEntry returns a Nerd Font icon string for a file/directory entry.
-// Uses Font Awesome and Devicon codepoints from Nerd Fonts v3, which render
-// reliably in most Nerd Font terminal configurations.
+// iconForEntry returns a colored Nerd Font (MDI v3) icon string for a file/directory entry.
+// The returned string contains ANSI escapes — do not use it in fixed-width formatting.
 func iconForEntry(name string, isDir bool) string {
 	if isDir {
 		return dirIcon(name)
@@ -17,36 +16,57 @@ func iconForEntry(name string, isDir bool) string {
 
 // iconParentDir returns the icon for the ".." entry.
 func iconParentDir() string {
-	return "\uf07c " // nf-fa-folder_open
+	return iconColorFolder.Render("\U000F0770 ") // mdi-folder-open
 }
 
 func dirIcon(name string) string {
 	lower := strings.ToLower(name)
 	switch lower {
 	case ".git", "git":
-		return "\ue702 " // nf-dev-git_branch
-	case "node_modules":
-		return "\ue718 " // nf-dev-nodejs_small
-	case "vendor":
-		return "\uf07b " // nf-fa-folder
-	case "dist", "build", "out", "output":
-		return "\uf466 " // nf-oct-package
-	case "src", "source":
-		return "\uf07b " // nf-fa-folder
+		return iconColorConfig.Render("\U000F02A2 ") // mdi-git
 	case ".github":
-		return "\uf09b " // nf-fa-github
+		return iconColorConfig.Render("\U000F02A4 ") // mdi-github
+	case "node_modules":
+		return iconColorJS.Render("\U000F031E ") // mdi-language-javascript
+	case "vendor":
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
+	case "dist", "build", "out", "output":
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
+	case "src", "source":
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
 	case "releases":
-		return "\uf02c " // nf-fa-tags
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
 	case "shared", "share":
-		return "\uf0c1 " // nf-fa-link
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
 	case "logs", "log":
-		return "\uf15c " // nf-fa-file_text
+		return iconColorConfig.Render("\U000F024B ") // mdi-folder
 	case "config", "configs", "conf", "etc":
-		return "\uf013 " // nf-fa-gear
+		return iconColorConfig.Render("\U000F0493 ") // mdi-cog
+	case "test", "tests", "__tests__":
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
+	case "docs", "documentation":
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
+	case "assets", "static", "public":
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
+	case "scripts", "bin":
+		return iconColorConfig.Render("\U000F0239 ") // mdi-console
+	case "migrations":
+		return iconColorConfig.Render("\U000F01BC ") // mdi-database
+	case ".vscode":
+		return iconColorConfig.Render("\U000F0493 ") // mdi-cog
+	case "tmp", "temp", "cache":
+		return iconColorMuted.Render("\U000F024B ") // mdi-folder
+	case "deploy", "deployments":
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
+	case "api":
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
 	default:
-		return "\uf07b " // nf-fa-folder
+		return iconColorFolder.Render("\U000F024B ") // mdi-folder
 	}
 }
+
+// iconColorMuted is a convenience alias used in dirIcon for low-importance folders
+var iconColorMuted = iconColorConfig
 
 func fileIcon(name string) string {
 	ext := strings.ToLower(filepath.Ext(name))
@@ -55,150 +75,158 @@ func fileIcon(name string) string {
 	// Exact filename matches first
 	switch baseLower {
 	case "dockerfile", "containerfile":
-		return "\ue7b0 " // nf-dev-docker
+		return iconColorTS.Render("\U000F0868 ") // mdi-docker
 	case "makefile", "gnumakefile":
-		return "\uf0ad " // nf-fa-wrench
+		return iconColorConfig.Render("\U000F0493 ") // mdi-cog
 	case "readme.md", "readme.txt", "readme":
-		return "\uf02d " // nf-fa-book
+		return iconColorFolder.Render("\U000F0354 ") // mdi-language-markdown
 	case ".gitignore", ".gitattributes", ".gitmodules":
-		return "\ue702 " // nf-dev-git_branch
+		return iconColorConfig.Render("\U000F02A2 ") // mdi-git
 	case ".env", ".env.local", ".env.example":
-		return "\uf023 " // nf-fa-lock
+		return iconColorLock.Render("\U000F033E ") // mdi-lock
 	case "go.mod", "go.sum":
-		return "\ue627 " // nf-seti-go
+		return iconColorGo.Render("\U000F07D3 ") // mdi-language-go
 	case "package.json", "package-lock.json", "yarn.lock":
-		return "\ue718 " // nf-dev-npm
+		return iconColorJS.Render("\U000F031E ") // mdi-language-javascript
 	case "composer.json", "composer.lock":
-		return "\ue73d " // nf-dev-php
+		return iconColorPHP.Render("\U000F031F ") // mdi-language-php
 	case "requirements.txt", "pipfile", "pipfile.lock", "pyproject.toml", "setup.py", "setup.cfg":
-		return "\ue73c " // nf-dev-python
+		return iconColorPython.Render("\U000F0320 ") // mdi-language-python
 	case "cargo.toml", "cargo.lock":
-		return "\ue7a8 " // nf-dev-rust
+		return iconColorRust.Render("\U000F1617 ") // mdi-language-rust
 	case "gemfile", "gemfile.lock":
-		return "\ue739 " // nf-dev-ruby
+		return iconColorRuby.Render("\U000F0214 ") // mdi-file (ruby icon)
 	case "deploy.yml", "deploy.yaml":
-		return "\uf0c5 " // nf-fa-file_o
+		return iconColorFolder.Render("\U000F0493 ") // mdi-cog
 	case "deploy.lock":
-		return "\uf023 " // nf-fa-lock
+		return iconColorLock.Render("\U000F033E ") // mdi-lock
 	}
 
 	// Extension-based icons
 	switch ext {
 	// Go
 	case ".go":
-		return "\ue627 " // nf-seti-go
+		return iconColorGo.Render("\U000F07D3 ") // mdi-language-go
 	// Python
 	case ".py", ".pyw", ".pyx", ".pxd":
-		return "\ue73c " // nf-dev-python
+		return iconColorPython.Render("\U000F0320 ") // mdi-language-python
 	// JavaScript / TypeScript
 	case ".js", ".mjs", ".cjs":
-		return "\ue74e " // nf-dev-javascript_badge
+		return iconColorJS.Render("\U000F031E ") // mdi-language-javascript
 	case ".ts":
-		return "\ue628 " // nf-seti-typescript
+		return iconColorTS.Render("\U000F06E6 ") // mdi-language-typescript
 	case ".jsx":
-		return "\ue7ba " // nf-dev-react
+		return iconColorJS.Render("\U000F031E ") // mdi-language-javascript
 	case ".tsx":
-		return "\ue7ba " // nf-dev-react
+		return iconColorTS.Render("\U000F06E6 ") // mdi-language-typescript
 	case ".vue":
-		return "\ue76e " // nf-dev-vue (FA range)
+		return iconColorSuccess.Render("\U000F0214 ") // mdi-file (vue)
 	case ".svelte":
-		return "\ue697 " // nf-dev-svelte
+		return iconColorRust.Render("\U000F0214 ") // mdi-file (svelte)
 	// PHP
 	case ".php":
-		return "\ue73d " // nf-dev-php
+		return iconColorPHP.Render("\U000F031F ") // mdi-language-php
 	// Rust
 	case ".rs":
-		return "\ue7a8 " // nf-dev-rust
+		return iconColorRust.Render("\U000F1617 ") // mdi-language-rust
 	// Ruby
 	case ".rb", ".erb":
-		return "\ue739 " // nf-dev-ruby
+		return iconColorRuby.Render("\U000F0214 ") // mdi-file
 	// Java / JVM
 	case ".java", ".class", ".jar":
-		return "\ue738 " // nf-dev-java
+		return iconColorWarning.Render("\U000F0214 ") // mdi-file
 	case ".kt", ".kts":
-		return "\ue634 " // nf-seti-kotlin
+		return iconColorTS.Render("\U000F0214 ") // mdi-file
 	case ".scala":
-		return "\ue737 " // nf-dev-scala
+		return iconColorError.Render("\U000F0214 ") // mdi-file
 	case ".groovy":
-		return "\uf30b " // nf-mdi-language_java (approx)
+		return iconColorConfig.Render("\U000F0214 ") // mdi-file
 	// C family
 	case ".c", ".h":
-		return "\ue61e " // nf-custom-c
+		return iconColorTS.Render("\U000F0214 ") // mdi-file
 	case ".cpp", ".cc", ".cxx", ".hpp", ".hxx":
-		return "\ue61d " // nf-custom-cpp
+		return iconColorTS.Render("\U000F0214 ") // mdi-file
 	case ".cs":
-		return "\ue648 " // nf-seti-csharp
+		return iconColorTS.Render("\U000F0214 ") // mdi-file
 	// Shell scripts
 	case ".sh", ".bash", ".zsh", ".fish", ".ksh", ".csh":
-		return "\uf120 " // nf-fa-terminal
+		return iconColorConfig.Render("\U000F0239 ") // mdi-console
 	// Web
 	case ".html", ".htm":
-		return "\ue736 " // nf-dev-html5
+		return iconColorRust.Render("\U000F031B ") // mdi-language-html5
 	case ".css":
-		return "\ue749 " // nf-dev-css3
+		return iconColorTS.Render("\U000F031C ") // mdi-language-css3
 	case ".scss", ".sass", ".less":
-		return "\ue603 " // nf-dev-sass
+		return iconColorPHP.Render("\U000F031C ") // mdi-language-css3
 	// Data / Config
 	case ".json":
-		return "\ue60b " // nf-seti-json
+		return iconColorWarning.Render("\U000F0214 ") // mdi-file
 	case ".yml", ".yaml":
-		return "\ue60b " // nf-seti-json (reuse)
+		return iconColorConfig.Render("\U000F0493 ") // mdi-cog
 	case ".toml":
-		return "\ue60b "
+		return iconColorConfig.Render("\U000F0493 ") // mdi-cog
 	case ".xml":
-		return "\uf72d " // nf-mdi-xml
+		return iconColorConfig.Render("\U000F0214 ") // mdi-file
 	case ".ini", ".conf", ".cfg", ".config":
-		return "\uf013 " // nf-fa-gear
+		return iconColorConfig.Render("\U000F0493 ") // mdi-cog
 	case ".env":
-		return "\uf023 " // nf-fa-lock
+		return iconColorLock.Render("\U000F033E ") // mdi-lock
 	// Docs
 	case ".md", ".markdown":
-		return "\uf48a " // nf-oct-markdown
+		return iconColorFolder.Render("\U000F0354 ") // mdi-language-markdown
 	case ".txt":
-		return "\uf15b " // nf-fa-file
+		return iconColorConfig.Render("\U000F0214 ") // mdi-file
 	case ".pdf":
-		return "\uf1c1 " // nf-fa-file_pdf_o
+		return iconColorError.Render("\U000F0214 ") // mdi-file
 	case ".doc", ".docx":
-		return "\uf1c2 " // nf-fa-file_word_o
+		return iconColorTS.Render("\U000F0214 ") // mdi-file
 	case ".xls", ".xlsx":
-		return "\uf1c3 " // nf-fa-file_excel_o
+		return iconColorSuccess.Render("\U000F0214 ") // mdi-file
 	case ".ppt", ".pptx":
-		return "\uf1c4 " // nf-fa-file_powerpoint_o
+		return iconColorRust.Render("\U000F0214 ") // mdi-file
 	// Images
 	case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".ico":
-		return "\uf03e " // nf-fa-image
+		return iconColorImage.Render("\U000F0232 ") // mdi-image
 	case ".svg":
-		return "\uf03e " // nf-fa-image
+		return iconColorImage.Render("\U000F0232 ") // mdi-image
 	// Archives
 	case ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar":
-		return "\uf1c6 " // nf-fa-file_archive_o
+		return iconColorArchive.Render("\U000F05C4 ") // mdi-archive
 	// Binary / executables
 	case ".exe", ".dll", ".so", ".dylib":
-		return "\uf013 " // nf-fa-gear
+		return iconColorConfig.Render("\U000F0493 ") // mdi-cog
 	// Logs
 	case ".log":
-		return "\uf15c " // nf-fa-file_text
+		return iconColorConfig.Render("\U000F0214 ") // mdi-file
 	// SQL / DB
 	case ".sql":
-		return "\uf1c0 " // nf-fa-database
+		return iconColorConfig.Render("\U000F01BC ") // mdi-database
 	case ".db", ".sqlite", ".sqlite3":
-		return "\uf1c0 "
+		return iconColorConfig.Render("\U000F01BC ") // mdi-database
 	// Docker
 	case ".dockerignore":
-		return "\ue7b0 " // nf-dev-docker
+		return iconColorTS.Render("\U000F0868 ") // mdi-docker
 	// Lock files
 	case ".lock":
-		return "\uf023 " // nf-fa-lock
+		return iconColorLock.Render("\U000F033E ") // mdi-lock
 	// Certificate / keys
 	case ".pem", ".crt", ".cer", ".key", ".pub":
-		return "\uf023 " // nf-fa-lock
+		return iconColorLock.Render("\U000F033E ") // mdi-lock
 	// Video
 	case ".mp4", ".mkv", ".avi", ".mov", ".webm":
-		return "\uf1c8 " // nf-fa-file_video_o
+		return iconColorConfig.Render("\U000F0214 ") // mdi-file
 	// Audio
 	case ".mp3", ".wav", ".flac", ".ogg", ".m4a":
-		return "\uf1c7 " // nf-fa-file_audio_o
+		return iconColorConfig.Render("\U000F0214 ") // mdi-file
 	default:
-		return "\uf15b " // nf-fa-file
+		return iconColorConfig.Render("\U000F0214 ") // mdi-file
 	}
 }
+
+// iconColorSuccess and iconColorWarning and iconColorError are convenience aliases
+// for use inside icons.go that map to the existing style palette.
+var (
+	iconColorSuccess = iconColorImage   // green
+	iconColorWarning = iconColorLock    // yellow/warning
+	iconColorError   = iconColorArchive // red
+)

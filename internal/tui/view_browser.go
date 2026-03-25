@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/user/versaDeploy/internal/config"
@@ -38,6 +39,11 @@ type msgXferStreamEnd struct{}
 type msgXferDone struct{ err error }
 
 type msgDeleteDone struct {
+	path string
+	err  error
+}
+
+type msgFileSaved struct {
 	path string
 	err  error
 }
@@ -217,6 +223,12 @@ type browserModel struct {
 	viewViewport    viewport.Model
 	viewInitialized bool
 
+	// File editor
+	editing      bool
+	editTextarea textarea.Model
+	editPath     string
+	editSaving   bool
+
 	statusMsg string // inline status (delete result, etc.)
 	xfer      xferState
 }
@@ -300,6 +312,12 @@ func waitForXferDone(ch <-chan error) tea.Cmd {
 func deleteFileCmd(client *versassh.Client, path string) tea.Cmd {
 	return func() tea.Msg {
 		return msgDeleteDone{path: path, err: client.Remove(path)}
+	}
+}
+
+func saveRemoteFileCmd(client *versassh.Client, path string, content []byte) tea.Cmd {
+	return func() tea.Msg {
+		return msgFileSaved{path: path, err: client.WriteRemoteBytes(path, content)}
 	}
 }
 
@@ -622,10 +640,32 @@ func (b browserModel) view(width, height int) string {
 	if b.xfer.dir != xferNone {
 		return b.xferView(width, height)
 	}
+	if b.editing {
+		return b.viewFileEdit(width, height)
+	}
 	if b.viewing {
 		return b.viewFileView(width)
 	}
 	return b.dirView(width, height)
+}
+
+// viewFileEdit renders the textarea editor for a remote text file.
+func (b browserModel) viewFileEdit(width, height int) string {
+	sep := StyleMuted.Render(strings.Repeat("─", max(width-4, 4)))
+	name := filepath.Base(b.editPath)
+	title := StyleTitle.Render("  \U000F0214 Edit: " + name) // mdi-file
+
+	rows := []string{"", title, "", sep, ""}
+	rows = append(rows, b.editTextarea.View())
+	rows = append(rows, "", sep)
+
+	if b.editSaving {
+		rows = append(rows, StyleWarning.Render("  Saving…"))
+	} else {
+		rows = append(rows, StyleMuted.Render("  Ctrl+S:save  Esc:cancel"))
+	}
+
+	return strings.Join(rows, "\n")
 }
 
 // ── Transfer panel ────────────────────────────────────────────────────────────
@@ -873,12 +913,12 @@ func (b browserModel) xferLogView(width int) string {
 		dirLabel = "↑  Upload"
 	}
 
-	stateStr := StyleWarning.Render("  ● Running…")
+	stateStr := StyleWarning.Render("  \U000F0765 Running…") // mdi-circle
 	if b.xfer.done {
 		if b.xfer.err != nil {
-			stateStr = StyleError.Render("  ✕ Failed: " + b.xfer.err.Error())
+			stateStr = StyleError.Render("  \U000F0159 Failed: " + b.xfer.err.Error()) // mdi-close-circle
 		} else {
-			stateStr = StyleSuccess.Render("  ✓ Transfer complete")
+			stateStr = StyleSuccess.Render("  \U000F012C Transfer complete") // mdi-check-circle
 		}
 	}
 
@@ -1027,8 +1067,15 @@ func (b browserModel) viewFileView(width int) string {
 	if b.viewViewport.TotalLineCount() > 0 {
 		pct = int(b.viewViewport.ScrollPercent() * 100)
 	}
+
+	// Show edit hint only for editable text files with valid UTF-8 content that isn't truncated
+	editHint := ""
+	const maxRead = 512 * 1024
+	if detectKind(name) == kindText && utf8.Valid(b.viewContent) && int64(len(b.viewContent)) < maxRead {
+		editHint = "  e:edit"
+	}
 	rows = append(rows, "", sep,
-		StyleMuted.Render(fmt.Sprintf("  Esc:back  ⌫:back  ↑/↓:scroll  d:download  %d%%", pct)),
+		StyleMuted.Render(fmt.Sprintf("  Esc:back  ⌫:back  ↑/↓:scroll  d:download%s  %d%%", editHint, pct)),
 	)
 	return strings.Join(rows, "\n")
 }

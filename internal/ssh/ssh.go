@@ -555,6 +555,35 @@ func (c *Client) ReadRemoteBytes(path string, maxBytes int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, maxBytes))
 }
 
+// WriteRemoteBytes writes data to a remote file, preserving the original permissions
+// when the file already exists. If the file does not exist it is created with mode 0644.
+func (c *Client) WriteRemoteBytes(path string, data []byte) error {
+	// Capture existing permissions if the file exists
+	var existingMode os.FileMode = 0644
+	if info, err := c.sftpClient.Stat(path); err == nil {
+		existingMode = info.Mode()
+	}
+
+	f, err := c.sftpClient.Create(path)
+	if err != nil {
+		return fmt.Errorf("failed to create remote file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("failed to write remote file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("failed to close remote file: %w", err)
+	}
+
+	if err := c.sftpClient.Chmod(path, existingMode); err != nil {
+		// Non-fatal: log but don't fail the write
+		c.log.Warn("failed to restore file permissions on %s: %v", path, err)
+	}
+	return nil
+}
+
 // ReleaseLock releases the deployment lock via SFTP
 func (c *Client) ReleaseLock(lockPath string) error {
 	return c.sftpClient.RemoveDirectory(lockPath)

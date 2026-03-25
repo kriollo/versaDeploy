@@ -14,6 +14,22 @@ var (
 	colorText    = lipgloss.Color("#c0caf5")
 )
 
+// Icon color constants — language brand colors
+var (
+	iconColorGo      = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ADD8"))
+	iconColorPython  = lipgloss.NewStyle().Foreground(lipgloss.Color("#3776AB"))
+	iconColorJS      = lipgloss.NewStyle().Foreground(lipgloss.Color("#F7DF1E"))
+	iconColorTS      = lipgloss.NewStyle().Foreground(lipgloss.Color("#3178C6"))
+	iconColorPHP     = lipgloss.NewStyle().Foreground(lipgloss.Color("#777BB4"))
+	iconColorRust    = lipgloss.NewStyle().Foreground(lipgloss.Color("#DEA584"))
+	iconColorRuby    = lipgloss.NewStyle().Foreground(lipgloss.Color("#CC342D"))
+	iconColorFolder  = lipgloss.NewStyle().Foreground(lipgloss.Color("#7aa2f7"))
+	iconColorConfig  = lipgloss.NewStyle().Foreground(lipgloss.Color("#565f89"))
+	iconColorLock    = lipgloss.NewStyle().Foreground(lipgloss.Color("#e0af68"))
+	iconColorImage   = lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a"))
+	iconColorArchive = lipgloss.NewStyle().Foreground(lipgloss.Color("#f7768e"))
+)
+
 var (
 	StyleHeader = lipgloss.NewStyle().
 			Background(colorSurface).

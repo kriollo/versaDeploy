@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/user/versaDeploy/internal/config"
@@ -294,11 +296,25 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgDeleteDone:
 		if msg.err != nil {
-			m.browser.statusMsg = StyleError.Render("✕ Delete failed: " + msg.err.Error())
+			m.browser.statusMsg = StyleError.Render("\U000F0159 Delete failed: " + msg.err.Error()) // mdi-close-circle
 		} else {
-			m.browser.statusMsg = StyleSuccess.Render("✓ Deleted: " + msg.path)
+			m.browser.statusMsg = StyleSuccess.Render("\U000F012C Deleted: " + msg.path) // mdi-check-circle
 			if client := m.activeClient(); client != nil {
 				cmds = append(cmds, listDir(client, m.browser.currentPath()))
+			}
+		}
+
+	case msgFileSaved:
+		m.browser.editSaving = false
+		if msg.err != nil {
+			m.browser.statusMsg = StyleError.Render("\U000F0159 Save failed: " + msg.err.Error())
+		} else {
+			m.browser.editing = false
+			m.browser.statusMsg = StyleSuccess.Render("\U000F012C Saved: " + msg.path)
+			// Reload file content to reflect saved changes
+			if client := m.activeClient(); client != nil {
+				m.browser.viewLoading = true
+				cmds = append(cmds, loadFileContent(client, msg.path, m.browser.viewInfo))
 			}
 		}
 
@@ -344,6 +360,29 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// While editing a remote file in the browser, route all key input to the textarea.
+	if m.currentView == viewBrowser && m.browser.editing {
+		switch msg.String() {
+		case "ctrl+s":
+			if !m.browser.editSaving {
+				m.browser.editSaving = true
+				if client := m.activeClient(); client != nil {
+					content := []byte(m.browser.editTextarea.Value())
+					cmds = append(cmds, saveRemoteFileCmd(client, m.browser.editPath, content))
+				}
+			}
+		case "esc":
+			m.browser.editing = false
+		default:
+			var taCmd tea.Cmd
+			m.browser.editTextarea, taCmd = m.browser.editTextarea.Update(msg)
+			if taCmd != nil {
+				cmds = append(cmds, taCmd)
+			}
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	// While editing config, route all key input to the editor and block global shortcuts.
 	if m.currentView == viewConfig && m.config.isEditing {
 		handled, _ := (&m.config).handleKey(msg)
@@ -635,6 +674,29 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 						cmds = append(cmds, deleteFileCmd(client, remotePath))
 					}
 				}
+			case "e":
+				// Enter edit mode for text files with valid UTF-8 content
+				if m.browser.viewing {
+					name := filepath.Base(m.browser.viewPath)
+					const maxRead = 512 * 1024
+					if detectKind(name) == kindText && utf8.Valid(m.browser.viewContent) && int64(len(m.browser.viewContent)) < maxRead {
+						contentW := m.width - sidebarWidth - 6
+						contentH := m.height - 3
+						taH := contentH - 8
+						if taH < 4 {
+							taH = 4
+						}
+						ta := textarea.New()
+						ta.SetWidth(contentW - 4)
+						ta.SetHeight(taH)
+						ta.SetValue(string(m.browser.viewContent))
+						ta.Focus()
+						m.browser.editTextarea = ta
+						m.browser.editPath = m.browser.viewPath
+						m.browser.editSaving = false
+						m.browser.editing = true
+					}
+				}
 			}
 		}
 
@@ -717,6 +779,43 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
 
+	// While editing log file path, route keys to the text input
+	if m.operations.editingLogFile {
+		switch msg.String() {
+		case "enter":
+			m.operations.confirmLogFile()
+			return cmds
+		case "esc":
+			m.operations.cancelLogFileEdit()
+			return cmds
+		default:
+			var tiCmd tea.Cmd
+			m.operations.logFileInput, tiCmd = m.operations.logFileInput.Update(msg)
+			if tiCmd != nil {
+				cmds = append(cmds, tiCmd)
+			}
+			return cmds
+		}
+	}
+
+	if m.operations.running || m.operations.done {
+		// Route scroll keys to viewport
+		switch msg.String() {
+		case "up", "k":
+			m.operations.scrollUp()
+			return cmds
+		case "down", "j":
+			m.operations.scrollDown()
+			return cmds
+		case "pgup":
+			m.operations.scrollPageUp()
+			return cmds
+		case "pgdown":
+			m.operations.scrollPageDown()
+			return cmds
+		}
+	}
+
 	if m.operations.running {
 		// Allow Esc to close the log even while running
 		if msg.String() == "esc" {
@@ -729,6 +828,16 @@ func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 	if msg.String() == "esc" && m.operations.done {
 		m.operations.clearLog()
 		return cmds
+	}
+
+	// When cursor is on the log file path row (index == len(flags)), Enter/Space opens edit mode
+	logFileIdx := len(m.operations.flags)
+	if m.operations.cursor == logFileIdx {
+		switch msg.String() {
+		case "enter", " ":
+			m.operations.enterLogFileEdit()
+			return cmds
+		}
 	}
 
 	switch {
@@ -748,6 +857,9 @@ func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 					m.operations.dryRunVal(),
 					m.operations.forceVal(),
 					m.operations.initialDeployVal(),
+					m.operations.skipDirtyCheckVal(),
+					m.operations.debugModeVal(),
+					m.operations.logFilePath,
 					m.operations.logCh,
 				))
 			}
