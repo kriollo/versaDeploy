@@ -27,6 +27,7 @@ const (
 	viewBrowser
 	viewShared
 	viewOperations
+	viewTerminal
 	viewConfig
 	viewConfigSelector
 )
@@ -44,13 +45,14 @@ var viewLabels = []struct {
 	key  string
 	name string
 }{
-	{"1", "Dashboard"},
-	{"2", "Releases"},
-	{"3", "Files"},
-	{"4", "Shared"},
-	{"5", "Operations"},
-	{"6", "Config"},
-	{"7", "Switch Config"},
+	{"", "Dashboard"},
+	{"", "Releases"},
+	{"", "Files"},
+	{"", "Shared"},
+	{"", "Operations"},
+	{"", "Terminal"},
+	{"", "Config"},
+	{"", "Switch Config"},
 }
 
 type msgConnected struct {
@@ -84,6 +86,7 @@ type appModel struct {
 	browser    browserModel
 	shared     sharedModel
 	operations operationsModel
+	terminal   terminalModel
 	config     configModel
 
 	spinner   spinner.Model
@@ -121,6 +124,7 @@ func newAppModel(cfg *config.Config, repoPath string) appModel {
 		connErrors:  make(map[string]error),
 		spinner:     sp,
 		operations:  newOperationsModel(),
+		terminal:    newTerminalModel(),
 		config:      newConfigModel(repoPath),
 		currentView: viewDashboard,
 	}
@@ -220,6 +224,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			contentW = 10
 		}
 		m.operations.initViewport(contentW, contentH)
+		m.terminal.initViewport(contentW, contentH)
 		m.config.contentH = contentH
 
 	case spinner.TickMsg:
@@ -352,6 +357,55 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgConfigSaved:
 		m.config.applySaved(msg)
 
+	case msgTerminalOutput:
+		m.terminal.appendOutput(msg.line)
+		cmds = append(cmds, waitForTermLine(m.terminal.logCh))
+
+	case msgTerminalDone:
+		m.terminal.running = false
+		if msg.err != nil {
+			m.terminal.appendOutput(fmt.Sprintf("\n[ERROR] %v\n", msg.err))
+		}
+		m.terminal.appendOutput("\n")
+		m.terminal.input.Focus()
+
+	case msgCdResolved:
+		if msg.err != nil {
+			m.terminal.appendOutput(fmt.Sprintf("cd: %v\n\n", msg.err))
+		} else {
+			m.terminal.cwd = msg.newCwd
+			m.terminal.appendOutput(fmt.Sprintf("%s\n\n", msg.newCwd))
+		}
+
+	case msgTabComplete:
+		if msg.err == nil && len(msg.matches) > 0 {
+			m.terminal.completions = msg.matches
+			m.terminal.completionIdx = 0
+			m.terminal.completionOn = true
+			m.terminal.completionPfx = msg.prefix
+			m.terminal.completionTok = msg.token
+			// Apply first match
+			m.terminal.input.SetValue(msg.prefix + msg.matches[0])
+			m.terminal.input.CursorEnd()
+		}
+
+	case tea.MouseMsg:
+		if m.currentView == viewTerminal {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.terminal.vp.LineUp(3)
+			case tea.MouseButtonWheelDown:
+				m.terminal.vp.LineDown(3)
+			}
+		} else if m.currentView == viewOperations {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.operations.scrollUp()
+			case tea.MouseButtonWheelDown:
+				m.operations.scrollDown()
+			}
+		}
+
 	case tea.KeyMsg:
 		return m.handleKey(msg, cmds)
 	}
@@ -387,6 +441,21 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 	if m.currentView == viewConfig && m.config.isEditing {
 		handled, _ := (&m.config).handleKey(msg)
 		cmds = append(cmds, handled...)
+		return m, tea.Batch(cmds...)
+	}
+
+	// While in terminal view, route all keys to the terminal and block global shortcuts.
+	// Only allow Ctrl+C to quit and number keys to switch views when not typing.
+	if m.currentView == viewTerminal {
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		if msg.String() == "esc" && !m.terminal.running {
+			// Esc exits terminal view back to dashboard
+			cmds = append(cmds, m.switchToView(viewDashboard)...)
+			return m, tea.Batch(cmds...)
+		}
+		cmds = append(cmds, m.handleTerminalKey(msg)...)
 		return m, tea.Batch(cmds...)
 	}
 
@@ -455,41 +524,7 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		return m, tea.Batch(cmds...)
 	}
 
-	// View switching — FIX: init browser on ACTUAL model here, not in a value-copy helper
-	switch msg.String() {
-	case "1":
-		m.currentView = viewDashboard
-		cmds = append(cmds, m.loadCurrentViewCmds()...)
-		return m, tea.Batch(cmds...)
-	case "2":
-		m.currentView = viewReleases
-		cmds = append(cmds, m.loadCurrentViewCmds()...)
-		return m, tea.Batch(cmds...)
-	case "3":
-		m.currentView = viewBrowser
-		if env := m.activeEnvCfg(); env != nil {
-			m.browser.init(env.RemotePath) // init on real model
-			if client := m.activeClient(); client != nil {
-				cmds = append(cmds, listDir(client, env.RemotePath))
-			}
-		}
-		return m, tea.Batch(cmds...)
-	case "4":
-		m.currentView = viewShared
-		cmds = append(cmds, m.loadCurrentViewCmds()...)
-		return m, tea.Batch(cmds...)
-	case "5":
-		m.currentView = viewOperations
-		return m, tea.Batch(cmds...)
-	case "6":
-		m.currentView = viewConfig
-		m.config.loading = true
-		cmds = append(cmds, m.config.load())
-		return m, tea.Batch(cmds...)
-	case "7":
-		m.discoverConfigs()
-		return m, tea.Batch(cmds...)
-	}
+
 
 	// Shortcut: d goes to operations view from anywhere
 	if key.Matches(msg, Keys.Deploy) && m.currentView != viewOperations && m.currentView != viewBrowser {
@@ -561,9 +596,9 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 			switch msg.String() {
 			case "esc":
 				m.browser.cancelXfer()
-			case "up", "k":
+			case "up":
 				x.local.moveUp()
-			case "down", "j":
+			case "down":
 				x.local.moveDown()
 			case "enter":
 				// Navigate into directories; for upload also toggles file selection
@@ -721,6 +756,10 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 
 	case viewOperations:
 		cmds = append(cmds, m.handleOperationsKey(msg)...)
+
+	case viewTerminal:
+		cmds = append(cmds, m.handleTerminalKey(msg)...)
+
 	case viewConfig:
 		// Esc in read-only mode navigates back to dashboard
 		if msg.String() == "esc" && !m.config.isEditing {
@@ -801,10 +840,10 @@ func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 	if m.operations.running || m.operations.done {
 		// Route scroll keys to viewport
 		switch msg.String() {
-		case "up", "k":
+		case "up":
 			m.operations.scrollUp()
 			return cmds
-		case "down", "j":
+		case "down":
 			m.operations.scrollDown()
 			return cmds
 		case "pgup":
@@ -897,6 +936,112 @@ func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 					cmds = append(cmds, doStatus(client, env.RemotePath, m.operations.logCh))
 				}
 			}
+		case "h":
+			// Re-execute post_deploy hooks on the active release
+			envName := m.activeEnvName()
+			if m.cfg != nil && envName != "" {
+				m.operations.startDeploy()
+				m.operations.logCh = make(chan string, 256)
+				cmds = append(cmds, doRunHooks(m.cfg, envName, m.repoPath, m.operations.logCh))
+			}
+		case "l":
+			// Re-execute services_reload commands
+			envName := m.activeEnvName()
+			if m.cfg != nil && envName != "" {
+				m.operations.startDeploy()
+				m.operations.logCh = make(chan string, 256)
+				cmds = append(cmds, doServicesReload(m.cfg, envName, m.repoPath, m.operations.logCh))
+			}
+		}
+	}
+
+	return cmds
+}
+
+func (m *appModel) handleTerminalKey(msg tea.KeyMsg) []tea.Cmd {
+	var cmds []tea.Cmd
+
+	if m.terminal.running {
+		// While a command is running, allow scrolling and Esc
+		switch msg.String() {
+		case "up":
+			m.terminal.vp.LineUp(3)
+		case "down":
+			m.terminal.vp.LineDown(3)
+		case "pgup":
+			m.terminal.vp.ViewUp()
+		case "pgdown":
+			m.terminal.vp.ViewDown()
+		}
+		return cmds
+	}
+
+	switch msg.String() {
+	case "enter":
+		m.terminal.resetCompletion()
+		cmd := strings.TrimSpace(m.terminal.input.Value())
+		if cmd != "" && m.isConnected() {
+			if client := m.activeClient(); client != nil {
+				m.terminal.input.SetValue("")
+				// Handle cd commands locally to update cwd
+				if strings.HasPrefix(cmd, "cd ") {
+					target := strings.TrimSpace(strings.TrimPrefix(cmd, "cd "))
+					if target != "" {
+						// Resolve the path on the server and update cwd
+						resolveCmd := fmt.Sprintf("cd %s && cd %s && pwd", m.terminal.cwd, target)
+						m.terminal.logBuf.WriteString(fmt.Sprintf("%s $ %s\n", m.terminal.cwd, cmd))
+						m.terminal.history = append(m.terminal.history, cmd)
+						m.terminal.histIdx = len(m.terminal.history)
+						cmds = append(cmds, resolveCd(client, resolveCmd, m.terminal.cwd))
+					}
+				} else {
+					cmds = append(cmds, m.terminal.executeCommand(client, cmd))
+				}
+			}
+		}
+	case "tab":
+		if m.isConnected() {
+			if client := m.activeClient(); client != nil {
+				if m.terminal.completionOn && len(m.terminal.completions) > 1 {
+					// Cycle to next completion
+					m.terminal.completionIdx = (m.terminal.completionIdx + 1) % len(m.terminal.completions)
+					match := m.terminal.completions[m.terminal.completionIdx]
+					m.terminal.input.SetValue(m.terminal.completionPfx + match)
+					m.terminal.input.CursorEnd()
+				} else {
+					// Start new completion
+					val := m.terminal.input.Value()
+					// Find the last token (space-separated) to complete
+					prefix := ""
+					token := val
+					if idx := strings.LastIndex(val, " "); idx >= 0 {
+						prefix = val[:idx+1]
+						token = val[idx+1:]
+					}
+					m.terminal.resetCompletion()
+					cmds = append(cmds, tabComplete(client, m.terminal.cwd, prefix, token))
+				}
+			}
+		}
+	case "up":
+		m.terminal.resetCompletion()
+		m.terminal.historyUp()
+	case "down":
+		m.terminal.resetCompletion()
+		m.terminal.historyDown()
+	case "ctrl+l":
+		m.terminal.logBuf = &strings.Builder{}
+		m.terminal.vp.SetContent("")
+	case "pgup":
+		m.terminal.vp.ViewUp()
+	case "pgdown":
+		m.terminal.vp.ViewDown()
+	default:
+		m.terminal.resetCompletion()
+		var tiCmd tea.Cmd
+		m.terminal.input, tiCmd = m.terminal.input.Update(msg)
+		if tiCmd != nil {
+			cmds = append(cmds, tiCmd)
 		}
 	}
 
@@ -957,6 +1102,12 @@ func (m *appModel) switchToView(v viewID) []tea.Cmd {
 			m.browser.init(env.RemotePath)
 		}
 	}
+	if v == viewTerminal {
+		if env := m.activeEnvCfg(); env != nil && m.terminal.cwd == "" {
+			m.terminal.cwd = env.RemotePath
+		}
+		m.terminal.input.Focus()
+	}
 	if v == viewConfig {
 		m.config.loading = true
 		return []tea.Cmd{m.config.load()}
@@ -967,7 +1118,7 @@ func (m *appModel) switchToView(v viewID) []tea.Cmd {
 func (m appModel) renderTabBar(contentW int) string {
 	var parts []string
 	for i, v := range viewLabels {
-		label := fmt.Sprintf(" %s:%s ", v.key, v.name)
+		label := fmt.Sprintf(" %s ", v.name)
 		if viewID(i) == m.currentView {
 			parts = append(parts, StyleSelected.Render(label))
 		} else {
@@ -1015,6 +1166,8 @@ func (m appModel) View() string {
 		content = m.shared.view(contentW, contentH)
 	case viewOperations:
 		content = m.operations.view(contentW, contentH, m.releases.current)
+	case viewTerminal:
+		content = m.terminal.view(contentW, contentH)
 	case viewConfig:
 		content = m.config.view(contentW)
 	case viewConfigSelector:

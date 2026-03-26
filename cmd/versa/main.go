@@ -135,10 +135,11 @@ var deployCmd = &cobra.Command{
 
 var rollbackCmd = &cobra.Command{
 	Use:   "rollback [environment]",
-	Short: "Rollback to previous release",
+	Short: "Rollback to previous release (or specific version with --to)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env := args[0]
+		targetVersion, _ := cmd.Flags().GetString("to")
 
 		// Initialize logger
 		log, err := logger.NewLogger(logFile, verbose, debug)
@@ -173,6 +174,9 @@ var rollbackCmd = &cobra.Command{
 		}
 
 		// Execute rollback
+		if targetVersion != "" {
+			return d.RollbackTo(targetVersion)
+		}
 		return d.Rollback()
 	},
 }
@@ -422,6 +426,151 @@ environments:
 	},
 }
 
+var execCmd = &cobra.Command{
+	Use:   "exec [environment] [command]",
+	Short: "Execute a command on the remote server",
+	Args:  cobra.MinimumNArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		env := args[0]
+		remoteCmd := strings.Join(args[1:], " ")
+
+		log, err := logger.NewLogger(logFile, verbose, debug)
+		if err != nil {
+			return fmt.Errorf("failed to initialize logger: %w", err)
+		}
+		defer log.Close()
+
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
+
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		repoPath, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+
+		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, false, false, log)
+		if err != nil {
+			return err
+		}
+
+		output, err := d.ExecRemoteCommand(remoteCmd)
+		if output != "" {
+			fmt.Print(output)
+		}
+		return err
+	},
+}
+
+var hooksCmd = &cobra.Command{
+	Use:   "hooks [environment] [indices...]",
+	Short: "Re-execute post_deploy hooks on the active release",
+	Long:  "Re-execute all post_deploy hooks, or specific ones by index (0-based). Example: versa hooks production 0 2",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		env := args[0]
+
+		log, err := logger.NewLogger(logFile, verbose, debug)
+		if err != nil {
+			return fmt.Errorf("failed to initialize logger: %w", err)
+		}
+		defer log.Close()
+
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
+
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		repoPath, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+
+		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, false, false, log)
+		if err != nil {
+			return err
+		}
+
+		// Parse indices if provided
+		var indices []int
+		for _, arg := range args[1:] {
+			idx, err := strconv.Atoi(arg)
+			if err != nil {
+				return fmt.Errorf("invalid hook index %q: must be a number", arg)
+			}
+			indices = append(indices, idx)
+		}
+
+		return d.RunHooks(indices)
+	},
+}
+
+var logsCmd = &cobra.Command{
+	Use:   "logs [environment] [path]",
+	Short: "Tail remote log files in real-time",
+	Long:  "Stream remote log files using tail -f. Default: follows the most common Laravel log. Example: versa logs production /var/log/syslog",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		env := args[0]
+		lines, _ := cmd.Flags().GetInt("lines")
+
+		log, err := logger.NewLogger(logFile, verbose, debug)
+		if err != nil {
+			return fmt.Errorf("failed to initialize logger: %w", err)
+		}
+		defer log.Close()
+
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
+
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		envCfg, err := cfg.GetEnvironment(env)
+		if err != nil {
+			return err
+		}
+
+		// Determine log path
+		logPath := ""
+		if len(args) > 1 {
+			logPath = args[1]
+		} else {
+			// Default: Laravel storage/logs/laravel.log via current symlink
+			logPath = filepath.ToSlash(filepath.Join(envCfg.RemotePath, "current", "app", "storage", "logs", "laravel.log"))
+		}
+
+		tailCmd := fmt.Sprintf("tail -n %d -f %s", lines, logPath)
+
+		sshClient, err := ssh.NewClient(&envCfg.SSH, log)
+		if err != nil {
+			return err
+		}
+		defer sshClient.Close()
+
+		fmt.Printf("Tailing %s (Ctrl+C to stop)...\n", logPath)
+		return sshClient.ExecuteCommandStreaming(tailCmd, os.Stdout, os.Stderr)
+	},
+}
+
 func getOrSelectConfig(cmd *cobra.Command) (string, error) {
 	// If the user explicitly provided a config flag, use it
 	if cmd.Flags().Changed("config") {
@@ -487,6 +636,10 @@ func init() {
 	deployCmd.Flags().Bool("force", false, "Force redeploy even if no changes detected")
 	deployCmd.Flags().Bool("skip-dirty-check", false, "Skip validation of uncommitted changes")
 
+	rollbackCmd.Flags().String("to", "", "Rollback to a specific release version (e.g. 20240101_120000)")
+
+	logsCmd.Flags().Int("lines", 50, "Number of initial lines to show before following")
+
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(rollbackCmd)
 	rootCmd.AddCommand(statusCmd)
@@ -494,6 +647,9 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(selfUpdateCmd)
+	rootCmd.AddCommand(execCmd)
+	rootCmd.AddCommand(hooksCmd)
+	rootCmd.AddCommand(logsCmd)
 }
 
 func main() {

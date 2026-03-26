@@ -56,15 +56,48 @@ environments:
       - ".env"
       - "config.php"
 
-    # HOOKS: Commands run in the context of the 'app' directory of the new release.
-    # Default mode is after_switch (rollback-aware). Set before_switch to prepare first.
-    hook_execution_mode: "after_switch" # or "before_switch"
+    # HOOKS: Commands run at different stages of the deployment pipeline.
+    #
+    # pre_deploy_local: Local commands run before cloning (abort on failure)
+    # pre_deploy_local:
+    #   - "make test"
+    #   - "go vet ./..."
+    #
+    # pre_deploy_server: Remote commands run before symlink switch (non-fatal warnings)
+    # pre_deploy_server:
+    #   - "sudo systemctl stop myapp || true"
+    #
+    # post_deploy: Remote commands run after symlink switch (rollback on failure)
     post_deploy:
       - "php versaCLI migrate:up"
       - "php versaCLI cache:clear"
 
+    # SERVICES TO RELOAD after every deploy/rollback (critical for PHP-FPM OPcache!)
+    # This runs AFTER the symlink switch but BEFORE post_deploy hooks.
+    # For Apache + PHP-FPM: always include php-fpm reload to clear OPcache/realpath_cache.
+    services_reload:
+      - "sudo systemctl reload php8.2-fpm"
+      # - "sudo systemctl reload apache2"
+      # - "sudo systemctl reload nginx"
+
+    # HEALTH CHECK: Verify the application is responding after deployment.
+    # If the check fails after retries, automatic rollback is triggered.
+    # health_check:
+    #   url: "https://myapp.com/health"
+    #   expected_status: 200   # HTTP status code to expect (default: 200)
+    #   timeout: 10            # Seconds to wait per request (default: 10)
+    #   retries: 3             # Number of retry attempts (default: 3)
+    #   retry_delay: 2         # Seconds between retries (default: 2)
+
+    # NOTIFICATIONS: Send webhook on deploy success/failure.
+    # notifications:
+    #   webhook_url: "https://hooks.slack.com/services/xxx/yyy/zzz"
+    #   on_success: true
+    #   on_failure: true
+
     # LIMITS:
     hook_timeout: 300          # Kill hooks if they take more than 5 minutes
+    # deploy_timeout: 600     # Maximum total deploy time in seconds
 
 # FILES TO IGNORE: These patterns won't be included in the deployment artifact.
 # Note: versaDeploy is smart. If you ignore 'src' but a '.php' file inside changes,

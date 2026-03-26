@@ -27,10 +27,10 @@ type KeyMap struct {
 
 // Keys is the global keybinding map.
 var Keys = KeyMap{
-	Up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-	Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-	Left:     key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev view")),
-	Right:    key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next view")),
+	Up:       key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "up")),
+	Down:     key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "down")),
+	Left:     key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "prev view")),
+	Right:    key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "next view")),
 	Enter:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "select/toggle")),
 	Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle sidebar")),
 	Deploy:   key.NewBinding(key.WithKeys("d"), key.WithHelp("D", "deploy")),
@@ -50,5 +50,5 @@ var Keys = KeyMap{
 
 // ShortHelp returns the key hints displayed in the status bar.
 func (k KeyMap) ShortHelp() string {
-	return "1-6:views  ←/→:prev/next  Tab:sidebar  ↑/↓:navigate  ↵:select  F5:refresh  D:deploy  R:rollback  c:connect  q:quit"
+	return "←/→:views  Tab:sidebar  ↑/↓:navigate  ↵:select  F5:refresh  D:deploy  R:rollback  c:connect  q:quit"
 }

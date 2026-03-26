@@ -2,7 +2,10 @@ package deployer
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,8 +61,46 @@ func NewDeployer(cfg *config.Config, envName, repoPath string, dryRun, initialDe
 }
 
 // Deploy executes the full deployment workflow
-func (d *Deployer) Deploy() error {
+func (d *Deployer) Deploy() (returnErr error) {
+	startTime := time.Now()
 	d.log.Info("Starting deployment to %s", d.envName)
+
+	// Enforce deploy_timeout if configured
+	deployTimeout := d.env.DeployTimeout
+	if deployTimeout <= 0 {
+		deployTimeout = 600 // default 10 minutes
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(deployTimeout)*time.Second)
+	defer cancel()
+
+	// Monitor context cancellation in background
+	doneCh := make(chan struct{})
+	defer close(doneCh)
+	go func() {
+		select {
+		case <-ctx.Done():
+			if ctx.Err() == context.DeadlineExceeded {
+				d.log.Error("Deploy timeout exceeded (%ds)", deployTimeout)
+			}
+		case <-doneCh:
+		}
+	}()
+	_ = ctx // used by timeout goroutine above
+
+	// checkTimeout is a helper to abort if deploy_timeout is exceeded
+	checkTimeout := func() error {
+		if ctx.Err() != nil {
+			return fmt.Errorf("deployment aborted: timeout of %ds exceeded", deployTimeout)
+		}
+		return nil
+	}
+
+	// Notification defer: send webhook on success or failure
+	var releaseVer string
+	var commitRef string
+	defer func() {
+		d.sendNotification(releaseVer, commitRef, returnErr, time.Since(startTime))
+	}()
 
 	// Step 0: Validate local tools
 	if err := d.validateLocalTools(); err != nil {
@@ -102,6 +143,7 @@ func (d *Deployer) Deploy() error {
 	if err != nil {
 		return err
 	}
+	commitRef = commitHash
 	d.log.Info("Commit: %s", commitHash[:8])
 
 	// Step 5: Connect to remote server
@@ -187,9 +229,13 @@ func (d *Deployer) Deploy() error {
 
 	// Step 8: Generate release version
 	releaseVersion := artifact.GenerateReleaseVersion()
+	releaseVer = releaseVersion
 	d.log.Info("Release version: %s", releaseVersion)
 
 	// Step 9: Build artifacts
+	if err := checkTimeout(); err != nil {
+		return err
+	}
 	d.log.Info("Building artifacts...")
 	artifactDir := filepath.Join(os.TempDir(), "versadeploy-artifact-"+releaseVersion)
 	if err := os.MkdirAll(artifactDir, 0775); err != nil {
@@ -215,6 +261,9 @@ func (d *Deployer) Deploy() error {
 	}
 
 	// Step 11: Upload artifact
+	if err := checkTimeout(); err != nil {
+		return err
+	}
 	d.log.Info("Uploading artifact to remote server...")
 	releasesDir := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases"))
 	stagingDir := filepath.ToSlash(filepath.Join(releasesDir, releaseVersion+".staging"))
@@ -306,9 +355,15 @@ func (d *Deployer) Deploy() error {
 	}
 
 	// Step 12: Run pre_deploy_server hooks (non-fatal, before symlink switch)
+	if err := checkTimeout(); err != nil {
+		return err
+	}
 	d.executePreDeployServer(sshClient, finalDir)
 
 	// Step 13: Atomic symlink switch
+	if err := checkTimeout(); err != nil {
+		return err
+	}
 	d.log.Info("Activating release...")
 	currentSymlink := filepath.ToSlash(filepath.Join(d.env.RemotePath, "current"))
 	// Use absolute path for target to be more robust
@@ -320,8 +375,16 @@ func (d *Deployer) Deploy() error {
 		return err
 	}
 
+	// Step 13.5: Reload services (PHP-FPM, Apache/Nginx, etc.) to clear caches
+	d.executeServicesReload(sshClient)
+
 	// Step 14: Execute post-deploy hooks (after symlink switch)
 	if err := d.executePostDeployHooks(sshClient, finalDir, previousLock); err != nil {
+		return err
+	}
+
+	// Step 14.5: Health check (verify app is working after deploy)
+	if err := d.performHealthCheck(previousLock, sshClient); err != nil {
 		return err
 	}
 
@@ -999,4 +1062,330 @@ func (d *Deployer) handlePreservedPaths(sshClient *ssh.Client, previousVersion, 
 	}
 
 	return nil
+}
+
+// ReloadServices connects to the remote server and re-executes all services_reload commands.
+func (d *Deployer) ReloadServices() error {
+	if len(d.env.ServicesReload) == 0 {
+		d.log.Info("No services_reload commands configured")
+		return nil
+	}
+
+	sshClient, err := ssh.NewClient(&d.env.SSH, d.log)
+	if err != nil {
+		return verserrors.Wrap(err)
+	}
+	defer sshClient.Close()
+
+	d.executeServicesReload(sshClient)
+	d.log.Success("Services reloaded!")
+	return nil
+}
+
+// executeServicesReload runs configured service reload commands after symlink switch.
+// This is critical for clearing PHP-FPM OPcache/realpath_cache, reloading Apache/Nginx, etc.
+// Failures are logged as warnings but do NOT trigger rollback (the symlink is already switched).
+func (d *Deployer) executeServicesReload(sshClient *ssh.Client) {
+	if len(d.env.ServicesReload) == 0 {
+		return
+	}
+
+	d.log.Info("Reloading services...")
+	reloadTimeout := 30 * time.Second
+
+	for _, cmd := range d.env.ServicesReload {
+		d.log.Info("  Executing: %s", cmd)
+		output, err := sshClient.ExecuteCommandWithTimeout(cmd, reloadTimeout)
+		if err != nil {
+			d.log.Warn("  Service reload command failed (non-fatal): %s — %v", cmd, err)
+			if output != "" {
+				d.log.Warn("  Output: %s", strings.TrimSpace(output))
+			}
+		} else {
+			if output != "" {
+				d.log.Info("  Output: %s", strings.TrimSpace(output))
+			}
+			d.log.Info("  ✓ %s", cmd)
+		}
+	}
+}
+
+// performHealthCheck verifies the application is working after deployment.
+// If the health check fails after all retries, it rolls back to the previous release.
+func (d *Deployer) performHealthCheck(previousLock *state.DeployLock, sshClient *ssh.Client) error {
+	if d.env.HealthCheck.URL == "" {
+		return nil
+	}
+
+	hc := d.env.HealthCheck
+	expectedStatus := hc.ExpectedStatus
+	if expectedStatus == 0 {
+		expectedStatus = 200
+	}
+	timeout := hc.Timeout
+	if timeout <= 0 {
+		timeout = 10
+	}
+	retries := hc.Retries
+	if retries <= 0 {
+		retries = 3
+	}
+	retryDelay := hc.RetryDelay
+	if retryDelay <= 0 {
+		retryDelay = 2
+	}
+
+	d.log.Info("Running health check: %s (expect %d, %d retries)...", hc.URL, expectedStatus, retries)
+
+	client := &http.Client{
+		Timeout: time.Duration(timeout) * time.Second,
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= retries; attempt++ {
+		resp, err := client.Get(hc.URL)
+		if err != nil {
+			lastErr = fmt.Errorf("attempt %d/%d: request failed: %w", attempt, retries, err)
+			d.log.Warn("  Health check %s", lastErr)
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode == expectedStatus {
+				d.log.Info("  ✓ Health check passed (status %d)", resp.StatusCode)
+				return nil
+			}
+			lastErr = fmt.Errorf("attempt %d/%d: expected status %d, got %d", attempt, retries, expectedStatus, resp.StatusCode)
+			d.log.Warn("  Health check %s", lastErr)
+		}
+
+		if attempt < retries {
+			time.Sleep(time.Duration(retryDelay) * time.Second)
+		}
+	}
+
+	d.log.Error("Health check failed after %d attempts", retries)
+
+	// Rollback on health check failure
+	if previousLock != nil {
+		d.log.Info("Rolling back due to health check failure...")
+		if err := d.rollback(sshClient, previousLock); err != nil {
+			return fmt.Errorf("health check failed and rollback also failed: %w (health: %v)", err, lastErr)
+		}
+		// Re-reload services after rollback
+		d.executeServicesReload(sshClient)
+		return fmt.Errorf("health check failed (rolled back to %s): %w", previousLock.LastDeploy.ReleaseDir, lastErr)
+	}
+
+	return fmt.Errorf("health check failed (no previous version for rollback): %w", lastErr)
+}
+
+// sendNotification sends a webhook notification about the deployment result.
+func (d *Deployer) sendNotification(releaseVersion, commit string, deployErr error, duration time.Duration) {
+	if d.env.Notifications.WebhookURL == "" {
+		return
+	}
+
+	isSuccess := deployErr == nil
+	if isSuccess && !d.env.Notifications.OnSuccess {
+		return
+	}
+	if !isSuccess && !d.env.Notifications.OnFailure {
+		return
+	}
+
+	status := "success"
+	errorMsg := ""
+	if !isSuccess {
+		status = "failure"
+		errorMsg = deployErr.Error()
+	}
+
+	payload := map[string]interface{}{
+		"project":     d.cfg.Project,
+		"environment": d.envName,
+		"release":     releaseVersion,
+		"commit":      commit,
+		"status":      status,
+		"error":       errorMsg,
+		"duration_s":  duration.Seconds(),
+		"timestamp":   time.Now().UTC().Format(time.RFC3339),
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		d.log.Warn("Failed to marshal notification payload: %v", err)
+		return
+	}
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Post(d.env.Notifications.WebhookURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		d.log.Warn("Failed to send deployment notification: %v", err)
+		return
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		d.log.Info("Deployment notification sent (%s)", status)
+	} else {
+		d.log.Warn("Deployment notification returned status %d", resp.StatusCode)
+	}
+}
+
+// RollbackTo rolls back to a specific release version
+func (d *Deployer) RollbackTo(targetVersion string) error {
+	d.log.Info("Rolling back %s to version %s...", d.envName, targetVersion)
+
+	// Connect to remote
+	sshClient, err := ssh.NewClient(&d.env.SSH, d.log)
+	if err != nil {
+		return verserrors.Wrap(err)
+	}
+	defer sshClient.Close()
+
+	// Validate the target release exists
+	releasesDir := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases"))
+	releases, err := sshClient.ListReleases(releasesDir)
+	if err != nil {
+		return err
+	}
+
+	found := false
+	for _, r := range releases {
+		if r == targetVersion {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("release %s not found on server (available: %s)", targetVersion, strings.Join(releases, ", "))
+	}
+
+	// Switch symlink
+	currentSymlink := filepath.ToSlash(filepath.Join(d.env.RemotePath, "current"))
+	absoluteTarget := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", targetVersion))
+	if err := sshClient.CreateSymlink(absoluteTarget, currentSymlink); err != nil {
+		return err
+	}
+
+	// Reload services after rollback
+	d.executeServicesReload(sshClient)
+
+	d.log.Success("Rollback to %s successful!", targetVersion)
+	return nil
+}
+
+// RunHooks executes specific hooks against the currently active release.
+// If indices is nil or empty, all post_deploy hooks are executed.
+func (d *Deployer) RunHooks(indices []int) error {
+	d.log.Info("Re-executing hooks on %s...", d.envName)
+
+	sshClient, err := ssh.NewClient(&d.env.SSH, d.log)
+	if err != nil {
+		return verserrors.Wrap(err)
+	}
+	defer sshClient.Close()
+
+	// Find the active release directory
+	currentSymlink := filepath.ToSlash(filepath.Join(d.env.RemotePath, "current"))
+	currentTarget, err := sshClient.ReadSymlink(currentSymlink)
+	if err != nil {
+		return fmt.Errorf("failed to read current symlink: %w", err)
+	}
+
+	d.log.Info("Active release: %s", filepath.Base(currentTarget))
+
+	// Resolve absolute path — currentTarget may be relative (releases/xxx)
+	var finalDir string
+	if strings.HasPrefix(currentTarget, "/") {
+		finalDir = currentTarget
+	} else {
+		finalDir = filepath.ToSlash(filepath.Join(d.env.RemotePath, currentTarget))
+	}
+
+	hooks := d.env.PostDeploy
+	if len(hooks) == 0 {
+		d.log.Info("No post_deploy hooks configured")
+		return nil
+	}
+
+	// If specific indices are provided, filter hooks
+	if len(indices) > 0 {
+		var selected []config.HookConfig
+		for _, idx := range indices {
+			if idx < 0 || idx >= len(hooks) {
+				return fmt.Errorf("hook index %d out of range (0-%d)", idx, len(hooks)-1)
+			}
+			selected = append(selected, hooks[idx])
+		}
+		hooks = selected
+	}
+
+	hookTimeout := time.Duration(d.env.HookTimeout) * time.Second
+	if hookTimeout <= 0 {
+		hookTimeout = 300 * time.Second
+	}
+
+	for _, hookConfig := range hooks {
+		if hookConfig.Command != "" {
+			appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
+			wrappedHook := fmt.Sprintf("cd %s && %s", appPath, hookConfig.Command)
+			d.log.Info("Executing: %s", hookConfig.Command)
+			output, err := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
+			if err != nil {
+				d.log.Error("Hook failed: %s — %v", hookConfig.Command, err)
+				if output != "" {
+					d.log.Error("Output: %s", strings.TrimSpace(output))
+				}
+				return fmt.Errorf("hook failed: %w", err)
+			}
+			if output != "" {
+				d.log.Info("Output: %s", strings.TrimSpace(output))
+			}
+		} else if len(hookConfig.Parallel) > 0 {
+			var g errgroup.Group
+			d.log.Info("Executing parallel hook group (%d commands)...", len(hookConfig.Parallel))
+			for _, h := range hookConfig.Parallel {
+				cmd := h
+				appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
+				g.Go(func() error {
+					wrappedHook := fmt.Sprintf("cd %s && %s", appPath, cmd)
+					d.log.Info("Executing: %s", cmd)
+					output, hookErr := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
+					if hookErr != nil {
+						return fmt.Errorf("hook %q failed: %w", cmd, hookErr)
+					}
+					if output != "" {
+						d.log.Info("Output [%s]: %s", cmd, strings.TrimSpace(output))
+					}
+					return nil
+				})
+			}
+			if err := g.Wait(); err != nil {
+				return err
+			}
+		}
+	}
+
+	d.log.Success("Hooks executed successfully!")
+	return nil
+}
+
+// ExecRemoteCommand executes an arbitrary command on the remote server
+func (d *Deployer) ExecRemoteCommand(command string) (string, error) {
+	sshClient, err := ssh.NewClient(&d.env.SSH, d.log)
+	if err != nil {
+		return "", verserrors.Wrap(err)
+	}
+	defer sshClient.Close()
+
+	timeout := time.Duration(d.env.HookTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = 300 * time.Second
+	}
+
+	output, err := sshClient.ExecuteCommandWithTimeout(command, timeout)
+	if err != nil {
+		return output, err
+	}
+	return output, nil
 }

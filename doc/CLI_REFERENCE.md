@@ -41,11 +41,78 @@ Deploys your application to the specified environment.
 
 ## `versa rollback [environment]`
 
-Rolls back to the previous stable release.
+Rolls back to the previous stable release, or to a specific version using `--to`.
 
 **Arguments:**
 
 - `environment`: The name of the environment.
+
+**Flags:**
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `--to` | - | Target a specific release version (e.g., `20240101_120000`). |
+
+---
+
+## `versa exec [environment] [command]`
+
+Executes an arbitrary command on the remote server via SSH.
+
+**Arguments:**
+
+- `environment`: The name of the environment.
+- `command`: The command to execute (all remaining arguments are joined).
+
+**Examples:**
+
+```bash
+versa exec production "df -h"
+versa exec production "sudo systemctl status php8.2-fpm"
+versa exec production "cat /var/log/apache2/error.log | tail -50"
+```
+
+---
+
+## `versa hooks [environment] [indices...]`
+
+Re-executes post_deploy hooks on the currently active release.
+
+**Arguments:**
+
+- `environment`: The name of the environment.
+- `indices` (optional): Zero-based indices of specific hooks to run. If omitted, all hooks run.
+
+**Examples:**
+
+```bash
+versa hooks production          # Run all post_deploy hooks
+versa hooks production 0 2      # Run only hooks at index 0 and 2
+```
+
+---
+
+## `versa logs [environment] [path]`
+
+Tail remote log files in real-time using `tail -f`. Press `Ctrl+C` to stop.
+
+**Arguments:**
+
+- `environment`: The name of the environment.
+- `path` (optional): Absolute path to the log file on the server. Defaults to Laravel's `storage/logs/laravel.log` inside the active release.
+
+**Flags:**
+
+| Flag      | Default | Description                                      |
+| --------- | ------- | ------------------------------------------------ |
+| `--lines` | `50`    | Number of initial lines to show before following |
+
+**Examples:**
+
+```bash
+versa logs production                                    # Default Laravel log
+versa logs production /var/log/syslog                    # System log
+versa logs production /var/log/apache2/error.log --lines 100
+```
 
 ---
 

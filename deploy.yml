@@ -106,3 +106,7 @@ environments:
       # Restart systemd service after each deploy (requires service_name to be set above)
       # - "sudo systemctl restart myapp"
       []
+      # Services to reload after symlink switch (clears PHP-FPM OPcache, Nginx cache, etc.)
+      services_reload:
+        - "sudo systemctl reload php8.2-fpm"
+        - "sudo systemctl reload nginx"

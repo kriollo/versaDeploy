@@ -52,16 +52,47 @@ Before your first deploy, you need to prepare the remote directory structure.
             Require all granted
         </Directory>
 
+        # Disable sendfile and mmap to avoid serving stale content from kernel cache
+        EnableSendfile Off
+        EnableMMAP Off
+
         # If using PHP-FPM, ensure paths are resolved correctly
         <FilesMatch \.php$>
-            # Use ProxyPass Match to ensure real path is passed to FPM
             SetHandler "proxy:unix:/var/run/php/php8.2-fpm.sock|fcgi://localhost"
         </FilesMatch>
     </VirtualHost>
     ```
 
+    > [!IMPORTANT]
+    > **PHP-FPM caches symlink paths** via OPcache and `realpath_cache` (TTL=120s). After each deploy, PHP-FPM must be reloaded to clear these caches. Configure `services_reload` in your `deploy.yml` (see below). Without this, your site will serve stale code after symlink switch.
+
     > [!TIP]
-    > Unlike Nginx, Apache generally handles symlink changes better by default, but having `Options +FollowSymLinks` is mandatory.
+    > `EnableSendfile Off` and `EnableMMAP Off` prevent Apache from serving stale static files from the kernel file cache after a symlink change.
+
+3.  **Sudoers for Deploy User**:
+
+    The deploy user needs permission to reload services without a password. Add this to `/etc/sudoers.d/deploy`:
+
+    ```bash
+    deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload php8.2-fpm
+    deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload apache2
+    deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload nginx
+    ```
+
+4.  **Service Reload (REQUIRED)**:
+
+    Add `services_reload` to your `deploy.yml` to automatically reload PHP-FPM (and optionally your web server) after every deploy:
+
+    ```yaml
+    environments:
+      production:
+        services_reload:
+          - "sudo systemctl reload php8.2-fpm"
+          - "sudo systemctl reload apache2" # or nginx
+    ```
+
+    > [!WARNING]
+    > Without `services_reload`, deployed changes **will not take effect** until PHP-FPM workers expire naturally (up to 120 seconds or more). This is the most common cause of "stale deploy" issues.
 
 ## 3. Initialize your Project
 
@@ -98,10 +129,9 @@ environments:
       - "storage"
       - ".env"
 
-    # Optional: control when hooks run
-    # - after_switch (default): switch current first, then hooks (rollback-aware)
-    # - before_switch: hooks first, switch only if all pass
-    hook_execution_mode: "after_switch"
+    # REQUIRED: reload services after symlink switch to clear PHP caches
+    services_reload:
+      - "sudo systemctl reload php8.2-fpm"
 
     post_deploy:
       - "php artisan migrate --force"

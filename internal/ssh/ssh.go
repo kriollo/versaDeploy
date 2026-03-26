@@ -410,6 +410,35 @@ func (c *Client) ExecuteCommandWithTimeout(cmd string, timeout time.Duration) (s
 	return output, nil
 }
 
+// ExecuteCommandStreaming runs a command and streams stdout/stderr to the provided writers in real-time.
+// It allocates a PTY so that remote programs produce line-buffered output.
+func (c *Client) ExecuteCommandStreaming(cmd string, stdout, stderr io.Writer) error {
+	session, err := c.sshClient.NewSession()
+	if err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+	defer session.Close()
+
+	// Request PTY for proper line-buffered output
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          0,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
+	}
+	if err := session.RequestPty("xterm", 80, 200, modes); err != nil {
+		// Fall back to non-PTY if terminal allocation fails
+		c.log.Debug("PTY allocation failed, falling back to pipe mode: %v", err)
+	}
+
+	session.Stdout = stdout
+	session.Stderr = stderr
+
+	if err := session.Run(cmd); err != nil {
+		return fmt.Errorf("command failed: %w", err)
+	}
+	return nil
+}
+
 // ListReleases lists all release directories on the remote server
 func (c *Client) ListReleases(releasesDir string) ([]string, error) {
 	entries, err := c.sftpClient.ReadDir(releasesDir)

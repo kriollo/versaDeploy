@@ -25,12 +25,16 @@ type Environment struct {
 	PreDeployLocal []HookConfig `yaml:"pre_deploy_local"`  // Local commands run before cloning; abort on error
 	PreDeployServer []HookConfig `yaml:"pre_deploy_server"` // Remote commands run before symlink switch; non-fatal
 	PostDeploy     []HookConfig `yaml:"post_deploy"`
+	ServicesReload []string     `yaml:"services_reload"`  // Commands to reload services after symlink switch (e.g. php-fpm, nginx, apache)
 	Ignored        []string     `yaml:"ignored_paths"`
 	SharedPaths    []string     `yaml:"shared_paths"`    // Paths to persist between releases (e.g. storage, uploads)
 	PreservedPaths []string     `yaml:"preserved_paths"` // Paths to KEEP from previous release (overwriting artifact)
 	RouteFiles     []string     `yaml:"route_files"`     // Files that trigger route cache regeneration
 	HookTimeout    int          `yaml:"hook_timeout"`    // Timeout for post-deploy hooks in seconds
+	DeployTimeout  int          `yaml:"deploy_timeout"`  // Global timeout for entire deploy in seconds (default: 600)
 	HookExecutionMode string    `yaml:"hook_execution_mode"` // Deprecated: use pre_deploy_local/pre_deploy_server instead
+	HealthCheck    HealthCheckConfig    `yaml:"health_check"`    // HTTP health check after deploy
+	Notifications  NotificationConfig   `yaml:"notifications"`   // Webhook notifications on deploy events
 }
 
 // SSHConfig holds SSH connection details
@@ -348,6 +352,22 @@ func (c *Config) GetEnvironment(name string) (*Environment, error) {
 		return nil, fmt.Errorf("environment '%s' not found in configuration", name)
 	}
 	return &env, nil
+}
+
+// HealthCheckConfig defines an HTTP health check to verify the app is working after deploy
+type HealthCheckConfig struct {
+	URL            string `yaml:"url"`             // URL to check (e.g. https://myapp.com/health)
+	ExpectedStatus int    `yaml:"expected_status"` // Expected HTTP status code (default: 200)
+	Timeout        int    `yaml:"timeout"`         // Request timeout in seconds (default: 10)
+	Retries        int    `yaml:"retries"`         // Number of retries before failing (default: 3)
+	RetryDelay     int    `yaml:"retry_delay"`     // Delay between retries in seconds (default: 2)
+}
+
+// NotificationConfig defines webhook notifications for deploy events
+type NotificationConfig struct {
+	WebhookURL string `yaml:"webhook_url"` // URL to POST deploy events to
+	OnSuccess  bool   `yaml:"on_success"`  // Send notification on successful deploy
+	OnFailure  bool   `yaml:"on_failure"`  // Send notification on failed deploy
 }
 
 // HookConfig represents a single post-deploy hook, which can be a simple string or a parallel block

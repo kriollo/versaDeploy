@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0rc] - 2026-03-26
+
+### Added
+
+- **Fix: Deploy stale — `services_reload`**: New configuration field `services_reload` in each environment. After every deploy and rollback, versaDeploy executes these commands on the remote server (e.g. `sudo systemctl reload php8.2-fpm`) to clear PHP-FPM OPcache and `realpath_cache`. Without this, deployed changes would not take effect until PHP-FPM workers recycled naturally (up to 120 seconds). See `deploy.example.yml` for Apache + PHP-FPM and Nginx examples.
+- **Health Check post-deploy**: New `health_check` config block (`url`, `expected_status`, `timeout`, `retries`, `retry_delay`). After every deploy, versaDeploy performs an HTTP GET from the local machine to the configured URL. If the check fails after all retries, automatic rollback to the previous release is triggered.
+- **Webhook Notifications**: New `notifications` config block (`webhook_url`, `on_success`, `on_failure`). versaDeploy sends a JSON POST to the configured webhook at the end of each deployment with project, environment, release, commit, status, error, duration, and timestamp fields.
+- **Deploy Timeout enforcement**: New `deploy_timeout` config field (default: 600 seconds). The deployment pipeline now checks the deadline at key stages (build, upload, pre-deploy hooks, symlink switch) and aborts with an error if the timeout is exceeded.
+- **Rollback to specific version (`--to`)**: New `--to` flag on `versa rollback <env> --to=<version>`. Validates the target release exists on the server, switches the symlink, and runs `services_reload`.
+- **CLI `versa exec`**: New command to execute an arbitrary command on the remote server via SSH and print its output. Example: `versa exec production "df -h"`.
+- **CLI `versa logs`**: New command to tail remote log files in real-time using `tail -f`. Defaults to Laravel's `storage/logs/laravel.log` inside the active release. Accepts `--lines N` flag. Example: `versa logs production /var/log/apache2/error.log`.
+- **CLI `versa hooks`**: New command to re-execute `post_deploy` hooks on the currently active release. Accepts optional zero-based indices to run specific hooks. Example: `versa hooks production 0 2`.
+- **TUI — Terminal SSH view (view 6)**: New interactive remote terminal view accessible via `←`/`→` navigation. Features: command history (↑/↓), remote working directory tracking (`cd` updates prompt), Tab completion for remote paths via `ls -1Ap`, mouse wheel scrolling, `Ctrl+L` to clear, `Esc` to exit. Commands run via SSH with output streamed to a scrollable viewport.
+- **TUI — Operations: Re-execute post_deploy hooks (`h`)**: New quick action in the Operations view. Press `h` to re-run all configured `post_deploy` hooks against the currently active release.
+- **TUI — Operations: Re-execute services_reload (`l`)**: New quick action in the Operations view. Press `l` to re-run all configured `services_reload` commands (e.g. PHP-FPM reload) without a full redeploy.
+- **SSH `ExecuteCommandStreaming`**: New method on the SSH client that runs a command and streams stdout/stderr to provided `io.Writer` instances in real-time, with PTY allocation support.
+
+### Changed
+
+- **TUI — Navigation: removed number key shortcuts**: View switching by pressing `1`–`8` has been removed. Navigate between views exclusively using `←`/`→` arrow keys. This fixes a conflict where pressing `h` in the Operations view was incorrectly triggering "go to previous view" instead of "re-execute hooks".
+- **TUI — Navigation: removed vim-style keys**: `h`/`l` (left/right) and `j`/`k` (up/down) keybindings removed from the global keymap to prevent conflicts with operation-specific keys.
+- **TUI — Tab bar**: View labels no longer show number key hints (e.g. `1:Dashboard` → `Dashboard`).
+- **TUI — Status bar**: Help string updated to `←/→:views` instead of `1-7:views`.
+- **Deployer pipeline order**: `services_reload` runs after the symlink switch and before `post_deploy` hooks. `health_check` runs after `post_deploy` hooks.
+- **Documentation — `doc/GETTING_STARTED.md`**: Added `EnableSendfile Off` / `EnableMMAP Off` Apache directives, sudoers configuration for the deploy user, and `services_reload` marked as REQUIRED for PHP-FPM setups.
+- **Documentation — `doc/CLI_REFERENCE.md`**: Added full reference for `versa exec`, `versa logs`, `versa hooks`, and `versa rollback --to`.
+- **Internal Version**: Version bumped to 1.4.0rc.
+
 ## [1.3.2rc] - 2026-03-25
 
 ### Added

@@ -296,6 +296,48 @@ func doStatus(client *versassh.Client, remotePath string, ch chan string) tea.Cm
 	}
 }
 
+func doServicesReload(cfg *config.Config, envName, repoPath string, ch chan string) tea.Cmd {
+	return func() tea.Msg {
+		go func() {
+			log := logger.NewTUILogger(&logCapture{ch: ch}, true, false)
+			d, err := deployer.NewDeployer(cfg, envName, repoPath, false, false, false, false, log)
+			if err != nil {
+				ch <- fmt.Sprintf("[ERROR] %v\n", err)
+				close(ch)
+				return
+			}
+			if err := d.ReloadServices(); err != nil {
+				ch <- fmt.Sprintf("[ERROR] %v\n", err)
+			} else {
+				ch <- "[✓] Services reloaded successfully\n"
+			}
+			close(ch)
+		}()
+		return waitForLogLine(ch)()
+	}
+}
+
+func doRunHooks(cfg *config.Config, envName, repoPath string, ch chan string) tea.Cmd {
+	return func() tea.Msg {
+		go func() {
+			log := logger.NewTUILogger(&logCapture{ch: ch}, true, false)
+			d, err := deployer.NewDeployer(cfg, envName, repoPath, false, false, false, false, log)
+			if err != nil {
+				ch <- fmt.Sprintf("[ERROR] %v\n", err)
+				close(ch)
+				return
+			}
+			if err := d.RunHooks(nil); err != nil {
+				ch <- fmt.Sprintf("[ERROR] %v\n", err)
+			} else {
+				ch <- "[✓] Hooks executed successfully\n"
+			}
+			close(ch)
+		}()
+		return waitForLogLine(ch)()
+	}
+}
+
 // doRollback rolls back to the explicitly named release.
 func doRollback(client *versassh.Client, remotePath, targetRelease string) tea.Cmd {
 	return func() tea.Msg {
@@ -430,6 +472,8 @@ func (o operationsModel) viewIdle(width int, currentRelease string) string {
 		fmt.Sprintf("  %s SSH connection test", StyleCmd.Render("[s]")),
 		fmt.Sprintf("  %s Check for updates", StyleCmd.Render("[u]")),
 		fmt.Sprintf("  %s Show deployment status", StyleCmd.Render("[t]")),
+		fmt.Sprintf("  %s Re-execute post_deploy hooks", StyleCmd.Render("[h]")),
+		fmt.Sprintf("  %s Re-execute services_reload", StyleCmd.Render("[l]")),
 	)
 
 	if o.status != "" {
@@ -437,7 +481,7 @@ func (o operationsModel) viewIdle(width int, currentRelease string) string {
 	}
 
 	rows = append(rows, "", sep, "",
-		StyleMuted.Render("  ↑/↓ navigate   ↵ toggle/edit   D deploy   R rollback   s/u/t quick actions"),
+		StyleMuted.Render("  ↑/↓ navigate   ↵ toggle/edit   D deploy   R rollback   s/u/t/h/l quick actions"),
 	)
 
 	return strings.Join(rows, "\n")
