@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -28,6 +29,7 @@ func (lc *logCapture) Write(p []byte) (int, error) {
 type msgDeployLogLine struct{ line string }
 type msgDeployDone struct{ err error }
 type msgRollbackDone struct{ err error }
+type msgConfirmPostDeployRequest struct{}
 
 // deployFlag is a toggleable deploy option shown in the Operations panel.
 type deployFlag struct {
@@ -57,6 +59,11 @@ type operationsModel struct {
 
 	flags            []deployFlag
 	deployLockExists bool
+
+	// initial-deploy post_deploy confirmation modal
+	confirmReqCh    chan struct{}
+	confirmRespCh   chan bool
+	showConfirmModal bool
 }
 
 func newOperationsModel() operationsModel {
@@ -157,6 +164,9 @@ func (o *operationsModel) startDeploy() {
 	o.logCh = make(chan string, 256)
 	o.viewport.SetContent("")
 	o.userScrolledUp = false
+	o.showConfirmModal = false
+	o.confirmReqCh = make(chan struct{}, 1)
+	o.confirmRespCh = make(chan bool, 1)
 }
 
 func (o *operationsModel) appendLog(chunk string) {
@@ -188,9 +198,10 @@ func (o *operationsModel) scrollPageDown() {
 }
 
 // startDeploy launches the deployer in a goroutine and returns the first log tea.Cmd.
-func startDeploy(cfg *config.Config, envName, repoPath string, dryRun, force, initialDeploy, skipDirtyCheck, debug bool, logFilePath string, ch chan string) tea.Cmd {
+func startDeploy(cfg *config.Config, envName, repoPath string, dryRun, force, initialDeploy, skipDirtyCheck, debug bool, logFilePath string, ch chan string, confirmReqCh chan struct{}, confirmRespCh chan bool) tea.Cmd {
 	return func() tea.Msg {
 		go func() {
+			defer close(confirmReqCh) // unblock waitForConfirmRequest when done
 			var w io.Writer = &logCapture{ch: ch}
 			if logFilePath != "" {
 				f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -206,9 +217,128 @@ func startDeploy(cfg *config.Config, envName, repoPath string, dryRun, force, in
 				close(ch)
 				return
 			}
+			if initialDeploy {
+				d.PostDeployConfirm = func() bool {
+					confirmReqCh <- struct{}{}
+					return <-confirmRespCh
+				}
+			}
 			if err = d.Deploy(); err != nil {
 				ch <- fmt.Sprintf("[ERROR] %v\n", err)
 			}
+			close(ch)
+		}()
+		return tea.Batch(waitForLogLine(ch), waitForConfirmRequest(confirmReqCh))()
+	}
+}
+
+// waitForConfirmRequest blocks until the deployer requests post_deploy confirmation.
+func waitForConfirmRequest(ch <-chan struct{}) tea.Cmd {
+	return func() tea.Msg {
+		_, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msgConfirmPostDeployRequest{}
+	}
+}
+
+// startMultiDeploy builds once from the first config's first environment, then
+// uploads and activates on each config/environment in sequence. All log output
+// flows through ch. The initial-deploy confirmation modal is not supported here.
+func startMultiDeploy(
+	configs []string,
+	repoPath string,
+	dryRun, force, initialDeploy, skipDirtyCheck, debug bool,
+	logFilePath string,
+	ch chan string,
+) tea.Cmd {
+	return func() tea.Msg {
+		go func() {
+			var w io.Writer = &logCapture{ch: ch}
+			if logFilePath != "" {
+				f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+				if err == nil {
+					w = io.MultiWriter(&logCapture{ch: ch}, f)
+					defer f.Close()
+				}
+			}
+			log := logger.NewTUILogger(w, true, debug)
+
+			if len(configs) == 0 {
+				ch <- "[ERROR] no configs provided\n"
+				close(ch)
+				return
+			}
+
+			// Load first config to use as the build environment
+			firstCfg, err := config.Load(configs[0])
+			if err != nil {
+				ch <- fmt.Sprintf("[ERROR] failed to load %s: %v\n", filepath.Base(configs[0]), err)
+				close(ch)
+				return
+			}
+			firstEnvNames := make([]string, 0, len(firstCfg.Environments))
+			for k := range firstCfg.Environments {
+				firstEnvNames = append(firstEnvNames, k)
+			}
+			sort.Strings(firstEnvNames)
+			firstEnvName := firstEnvNames[0]
+
+			ch <- fmt.Sprintf("[INFO] Building artifact using %s / %s\n",
+				filepath.Base(configs[0]), firstEnvName)
+
+			firstDeployer, err := deployer.NewDeployer(
+				firstCfg, firstEnvName, repoPath,
+				dryRun, initialDeploy, force, skipDirtyCheck, log,
+			)
+			if err != nil {
+				ch <- fmt.Sprintf("[ERROR] %v\n", err)
+				close(ch)
+				return
+			}
+
+			artifact, err := firstDeployer.BuildArtifact()
+			if err != nil {
+				ch <- fmt.Sprintf("[ERROR] build failed: %v\n", err)
+				close(ch)
+				return
+			}
+			defer artifact.Cleanup()
+
+			ch <- fmt.Sprintf("[INFO] Artifact ready: %s  commit %s\n",
+				artifact.ReleaseVersion, artifact.CommitHash[:8])
+
+			// Deploy to each config sequentially
+			for _, cfgPath := range configs {
+				ch <- fmt.Sprintf("\n─── %s ───\n", filepath.Base(cfgPath))
+
+				cfg, err := config.Load(cfgPath)
+				if err != nil {
+					ch <- fmt.Sprintf("[ERROR] failed to load %s: %v\n", filepath.Base(cfgPath), err)
+					continue
+				}
+
+				envNames := make([]string, 0, len(cfg.Environments))
+				for k := range cfg.Environments {
+					envNames = append(envNames, k)
+				}
+				sort.Strings(envNames)
+
+				for _, envName := range envNames {
+					ch <- fmt.Sprintf("[INFO] → %s / %s\n", filepath.Base(cfgPath), envName)
+					d, err := deployer.NewDeployer(cfg, envName, repoPath,
+						dryRun, initialDeploy, force, skipDirtyCheck, log)
+					if err != nil {
+						ch <- fmt.Sprintf("[ERROR] %v\n", err)
+						continue
+					}
+					if err := d.DeployWithArtifact(artifact); err != nil {
+						ch <- fmt.Sprintf("[ERROR] %s/%s: %v\n", filepath.Base(cfgPath), envName, err)
+					}
+				}
+			}
+
 			close(ch)
 		}()
 		return waitForLogLine(ch)()
@@ -398,9 +528,39 @@ func sortReleases(releases []string) {
 func (o operationsModel) view(width, height int, currentRelease string) string {
 	// When running or showing log output: compact header + full-width log viewport
 	if o.running || o.done || o.logBuf.Len() > 0 {
+		if o.showConfirmModal {
+			return o.viewConfirmModal(width, currentRelease)
+		}
 		return o.viewRunning(width, currentRelease)
 	}
 	return o.viewIdle(width, currentRelease)
+}
+
+// viewConfirmModal renders the initial-deploy post_deploy confirmation prompt.
+func (o operationsModel) viewConfirmModal(width int, currentRelease string) string {
+	sep := StyleMuted.Render(strings.Repeat("─", max(width-4, 4)))
+
+	rows := []string{
+		"",
+		StyleTitle.Render("  Operations") + "  " + StyleWarning.Render("\U000F0765 running…"),
+		StyleHint.Render("  Waiting for confirmation…"),
+		"",
+		sep,
+		"",
+		StyleWarning.Render("  ⚠  Initial Deploy — Confirm post_deploy hooks"),
+		"",
+		"  The deployment files have been uploaded successfully.",
+		"  Before running post_deploy hooks, ensure your configuration",
+		"  file and .env are correctly set up on the server.",
+		"",
+		sep,
+		"",
+		fmt.Sprintf("  %s  Run post_deploy hooks", StyleCmd.Render("[Y]")),
+		fmt.Sprintf("  %s  Skip post_deploy hooks (recommended if .env is not ready)", StyleCmd.Render("[N]")),
+		"",
+		sep,
+	}
+	return strings.Join(rows, "\n")
 }
 
 // viewIdle renders the control panel (deploy options, rollback, quick actions).

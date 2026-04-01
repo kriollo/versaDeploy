@@ -98,7 +98,8 @@ type appModel struct {
 }
 
 type configSelectorModel struct {
-	cursor int
+	cursor   int
+	selected map[int]bool
 }
 
 func newAppModel(cfg *config.Config, repoPath string) appModel {
@@ -148,6 +149,9 @@ func (m appModel) activeEnvName() string {
 }
 
 func (m appModel) activeEnvCfg() *config.Environment {
+	if m.cfg == nil {
+		return nil
+	}
 	env, err := m.cfg.GetEnvironment(m.activeEnvName())
 	if err != nil {
 		return nil
@@ -184,11 +188,15 @@ func (m appModel) renderConfigSelector(width int) string {
 	var lines []string
 	for i, f := range m.availableConfigs {
 		label := filepath.Base(f)
-		if i == m.configSelector.cursor {
-			lines = append(lines, StyleSelected.Render(fmt.Sprintf("> %s", label)))
-		} else {
-			lines = append(lines, fmt.Sprintf("  %s", label))
+		check := StyleMuted.Render("[ ]")
+		if m.configSelector.selected[i] {
+			check = StyleSuccess.Render("[\U000F012C]") // mdi-check-circle
 		}
+		line := fmt.Sprintf("  %s  %s", check, label)
+		if i == m.configSelector.cursor {
+			line = StyleSelected.Render(fmt.Sprintf("> %s  %s", check, label))
+		}
+		lines = append(lines, line)
 	}
 
 	if len(lines) == 0 {
@@ -196,7 +204,17 @@ func (m appModel) renderConfigSelector(width int) string {
 	}
 
 	body := strings.Join(lines, "\n")
-	footer := "\n\n" + StyleMuted.Render("[↑/↓: move, Enter: select, Esc: cancel]")
+
+	selectedCount := len(m.configSelector.selected)
+	var footer string
+	if selectedCount >= 2 {
+		footer = "\n\n" + StyleMuted.Render(fmt.Sprintf(
+			"[↑/↓: move   Space: toggle   Enter: load single   M: multi-deploy (%d selected)   Esc: cancel]",
+			selectedCount,
+		))
+	} else {
+		footer = "\n\n" + StyleMuted.Render("[↑/↓: move   Space: toggle   Enter: load   Esc: cancel]")
+	}
 
 	return header + body + footer
 }
@@ -336,6 +354,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgSharedData:
 		m.shared.applyData(msg)
 
+	case msgConfirmPostDeployRequest:
+		m.operations.showConfirmModal = true
+
 	case msgDeployLogLine:
 		m.operations.appendLog(msg.line)
 		cmds = append(cmds, waitForLogLine(m.operations.logCh))
@@ -473,6 +494,11 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 	}
 
 	if key.Matches(msg, Keys.Connect) {
+		if m.cfg == nil {
+			// No config loaded yet — go to config selector instead
+			m.currentView = viewConfigSelector
+			return m, tea.Batch(cmds...)
+		}
 		envName := m.activeEnvName()
 		m.connStates[envName] = connConnecting
 		if c := m.sshClients[envName]; c != nil {
@@ -505,9 +531,10 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 	}
 
 	// Left/Right arrow: cycle through views (skip viewConfigSelector=6)
-	// Allow from config view when not editing.
+	// Allow from config view when not editing. Block while a deploy is running.
 	configBlocked := m.currentView == viewConfig && m.config.isEditing
-	if key.Matches(msg, Keys.Left) && !m.sidebarFocused && m.currentView != viewConfigSelector && !configBlocked {
+	deployRunning := m.currentView == viewOperations && m.operations.running
+	if key.Matches(msg, Keys.Left) && !m.sidebarFocused && m.currentView != viewConfigSelector && !configBlocked && !deployRunning {
 		next := int(m.currentView) - 1
 		if next < 0 {
 			next = int(viewConfig)
@@ -515,7 +542,7 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		cmds = append(cmds, m.switchToView(viewID(next))...)
 		return m, tea.Batch(cmds...)
 	}
-	if key.Matches(msg, Keys.Right) && !m.sidebarFocused && m.currentView != viewConfigSelector && !configBlocked {
+	if key.Matches(msg, Keys.Right) && !m.sidebarFocused && m.currentView != viewConfigSelector && !configBlocked && !deployRunning {
 		next := int(m.currentView) + 1
 		if next > int(viewConfig) {
 			next = 0
@@ -809,6 +836,45 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 			}
 		case msg.String() == "esc":
 			m.currentView = viewDashboard
+		case msg.String() == " ":
+			// Toggle selection for multi-deploy
+			i := m.configSelector.cursor
+			if m.configSelector.selected == nil {
+				m.configSelector.selected = make(map[int]bool)
+			}
+			if m.configSelector.selected[i] {
+				delete(m.configSelector.selected, i)
+			} else {
+				m.configSelector.selected[i] = true
+			}
+		case msg.String() == "m", msg.String() == "M":
+			// Multi-deploy: deploy to all selected configs sharing one build
+			if len(m.configSelector.selected) >= 2 {
+				idxs := make([]int, 0, len(m.configSelector.selected))
+				for idx := range m.configSelector.selected {
+					idxs = append(idxs, idx)
+				}
+				sort.Ints(idxs)
+				selectedPaths := make([]string, 0, len(idxs))
+				for _, idx := range idxs {
+					selectedPaths = append(selectedPaths, m.availableConfigs[idx])
+				}
+				m.currentView = viewOperations
+				m.operations.startDeploy()
+				cmds = append(cmds, startMultiDeploy(
+					selectedPaths,
+					m.repoPath,
+					m.operations.dryRunVal(),
+					m.operations.forceVal(),
+					m.operations.initialDeployVal(),
+					m.operations.skipDirtyCheckVal(),
+					m.operations.debugModeVal(),
+					m.operations.logFilePath,
+					m.operations.logCh,
+				))
+			} else {
+				m.statusMsg = "Select 2 or more configs with Space before pressing M"
+			}
 		}
 	}
 
@@ -817,6 +883,20 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 
 func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 	var cmds []tea.Cmd
+
+	// While confirmation modal is shown, only accept y/n
+	if m.operations.showConfirmModal {
+		ch := m.operations.confirmRespCh
+		switch msg.String() {
+		case "y", "Y":
+			m.operations.showConfirmModal = false
+			cmds = append(cmds, func() tea.Msg { ch <- true; return nil })
+		case "n", "N", "esc":
+			m.operations.showConfirmModal = false
+			cmds = append(cmds, func() tea.Msg { ch <- false; return nil })
+		}
+		return cmds
+	}
 
 	// While editing log file path, route keys to the text input
 	if m.operations.editingLogFile {
@@ -863,9 +943,12 @@ func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 		return cmds
 	}
 
-	// Esc clears the log output and returns to the idle control panel
+	// Esc clears the log output; if no config is loaded go back to config selector
 	if msg.String() == "esc" && m.operations.done {
 		m.operations.clearLog()
+		if m.cfg == nil {
+			m.currentView = viewConfigSelector
+		}
 		return cmds
 	}
 
@@ -900,6 +983,8 @@ func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 					m.operations.debugModeVal(),
 					m.operations.logFilePath,
 					m.operations.logCh,
+					m.operations.confirmReqCh,
+					m.operations.confirmRespCh,
 				))
 			}
 		}

@@ -38,6 +38,10 @@ type Deployer struct {
 	force          bool
 	skipDirtyCheck bool
 	log            *logger.Logger
+
+	// PostDeployConfirm is called before post_deploy hooks on an initial deploy.
+	// Return true to run hooks, false to skip them. If nil, hooks always run.
+	PostDeployConfirm func() bool
 }
 
 // NewDeployer creates a new deployer
@@ -379,8 +383,17 @@ func (d *Deployer) Deploy() (returnErr error) {
 	d.executeServicesReload(sshClient)
 
 	// Step 14: Execute post-deploy hooks (after symlink switch)
-	if err := d.executePostDeployHooks(sshClient, finalDir, previousLock); err != nil {
-		return err
+	skipPostDeploy := false
+	if d.initialDeploy && len(d.env.PostDeploy) > 0 && d.PostDeployConfirm != nil {
+		if !d.PostDeployConfirm() {
+			d.log.Info("Post-deploy hooks skipped by user (initial deploy)")
+			skipPostDeploy = true
+		}
+	}
+	if !skipPostDeploy {
+		if err := d.executePostDeployHooks(sshClient, finalDir, previousLock); err != nil {
+			return err
+		}
 	}
 
 	// Step 14.5: Health check (verify app is working after deploy)
@@ -425,6 +438,390 @@ func (d *Deployer) Deploy() (returnErr error) {
 	}
 
 	d.log.Success("Deployment successful!")
+	return nil
+}
+
+// ─── Multi-deploy support ──────────────────────────────────────────────────
+
+// PrebuiltArtifact holds the result of a local build that can be deployed to
+// multiple servers without repeating the build step. Call Cleanup() when done.
+type PrebuiltArtifact struct {
+	ReleaseVersion string
+	CommitHash     string
+	ChunkPaths     []string             // local /tmp/*.tar.gz.001, .002, … chunk files
+	ChangeSet      *changeset.ChangeSet // used for dependency reuse and deploy.lock
+	artifactDir    string               // owned by Cleanup
+	tmpRepo        string               // owned by Cleanup
+}
+
+// Cleanup removes all temporary directories and chunk files created during build.
+func (a *PrebuiltArtifact) Cleanup() {
+	os.RemoveAll(a.tmpRepo)
+	os.RemoveAll(a.artifactDir)
+	for _, p := range a.ChunkPaths {
+		os.Remove(p)
+	}
+}
+
+// BuildArtifact performs the local build phase (validation, clone, build, compress)
+// without connecting to any remote server. The returned artifact can be passed to
+// DeployWithArtifact for each target server. The caller must call artifact.Cleanup()
+// when all DeployWithArtifact calls are complete.
+func (d *Deployer) BuildArtifact() (*PrebuiltArtifact, error) {
+	// Step 0: Validate local tools
+	if err := d.validateLocalTools(); err != nil {
+		return nil, err
+	}
+
+	// Step 1: Validate repository
+	if err := git.ValidateRepository(d.repoPath); err != nil {
+		return nil, fmt.Errorf("repository validation failed: %w", err)
+	}
+
+	// Step 1.5: Run pre_deploy_local hooks (abort on failure)
+	if err := d.executePreDeployLocal(); err != nil {
+		return nil, err
+	}
+
+	// Step 2: Check if working directory is clean
+	if !d.skipDirtyCheck {
+		clean, err := git.IsClean(d.repoPath)
+		if err != nil {
+			return nil, err
+		}
+		if !clean {
+			return nil, verserrors.Wrap(fmt.Errorf("working directory has uncommitted changes (use --skip-dirty-check to bypass)"))
+		}
+	} else {
+		d.log.Warn("Skipping clean working directory check (--skip-dirty-check active)")
+	}
+
+	// Step 3: Clone repository to clean temp directory
+	d.log.Info("Cloning repository to temporary directory...")
+	tmpRepo, err := git.Clone(d.repoPath, "")
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 4: Get commit hash
+	commitHash, err := git.GetCurrentCommit(tmpRepo)
+	if err != nil {
+		os.RemoveAll(tmpRepo)
+		return nil, err
+	}
+	d.log.Info("Commit: %s", commitHash[:8])
+
+	// Step 8: Generate release version
+	releaseVersion := artifact.GenerateReleaseVersion()
+	d.log.Info("Release version: %s", releaseVersion)
+
+	// Step 9: Build artifacts (full build — nil previousLock treats all files as changed)
+	d.log.Info("Building artifacts...")
+	artifactDir := filepath.Join(os.TempDir(), "versadeploy-artifact-"+releaseVersion)
+	if err := os.MkdirAll(artifactDir, 0775); err != nil {
+		os.RemoveAll(tmpRepo)
+		return nil, err
+	}
+
+	detector := changeset.NewDetector(
+		tmpRepo, d.env.Ignored, d.env.RouteFiles,
+		d.env.Builds.PHP.ProjectRoot, d.env.Builds.Go.ProjectRoot,
+		d.env.Builds.Frontend.ProjectRoot, d.env.Builds.Python.ProjectRoot,
+		d.env.Builds.Python.RequirementsFile,
+		nil, // nil previousLock = full build, all files included
+	)
+	cs, err := detector.Detect()
+	if err != nil {
+		os.RemoveAll(tmpRepo)
+		os.RemoveAll(artifactDir)
+		return nil, err
+	}
+	cs.Force = true
+
+	b := builder.NewBuilder(tmpRepo, artifactDir, d.env, cs, d.log)
+	buildResult, err := b.Build()
+	if err != nil {
+		os.RemoveAll(tmpRepo)
+		os.RemoveAll(artifactDir)
+		return nil, verserrors.Wrap(err)
+	}
+
+	// Step 10: Generate manifest + validate
+	d.log.Debug("Generating manifest...")
+	gen := artifact.NewGenerator(artifactDir, releaseVersion, commitHash)
+	if err := gen.GenerateManifest(buildResult); err != nil {
+		os.RemoveAll(tmpRepo)
+		os.RemoveAll(artifactDir)
+		return nil, err
+	}
+	if err := gen.Validate(); err != nil {
+		os.RemoveAll(tmpRepo)
+		os.RemoveAll(artifactDir)
+		return nil, err
+	}
+
+	// Compress into chunks
+	archiveName := fmt.Sprintf("%s.tar.gz", releaseVersion)
+	localArchiveBase := filepath.Join(os.TempDir(), archiveName)
+	g2 := artifact.NewGenerator(artifactDir, releaseVersion, commitHash)
+	d.log.Info("Compressing release into chunks...")
+	const chunkSize = 10 * 1024 * 1024
+	chunkPaths, err := g2.CompressChunked(localArchiveBase, chunkSize)
+	if err != nil {
+		os.RemoveAll(tmpRepo)
+		os.RemoveAll(artifactDir)
+		return nil, fmt.Errorf("failed to compress release: %w", err)
+	}
+
+	return &PrebuiltArtifact{
+		ReleaseVersion: releaseVersion,
+		CommitHash:     commitHash,
+		ChunkPaths:     chunkPaths,
+		ChangeSet:      cs,
+		artifactDir:    artifactDir,
+		tmpRepo:        tmpRepo,
+	}, nil
+}
+
+// DeployWithArtifact deploys a pre-built artifact to this deployer's configured
+// remote server, skipping the build phase. The artifact must have been produced by
+// BuildArtifact(). Safe to call concurrently on different Deployer instances.
+func (d *Deployer) DeployWithArtifact(artifact *PrebuiltArtifact) (returnErr error) {
+	startTime := time.Now()
+	d.log.Info("Deploying %s to %s...", artifact.ReleaseVersion, d.envName)
+
+	deployTimeout := d.env.DeployTimeout
+	if deployTimeout <= 0 {
+		deployTimeout = 600
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(deployTimeout)*time.Second)
+	defer cancel()
+	doneCh := make(chan struct{})
+	defer close(doneCh)
+	go func() {
+		select {
+		case <-ctx.Done():
+			if ctx.Err() == context.DeadlineExceeded {
+				d.log.Error("Deploy timeout exceeded (%ds)", deployTimeout)
+			}
+		case <-doneCh:
+		}
+	}()
+	checkTimeout := func() error {
+		if ctx.Err() != nil {
+			return fmt.Errorf("deployment aborted: timeout of %ds exceeded", deployTimeout)
+		}
+		return nil
+	}
+
+	defer func() {
+		d.sendNotification(artifact.ReleaseVersion, artifact.CommitHash, returnErr, time.Since(startTime))
+	}()
+
+	if d.dryRun {
+		d.log.Info("DRY RUN — would deploy release %s to %s", artifact.ReleaseVersion, d.envName)
+		return nil
+	}
+
+	// Step 5: Connect to remote server
+	d.log.Info("Connecting to %s@%s...", d.env.SSH.User, d.env.SSH.Host)
+	sshClient, err := ssh.NewClient(&d.env.SSH, d.log)
+	if err != nil {
+		return verserrors.Wrap(err)
+	}
+	defer sshClient.Close()
+
+	// Step 5.5: Acquire deployment lock
+	lockDirPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, ".versa.lock"))
+	d.log.Debug("Acquiring deployment lock...")
+	if err := sshClient.AcquireLock(lockDirPath); err != nil {
+		return err
+	}
+	defer func() {
+		d.log.Debug("Releasing deployment lock...")
+		if err := sshClient.ReleaseLock(lockDirPath); err != nil {
+			d.log.Warn("Failed to release deployment lock: %v", err)
+		}
+	}()
+
+	// Step 6: Fetch deploy.lock from remote
+	lockPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "deploy.lock"))
+	var previousLock *state.DeployLock
+
+	exists, err := sshClient.FileExists(lockPath)
+	if err != nil {
+		return fmt.Errorf("failed to check deploy.lock: %w", err)
+	}
+	if exists {
+		d.log.Debug("Fetching deploy.lock from remote...")
+		tmpLockFile := filepath.Join(os.TempDir(), fmt.Sprintf("deploy-%s-%s.lock", d.envName, artifact.ReleaseVersion))
+		if err := sshClient.DownloadFile(lockPath, tmpLockFile); err != nil {
+			return err
+		}
+		defer os.Remove(tmpLockFile)
+		lockData, err := os.ReadFile(tmpLockFile)
+		if err != nil {
+			return err
+		}
+		previousLock, err = state.Parse(lockData)
+		if err != nil {
+			return fmt.Errorf("failed to parse deploy.lock: %w", err)
+		}
+	} else {
+		if !d.initialDeploy {
+			return verserrors.Wrap(fmt.Errorf("deploy.lock not found on remote server"))
+		}
+		d.log.Info("First deployment detected (--initial-deploy)")
+	}
+
+	// Step 7: Skip if server already has this exact commit (unless --force)
+	if previousLock != nil && previousLock.LastDeploy.CommitHash == artifact.CommitHash && !d.force {
+		d.log.Info("Server already at commit %s — skipping", artifact.CommitHash[:8])
+		return nil
+	}
+
+	// Step 11: Upload artifact chunks
+	if err := checkTimeout(); err != nil {
+		return err
+	}
+	releasesDir := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases"))
+	stagingDir := filepath.ToSlash(filepath.Join(releasesDir, artifact.ReleaseVersion+".staging"))
+	finalDir := filepath.ToSlash(filepath.Join(releasesDir, artifact.ReleaseVersion))
+	archiveName := fmt.Sprintf("%s.tar.gz", artifact.ReleaseVersion)
+	remoteArchive := filepath.ToSlash(filepath.Join(d.env.RemotePath, archiveName))
+
+	if err := sshClient.MkdirAll(releasesDir); err != nil {
+		return err
+	}
+
+	// Disk space check using total chunk size
+	var totalSize int64
+	for _, p := range artifact.ChunkPaths {
+		if fi, statErr := os.Stat(p); statErr == nil {
+			totalSize += fi.Size()
+		}
+	}
+	if totalSize > 0 {
+		d.log.Debug("Artifact size: %d MB", totalSize/(1024*1024))
+		if err := sshClient.CheckDiskSpace(releasesDir, totalSize); err != nil {
+			return verserrors.Wrap(err)
+		}
+	}
+
+	d.log.Info("Uploading %d chunks in parallel to remote server...", len(artifact.ChunkPaths))
+	if err := sshClient.UploadFilesParallel(artifact.ChunkPaths, d.env.RemotePath, 4); err != nil {
+		return fmt.Errorf("parallel upload failed: %w", err)
+	}
+
+	// Reassemble chunks on the remote server
+	d.log.Info("Reassembling artifact on server...")
+	reassembleCmd := fmt.Sprintf("cat %q.* > %q && rm -f %q.*", remoteArchive, remoteArchive, remoteArchive)
+	if _, err := sshClient.ExecuteCommand(reassembleCmd); err != nil {
+		return fmt.Errorf("failed to reassemble artifact on server: %w", err)
+	}
+
+	// Extract to staging, then rename to final
+	if err := sshClient.ExtractArchive(remoteArchive, stagingDir); err != nil {
+		sshClient.ExecuteCommand(fmt.Sprintf("rm -f %s", remoteArchive))
+		return err
+	}
+	sshClient.ExecuteCommand(fmt.Sprintf("rm -f -- %q", remoteArchive))
+	if _, err := sshClient.ExecuteCommand(fmt.Sprintf("mv -T -- %q %q", stagingDir, finalDir)); err != nil {
+		sshClient.ExecuteCommand(fmt.Sprintf("rm -rf -- %q", stagingDir))
+		return fmt.Errorf("failed to finalize release: %w", err)
+	}
+
+	// Step 11.5: Handle shared paths
+	if err := d.handleSharedPaths(sshClient, finalDir); err != nil {
+		return err
+	}
+
+	// Step 11.6 & 11.7: Reuse dependencies and preserved paths from previous release
+	if previousLock != nil {
+		if err := d.reuseDependencies(sshClient, previousLock.LastDeploy.ReleaseDir, finalDir, artifact.ChangeSet); err != nil {
+			return err
+		}
+		if err := d.handlePreservedPaths(sshClient, previousLock.LastDeploy.ReleaseDir, finalDir); err != nil {
+			return err
+		}
+	}
+
+	// Step 11.8: Validate runtime artifacts
+	if err := d.validateRuntimeArtifacts(sshClient, finalDir, nil); err != nil {
+		return err
+	}
+
+	// Step 12: Pre-deploy server hooks
+	if err := checkTimeout(); err != nil {
+		return err
+	}
+	d.executePreDeployServer(sshClient, finalDir)
+
+	// Step 13: Atomic symlink switch
+	if err := checkTimeout(); err != nil {
+		return err
+	}
+	d.log.Info("Activating release...")
+	currentSymlink := filepath.ToSlash(filepath.Join(d.env.RemotePath, "current"))
+	absoluteTarget := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", artifact.ReleaseVersion))
+	d.log.Info("  Linking: %s -> %s", currentSymlink, absoluteTarget)
+	if err := sshClient.CreateSymlink(absoluteTarget, currentSymlink); err != nil {
+		return err
+	}
+
+	// Step 13.5: Reload services
+	d.executeServicesReload(sshClient)
+
+	// Step 14: Post-deploy hooks
+	skipPostDeploy := false
+	if d.initialDeploy && len(d.env.PostDeploy) > 0 && d.PostDeployConfirm != nil {
+		if !d.PostDeployConfirm() {
+			d.log.Info("Post-deploy hooks skipped by user (initial deploy)")
+			skipPostDeploy = true
+		}
+	}
+	if !skipPostDeploy {
+		if err := d.executePostDeployHooks(sshClient, finalDir, previousLock); err != nil {
+			return err
+		}
+	}
+
+	// Step 14.5: Health check
+	if err := d.performHealthCheck(previousLock, sshClient); err != nil {
+		return err
+	}
+
+	// Step 15: Update deploy.lock
+	d.log.Info("Updating deploy.lock...")
+	cs := artifact.ChangeSet
+	newLock := state.New(artifact.CommitHash, artifact.ReleaseVersion, cs.AllFileHashes, cs.ComposerHash, cs.PackageHash, cs.GoModHash, cs.RequirementsHash)
+	lockData, err := newLock.ToJSON()
+	if err != nil {
+		return err
+	}
+	tmpLockNew := filepath.Join(os.TempDir(), fmt.Sprintf("deploy-%s.lock.new", d.envName))
+	if err := os.WriteFile(tmpLockNew, lockData, 0644); err != nil {
+		return err
+	}
+	defer os.Remove(tmpLockNew)
+	tmpUploadDir := filepath.Join(os.TempDir(), fmt.Sprintf("lockupload-%s", d.envName))
+	os.MkdirAll(tmpUploadDir, 0775)
+	defer os.RemoveAll(tmpUploadDir)
+	lockUploadPath := filepath.Join(tmpUploadDir, "deploy.lock")
+	if err := os.WriteFile(lockUploadPath, lockData, 0644); err != nil {
+		return err
+	}
+	if err := sshClient.UploadDirectory(tmpUploadDir, d.env.RemotePath); err != nil {
+		d.log.Error("Failed to upload deploy.lock: %v", err)
+	}
+
+	// Step 16: Cleanup old releases
+	d.log.Info("Cleaning up old releases...")
+	if err := sshClient.CleanupOldReleases(releasesDir, ReleasesToKeep); err != nil {
+		d.log.Error("Failed to cleanup old releases: %v", err)
+	}
+
+	d.log.Success("Deployment to %s successful!", d.envName)
 	return nil
 }
 

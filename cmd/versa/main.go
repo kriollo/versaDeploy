@@ -128,6 +128,20 @@ var deployCmd = &cobra.Command{
 			return err
 		}
 
+		// On initial deploy, confirm before running post_deploy hooks
+		if initialDeploy {
+			d.PostDeployConfirm = func() bool {
+				fmt.Println()
+				fmt.Println("  ⚠  INITIAL DEPLOY — post_deploy hooks are about to run.")
+				fmt.Println("     Make sure your configuration file and .env are correctly")
+				fmt.Println("     set up on the server before proceeding.")
+				fmt.Print("     Run post_deploy hooks? [y/N]: ")
+				var answer string
+				fmt.Scanln(&answer)
+				return strings.ToLower(strings.TrimSpace(answer)) == "y"
+			}
+		}
+
 		// Execute deployment
 		return d.Deploy()
 	},

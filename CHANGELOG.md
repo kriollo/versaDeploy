@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.1rc] - 2026-04-01
+
+### Added
+
+- **Multi-deploy (TUI)**: Select multiple config files simultaneously in the config selector using `Space` to toggle and `M` to deploy. All selected configs share a single build artifact (clone + compile once, upload + activate to each server in sequence). Reduces total deploy time proportionally to the number of targets.
+- **Initial deploy post_deploy confirmation (CLI)**: When `--initial-deploy` is set, the CLI prompts `Run post_deploy hooks? [y/N]` before executing post-deploy hooks. Lets operators verify the server environment (`.env`, config files) before hooks run.
+- **Initial deploy post_deploy confirmation (TUI)**: Same confirmation as the CLI, surfaced as an inline modal in the Operations log view. Press `y` to run hooks or `n`/`Esc` to skip.
+- **Expanded config file discovery**: `FindConfigFiles` now recognises `*_deploy.yml`, `*_deploy_*.yml`, `*_deploy.yaml`, and `*_deploy_*.yaml` patterns in addition to the existing `deploy*.yml` / `versa_deploy*.yml` variants.
+
+### Fixed
+
+- **TUI — nil panic on startup without config**: Pressing `←`/`→` or any view-switching key while `m.cfg` was `nil` (no config loaded yet) caused `(*Config).GetEnvironment` to dereference a nil pointer. Added a nil guard in `activeEnvCfg()`.
+- **TUI — goroutine leak after every deploy**: `startDeploy` dispatched `waitForConfirmRequest` as a concurrent command but never closed `confirmReqCh` when the deploy finished without requesting confirmation (non-initial deploy or no `post_deploy` hooks). The goroutine blocked forever. Fixed with `defer close(confirmReqCh)` in the deploy goroutine.
+- **TUI — crash pressing `c` after multi-deploy**: Pressing `c` (Connect) when no config was loaded (`m.cfg == nil`) scheduled `connectEnvCmd(nil, "")` which panicked at `cfg.GetEnvironment`. Now redirects to the config selector instead.
+- **TUI — stuck in Operations after multi-deploy**: After a multi-deploy finished and the user pressed `Esc` to close the log, there was no way to return to the config selector (arrow navigation skips `viewConfigSelector`). `Esc` in the Operations done-state now navigates back to `viewConfigSelector` when `m.cfg == nil`.
+- **TUI — view switching while deploy is running**: `←`/`→` arrow keys bypassed the Operations log handler and could switch views mid-deploy. View switching is now blocked while `operations.running` is true.
+
+### Changed
+
+- **Internal Version**: Version bumped to 1.4.1rc.
+
 ## [1.4.0rc] - 2026-03-26
 
 ### Added

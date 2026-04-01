@@ -4,17 +4,21 @@ import (
 	"path/filepath"
 )
 
-// FindConfigFiles looks for deploy.yml, deploy_*.yml, *.yaml, versa_deploy*.yml in the given directory
+// FindConfigFiles looks for deploy.yml, deploy_*.yml, versa_deploy*.yml, and *_deploy.yml in the given directory
 func FindConfigFiles(dir string) ([]string, error) {
 	patterns := []string{
 		"deploy.yml",
 		"deploy_*.yml",
 		"versa_deploy.yml",
 		"versa_deploy_*.yml",
+		"*_deploy.yml",
+		"*_deploy_*.yml",
 		"deploy.yaml",
 		"deploy_*.yaml",
 		"versa_deploy.yaml",
 		"versa_deploy_*.yaml",
+		"*_deploy.yaml",
+		"*_deploy_*.yaml",
 	}
 
 	var matches []string
