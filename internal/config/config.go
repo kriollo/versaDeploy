@@ -19,6 +19,8 @@ type Config struct {
 
 // Environment represents a single deployment environment
 type Environment struct {
+	Local          bool         `yaml:"local"`      // If true, deploy writes a full build to LocalPath instead of over SSH
+	LocalPath      string       `yaml:"local_path"` // Output directory for local deploys (replaced entirely on every deploy)
 	SSH            SSHConfig    `yaml:"ssh"`
 	RemotePath     string       `yaml:"remote_path"`
 	Builds         BuildsConfig `yaml:"builds"`
@@ -179,54 +181,63 @@ func (c *Config) Validate() error {
 
 // Validate validates a single environment configuration
 func (e *Environment) Validate(envName string) error {
-	// SSH validation
-	if e.SSH.Host == "" {
-		return fmt.Errorf("environment %s: ssh.host is required", envName)
-	}
-	if e.SSH.User == "" {
-		return fmt.Errorf("environment %s: ssh.user is required", envName)
-	}
-	if e.SSH.KeyPath == "" {
-		return fmt.Errorf("environment %s: ssh.key_path is required", envName)
-	}
-
-	// Expand home directory in key path
-	if strings.HasPrefix(e.SSH.KeyPath, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("environment %s: failed to expand home directory: %w", envName, err)
+	if e.Local {
+		if e.LocalPath == "" {
+			return verserrors.New(verserrors.CodeLocalPathInvalid, fmt.Sprintf("Environment %s: local_path is required when local is true", envName), "Add 'local_path: \"./dist/my-app\"' to your configuration.", nil)
 		}
-		e.SSH.KeyPath = filepath.Join(home, e.SSH.KeyPath[2:])
-	}
+		if len(e.SharedPaths) > 0 || len(e.PreservedPaths) > 0 || len(e.PreDeployServer) > 0 {
+			fmt.Printf("[WARN] environment %s: shared_paths/preserved_paths/pre_deploy_server have no effect in local mode (full replace, no release history)\n", envName)
+		}
+	} else {
+		// SSH validation
+		if e.SSH.Host == "" {
+			return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: ssh.host is required", envName), "Add 'ssh.host: \"1.2.3.4\"' to your configuration, or set 'local: true' for a local deploy.", nil)
+		}
+		if e.SSH.User == "" {
+			return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: ssh.user is required", envName), "Add 'ssh.user: \"deploy\"' to your configuration.", nil)
+		}
+		if e.SSH.KeyPath == "" {
+			return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: ssh.key_path is required", envName), "Add 'ssh.key_path: \"~/.ssh/id_rsa\"' to your configuration.", nil)
+		}
 
-	// Validate SSH key exists
-	if _, err := os.Stat(e.SSH.KeyPath); os.IsNotExist(err) {
-		return fmt.Errorf("environment %s: ssh key not found: %s", envName, e.SSH.KeyPath)
-	}
+		// Expand home directory in key path
+		if strings.HasPrefix(e.SSH.KeyPath, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("environment %s: failed to expand home directory: %w", envName, err)
+			}
+			e.SSH.KeyPath = filepath.Join(home, e.SSH.KeyPath[2:])
+		}
 
-	// Validate SSH key permissions (should be 0600 or stricter)
-	info, err := os.Stat(e.SSH.KeyPath)
-	if err != nil {
-		return fmt.Errorf("environment %s: failed to stat ssh key: %w", envName, err)
-	}
-	mode := info.Mode().Perm()
-	if runtime.GOOS != "windows" && mode&0077 != 0 {
-		return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: SSH key has insecure permissions (%o)", envName, mode), "Run 'chmod 600 "+e.SSH.KeyPath+"' to fix this.", nil)
-	}
+		// Validate SSH key exists
+		if _, err := os.Stat(e.SSH.KeyPath); os.IsNotExist(err) {
+			return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: ssh key not found: %s", envName, e.SSH.KeyPath), "Check that ssh.key_path points to an existing private key file.", nil)
+		}
 
-	// Default SSH port
-	if e.SSH.Port == 0 {
-		e.SSH.Port = 22
-	}
+		// Validate SSH key permissions (should be 0600 or stricter)
+		info, err := os.Stat(e.SSH.KeyPath)
+		if err != nil {
+			return fmt.Errorf("environment %s: failed to stat ssh key: %w", envName, err)
+		}
+		mode := info.Mode().Perm()
+		if runtime.GOOS != "windows" && mode&0077 != 0 {
+			return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: SSH key has insecure permissions (%o)", envName, mode), "Run 'chmod 600 "+e.SSH.KeyPath+"' to fix this.", nil)
+		}
 
-	// Remote path validation
-	if e.RemotePath == "" {
-		return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: remote_path is required", envName), "Add 'remote_path: \"/path/to/app\"' to your configuration.", nil)
-	}
+		// Default SSH port
+		if e.SSH.Port == 0 {
+			e.SSH.Port = 22
+		}
 
-	if !strings.HasPrefix(e.RemotePath, "/") && !strings.Contains(e.RemotePath, ":") {
-		// Very basic check for absolute path (Unix or Windows-style remote)
-		return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: remote_path must be an absolute path", envName), "Ensure 'remote_path' starts with / (for Linux) or a drive letter (for Windows).", nil)
+		// Remote path validation
+		if e.RemotePath == "" {
+			return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: remote_path is required", envName), "Add 'remote_path: \"/path/to/app\"' to your configuration.", nil)
+		}
+
+		if !strings.HasPrefix(e.RemotePath, "/") && !strings.Contains(e.RemotePath, ":") {
+			// Very basic check for absolute path (Unix or Windows-style remote)
+			return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: remote_path must be an absolute path", envName), "Ensure 'remote_path' starts with / (for Linux) or a drive letter (for Windows).", nil)
+		}
 	}
 
 	// Hook system migration: handle deprecated hook_execution_mode

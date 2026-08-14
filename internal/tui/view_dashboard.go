@@ -138,7 +138,7 @@ func (d dashboardModel) view(width, _ int) string {
 		return StyleMuted.Render("\n  Loading dashboard…")
 	}
 	if d.err != nil {
-		return StyleError.Render("\n  Error: " + d.err.Error())
+		return StyleError.Render("\n  Error: " + errDisplay(d.err))
 	}
 
 	sep := StyleMuted.Render(strings.Repeat("─", max(width-4, 4)))

@@ -82,7 +82,7 @@ func (r releasesModel) view(width, height int) string {
 		return StyleMuted.Render("\n  Loading releases…")
 	}
 	if r.err != nil {
-		return StyleError.Render("\n  Error: " + r.err.Error())
+		return StyleError.Render("\n  Error: " + errDisplay(r.err))
 	}
 	if len(r.releases) == 0 {
 		return StyleMuted.Render("\n  No releases found.")

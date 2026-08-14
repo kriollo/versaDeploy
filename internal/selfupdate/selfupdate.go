@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,10 @@ const (
 	githubOwner = "kriollo" // Corrected owner based on remote config
 	githubRepo  = "versaDeploy"
 )
+
+// githubAPIBase is overridden in tests to point at an httptest.Server instead
+// of the real GitHub API.
+var githubAPIBase = "https://api.github.com"
 
 // Release represents a GitHub release
 type Release struct {
@@ -62,6 +67,7 @@ func (u *Updater) Update() error {
 
 	// Find the matching asset for current OS/Arch
 	targetAsset := ""
+	checksumAsset := ""
 	expectedName := fmt.Sprintf("versa_%s_%s", runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
 		expectedName += ".exe"
@@ -70,7 +76,9 @@ func (u *Updater) Update() error {
 	for _, asset := range latest.Assets {
 		if asset.Name == expectedName {
 			targetAsset = asset.BrowserDownloadURL
-			break
+		}
+		if asset.Name == expectedName+".sha256" {
+			checksumAsset = asset.BrowserDownloadURL
 		}
 	}
 
@@ -80,7 +88,7 @@ func (u *Updater) Update() error {
 
 	u.log.Info("Downloading update from %s...", targetAsset)
 
-	if err := u.performUpdate(targetAsset); err != nil {
+	if err := u.performUpdate(targetAsset, checksumAsset); err != nil {
 		return err
 	}
 
@@ -91,7 +99,7 @@ func (u *Updater) Update() error {
 }
 
 func (u *Updater) getLatestRelease() (*Release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", githubOwner, githubRepo)
+	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, githubOwner, githubRepo)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -111,7 +119,7 @@ func (u *Updater) getLatestRelease() (*Release, error) {
 	return &release, nil
 }
 
-func (u *Updater) performUpdate(url string) error {
+func (u *Updater) performUpdate(url, checksumURL string) error {
 	// Resolve current binary path first so we can place the temp file on the
 	// same filesystem, avoiding cross-device rename errors.
 	currentPath, err := os.Executable()
@@ -136,11 +144,26 @@ func (u *Updater) performUpdate(url string) error {
 	}
 	defer resp.Body.Close()
 
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+	hasher := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tmpFile, hasher), resp.Body); err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("failed to download update: %w", err)
 	}
 	tmpFile.Close()
+
+	if checksumURL != "" {
+		expected, err := fetchChecksum(checksumURL)
+		if err != nil {
+			return fmt.Errorf("failed to fetch checksum: %w", err)
+		}
+		got := fmt.Sprintf("%x", hasher.Sum(nil))
+		if !strings.EqualFold(got, expected) {
+			return fmt.Errorf("checksum mismatch: expected %s, got %s (downloaded binary may be corrupted or tampered with)", expected, got)
+		}
+		u.log.Info("Checksum verified.")
+	} else {
+		u.log.Warn("No checksum published for this release; skipping verification.")
+	}
 
 	// Set execution bits before replacing (Linux/Mac)
 	if runtime.GOOS != "windows" {
@@ -170,6 +193,31 @@ func (u *Updater) performUpdate(url string) error {
 	_ = os.Remove(oldPath)
 
 	return nil
+}
+
+// fetchChecksum downloads a sha256sum-format file ("<hex digest>  <filename>")
+// and returns the hex digest.
+func fetchChecksum(url string) (string, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("checksum download returned status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("empty checksum file")
+	}
+	return fields[0], nil
 }
 
 // copyFile copies src to dst, preserving executable permissions.

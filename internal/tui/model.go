@@ -278,7 +278,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgConnError:
 		m.connStates[msg.envName] = connError
 		m.connErrors[msg.envName] = msg.err
-		m.statusMsg = "Connection failed: " + msg.err.Error()
+		m.statusMsg = "Connection failed: " + errDisplay(msg.err)
 
 	case msgDashboardData:
 		m.dashboard.applyData(msg)
@@ -288,8 +288,8 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgRollbackDone:
 		if msg.err != nil {
-			m.releases.status = StyleError.Render("Rollback failed: " + msg.err.Error())
-			m.operations.status = StyleError.Render("Rollback failed: " + msg.err.Error())
+			m.releases.status = StyleError.Render("Rollback failed: " + errDisplay(msg.err))
+			m.operations.status = StyleError.Render("Rollback failed: " + errDisplay(msg.err))
 		} else {
 			m.releases.status = StyleSuccess.Render("Rollback successful!")
 			m.operations.status = StyleSuccess.Render("Rollback successful!")
@@ -319,7 +319,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgDeleteDone:
 		if msg.err != nil {
-			m.browser.statusMsg = StyleError.Render("\U000F0159 Delete failed: " + msg.err.Error()) // mdi-close-circle
+			m.browser.statusMsg = StyleError.Render("\U000F0159 Delete failed: " + errDisplay(msg.err)) // mdi-close-circle
 		} else {
 			m.browser.statusMsg = StyleSuccess.Render("\U000F012C Deleted: " + msg.path) // mdi-check-circle
 			if client := m.activeClient(); client != nil {
@@ -330,7 +330,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgFileSaved:
 		m.browser.editSaving = false
 		if msg.err != nil {
-			m.browser.statusMsg = StyleError.Render("\U000F0159 Save failed: " + msg.err.Error())
+			m.browser.statusMsg = StyleError.Render("\U000F0159 Save failed: " + errDisplay(msg.err))
 		} else {
 			m.browser.editing = false
 			m.browser.statusMsg = StyleSuccess.Render("\U000F012C Saved: " + msg.path)
@@ -831,7 +831,7 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 					m.connErrors = make(map[string]error)
 					cmds = append(cmds, m.autoConnectCmds()...)
 				} else {
-					m.statusMsg = "Error loading config: " + err.Error()
+					m.statusMsg = "Error loading config: " + errDisplay(err)
 				}
 			}
 		case msg.String() == "esc":

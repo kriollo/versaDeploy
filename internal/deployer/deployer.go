@@ -66,6 +66,10 @@ func NewDeployer(cfg *config.Config, envName, repoPath string, dryRun, initialDe
 
 // Deploy executes the full deployment workflow
 func (d *Deployer) Deploy() (returnErr error) {
+	if d.env.Local {
+		return d.deployLocal()
+	}
+
 	startTime := time.Now()
 	d.log.Info("Starting deployment to %s", d.envName)
 
@@ -463,34 +467,37 @@ func (a *PrebuiltArtifact) Cleanup() {
 	}
 }
 
-// BuildArtifact performs the local build phase (validation, clone, build, compress)
-// without connecting to any remote server. The returned artifact can be passed to
-// DeployWithArtifact for each target server. The caller must call artifact.Cleanup()
-// when all DeployWithArtifact calls are complete.
-func (d *Deployer) BuildArtifact() (*PrebuiltArtifact, error) {
+// buildRelease runs the build phase shared by BuildArtifact() and the local deploy
+// flow: validate, clone, run pre_deploy_local hooks, detect changes, build per
+// language, generate + validate the manifest. It never touches SSH. On error, any
+// temp directories already created are cleaned up before returning.
+func (d *Deployer) buildRelease() (artifactDir, tmpRepo, releaseVersion, commitHash string, cs *changeset.ChangeSet, err error) {
 	// Step 0: Validate local tools
-	if err := d.validateLocalTools(); err != nil {
-		return nil, err
+	if err = d.validateLocalTools(); err != nil {
+		return
 	}
 
 	// Step 1: Validate repository
-	if err := git.ValidateRepository(d.repoPath); err != nil {
-		return nil, fmt.Errorf("repository validation failed: %w", err)
+	if err = git.ValidateRepository(d.repoPath); err != nil {
+		err = fmt.Errorf("repository validation failed: %w", err)
+		return
 	}
 
 	// Step 1.5: Run pre_deploy_local hooks (abort on failure)
-	if err := d.executePreDeployLocal(); err != nil {
-		return nil, err
+	if err = d.executePreDeployLocal(); err != nil {
+		return
 	}
 
 	// Step 2: Check if working directory is clean
 	if !d.skipDirtyCheck {
-		clean, err := git.IsClean(d.repoPath)
+		var clean bool
+		clean, err = git.IsClean(d.repoPath)
 		if err != nil {
-			return nil, err
+			return
 		}
 		if !clean {
-			return nil, verserrors.Wrap(fmt.Errorf("working directory has uncommitted changes (use --skip-dirty-check to bypass)"))
+			err = verserrors.Wrap(fmt.Errorf("working directory has uncommitted changes (use --skip-dirty-check to bypass)"))
+			return
 		}
 	} else {
 		d.log.Warn("Skipping clean working directory check (--skip-dirty-check active)")
@@ -498,29 +505,29 @@ func (d *Deployer) BuildArtifact() (*PrebuiltArtifact, error) {
 
 	// Step 3: Clone repository to clean temp directory
 	d.log.Info("Cloning repository to temporary directory...")
-	tmpRepo, err := git.Clone(d.repoPath, "")
+	tmpRepo, err = git.Clone(d.repoPath, "")
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	// Step 4: Get commit hash
-	commitHash, err := git.GetCurrentCommit(tmpRepo)
+	commitHash, err = git.GetCurrentCommit(tmpRepo)
 	if err != nil {
 		os.RemoveAll(tmpRepo)
-		return nil, err
+		return
 	}
 	d.log.Info("Commit: %s", commitHash[:8])
 
 	// Step 8: Generate release version
-	releaseVersion := artifact.GenerateReleaseVersion()
+	releaseVersion = artifact.GenerateReleaseVersion()
 	d.log.Info("Release version: %s", releaseVersion)
 
 	// Step 9: Build artifacts (full build — nil previousLock treats all files as changed)
 	d.log.Info("Building artifacts...")
-	artifactDir := filepath.Join(os.TempDir(), "versadeploy-artifact-"+releaseVersion)
-	if err := os.MkdirAll(artifactDir, 0775); err != nil {
+	artifactDir = filepath.Join(os.TempDir(), "versadeploy-artifact-"+releaseVersion)
+	if err = os.MkdirAll(artifactDir, 0775); err != nil {
 		os.RemoveAll(tmpRepo)
-		return nil, err
+		return
 	}
 
 	detector := changeset.NewDetector(
@@ -530,33 +537,47 @@ func (d *Deployer) BuildArtifact() (*PrebuiltArtifact, error) {
 		d.env.Builds.Python.RequirementsFile,
 		nil, // nil previousLock = full build, all files included
 	)
-	cs, err := detector.Detect()
+	cs, err = detector.Detect()
 	if err != nil {
 		os.RemoveAll(tmpRepo)
 		os.RemoveAll(artifactDir)
-		return nil, err
+		return
 	}
 	cs.Force = true
 
 	b := builder.NewBuilder(tmpRepo, artifactDir, d.env, cs, d.log)
-	buildResult, err := b.Build()
-	if err != nil {
+	buildResult, buildErr := b.Build()
+	if buildErr != nil {
 		os.RemoveAll(tmpRepo)
 		os.RemoveAll(artifactDir)
-		return nil, verserrors.Wrap(err)
+		err = verserrors.Wrap(buildErr)
+		return
 	}
 
 	// Step 10: Generate manifest + validate
 	d.log.Debug("Generating manifest...")
 	gen := artifact.NewGenerator(artifactDir, releaseVersion, commitHash)
-	if err := gen.GenerateManifest(buildResult); err != nil {
+	if err = gen.GenerateManifest(buildResult); err != nil {
 		os.RemoveAll(tmpRepo)
 		os.RemoveAll(artifactDir)
-		return nil, err
+		return
 	}
-	if err := gen.Validate(); err != nil {
+	if err = gen.Validate(); err != nil {
 		os.RemoveAll(tmpRepo)
 		os.RemoveAll(artifactDir)
+		return
+	}
+
+	return
+}
+
+// BuildArtifact performs the local build phase (validation, clone, build, compress)
+// without connecting to any remote server. The returned artifact can be passed to
+// DeployWithArtifact for each target server. The caller must call artifact.Cleanup()
+// when all DeployWithArtifact calls are complete.
+func (d *Deployer) BuildArtifact() (*PrebuiltArtifact, error) {
+	artifactDir, tmpRepo, releaseVersion, commitHash, cs, err := d.buildRelease()
+	if err != nil {
 		return nil, err
 	}
 
@@ -956,6 +977,10 @@ func (d *Deployer) executePreDeployServer(sshClient *ssh.Client, finalDir string
 
 // Rollback rolls back to the previous release
 func (d *Deployer) Rollback() error {
+	if d.env.Local {
+		return errLocalUnsupported("rollback")
+	}
+
 	d.log.Info("Rolling back %s...", d.envName)
 
 	// Connect to remote
@@ -1017,6 +1042,10 @@ func (d *Deployer) Rollback() error {
 
 // Status shows deployment status
 func (d *Deployer) Status() error {
+	if d.env.Local {
+		return errLocalUnsupported("status")
+	}
+
 	d.log.Info("Status for %s:", d.envName)
 
 	// Connect to remote
@@ -1463,6 +1492,9 @@ func (d *Deployer) handlePreservedPaths(sshClient *ssh.Client, previousVersion, 
 
 // ReloadServices connects to the remote server and re-executes all services_reload commands.
 func (d *Deployer) ReloadServices() error {
+	if d.env.Local {
+		return errLocalUnsupported("services-reload")
+	}
 	if len(d.env.ServicesReload) == 0 {
 		d.log.Info("No services_reload commands configured")
 		return nil
@@ -1630,6 +1662,10 @@ func (d *Deployer) sendNotification(releaseVersion, commit string, deployErr err
 
 // RollbackTo rolls back to a specific release version
 func (d *Deployer) RollbackTo(targetVersion string) error {
+	if d.env.Local {
+		return errLocalUnsupported("rollback")
+	}
+
 	d.log.Info("Rolling back %s to version %s...", d.envName, targetVersion)
 
 	// Connect to remote
@@ -1674,6 +1710,10 @@ func (d *Deployer) RollbackTo(targetVersion string) error {
 // RunHooks executes specific hooks against the currently active release.
 // If indices is nil or empty, all post_deploy hooks are executed.
 func (d *Deployer) RunHooks(indices []int) error {
+	if d.env.Local {
+		return errLocalUnsupported("hooks")
+	}
+
 	d.log.Info("Re-executing hooks on %s...", d.envName)
 
 	sshClient, err := ssh.NewClient(&d.env.SSH, d.log)
@@ -1769,6 +1809,10 @@ func (d *Deployer) RunHooks(indices []int) error {
 
 // ExecRemoteCommand executes an arbitrary command on the remote server
 func (d *Deployer) ExecRemoteCommand(command string) (string, error) {
+	if d.env.Local {
+		return "", errLocalUnsupported("exec")
+	}
+
 	sshClient, err := ssh.NewClient(&d.env.SSH, d.log)
 	if err != nil {
 		return "", verserrors.Wrap(err)

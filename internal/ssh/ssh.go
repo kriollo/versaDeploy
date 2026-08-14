@@ -54,13 +54,13 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 		keyData, err := os.ReadFile(cfg.KeyPath)
 		if err != nil {
 			if len(authMethods) == 0 {
-				return nil, fmt.Errorf("failed to read SSH key: %w", err)
+				return nil, verserrors.New(verserrors.CodeSSHAuthFailed, fmt.Sprintf("Failed to read SSH key: %s", cfg.KeyPath), "Check that ssh.key_path in your config points to a readable private key file.", err)
 			}
 		} else {
 			signer, err := ssh.ParsePrivateKey(keyData)
 			if err != nil {
 				if len(authMethods) == 0 {
-					return nil, fmt.Errorf("failed to parse SSH key: %w", err)
+					return nil, verserrors.New(verserrors.CodeSSHAuthFailed, fmt.Sprintf("Failed to parse SSH key: %s", cfg.KeyPath), "Ensure the key is a valid unencrypted private key (OpenSSH/PEM format). Encrypted keys are not supported.", err)
 				}
 			} else {
 				authMethods = append(authMethods, ssh.PublicKeys(signer))
@@ -69,7 +69,7 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 	}
 
 	if len(authMethods) == 0 {
-		return nil, fmt.Errorf("no valid SSH authentication methods found (check key_path or use_ssh_agent)")
+		return nil, verserrors.New(verserrors.CodeSSHAuthFailed, "No valid SSH authentication methods found", "Set ssh.key_path to a valid private key, or enable ssh.use_ssh_agent and ensure SSH_AUTH_SOCK is set.", nil)
 	}
 
 	// Configure SSH client
@@ -107,7 +107,7 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 	sftpClient, err := sftp.NewClient(sshClient, sftp.MaxPacket(1<<15))
 	if err != nil {
 		sshClient.Close()
-		return nil, fmt.Errorf("failed to create SFTP client: %w", err)
+		return nil, verserrors.New(verserrors.CodeSSHConnectFailed, "Failed to create SFTP client", "Ensure the SFTP subsystem is enabled on the remote server (check 'Subsystem sftp' in /etc/ssh/sshd_config).", err)
 	}
 
 	return &Client{
@@ -390,7 +390,7 @@ func (c *Client) ExecuteCommandWithTimeout(cmd string, timeout time.Duration) (s
 		select {
 		case <-time.After(timeout):
 			session.Signal(ssh.SIGKILL)
-			return outBuf.String(), fmt.Errorf("command timed out after %v", timeout)
+			return outBuf.String(), verserrors.New(verserrors.CodeCommandTimeout, fmt.Sprintf("Remote command timed out after %v", timeout), "Increase hook_timeout (or deploy_timeout) in your environment config if this command legitimately needs more time.", nil)
 		case waitErr = <-done:
 		}
 	} else {
@@ -547,8 +547,10 @@ func (c *Client) CheckDiskSpace(path string, requiredBytes int64) error {
 	requiredWithBuffer := int64(float64(requiredBytes) * 1.2)
 
 	if availableBytes < requiredWithBuffer {
-		return fmt.Errorf("insufficient disk space: need %d MB, have %d MB available",
-			requiredWithBuffer/(1024*1024), availableBytes/(1024*1024))
+		return verserrors.New(verserrors.CodeUploadFailed,
+			fmt.Sprintf("Insufficient disk space: need %d MB, have %d MB available", requiredWithBuffer/(1024*1024), availableBytes/(1024*1024)),
+			"Free up space on the remote server, or lower ReleasesToKeep by cleaning up old releases manually.",
+			nil)
 	}
 
 	c.log.Info("Disk space check passed: %d MB available, %d MB required",

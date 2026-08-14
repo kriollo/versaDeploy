@@ -95,7 +95,7 @@ func (s sharedModel) view(width, height int) string {
 	if !s.loaded {
 		rows = append(rows, StyleMuted.Render("  Loading…"))
 	} else if s.err != nil {
-		rows = append(rows, StyleError.Render("  Error: "+s.err.Error()))
+		rows = append(rows, StyleError.Render("  Error: "+errDisplay(s.err)))
 	} else if len(s.entries) == 0 {
 		rows = append(rows, StyleMuted.Render("  The shared/ directory is empty or does not exist yet."))
 		rows = append(rows, "", StyleHint.Render("  Add 'shared_paths' to your deploy.yml to persist"))

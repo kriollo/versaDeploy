@@ -19,6 +19,8 @@ const (
 	CodeStateMissing     ErrorCode = "STATE_MISSING"
 	CodeUploadFailed     ErrorCode = "UPLOAD_FAILED"
 	CodeDeploymentFailed ErrorCode = "DEPLOYMENT_FAILED"
+	CodeCommandTimeout   ErrorCode = "COMMAND_TIMEOUT"
+	CodeLocalPathInvalid ErrorCode = "LOCAL_PATH_INVALID"
 	CodeUnknown          ErrorCode = "UNKNOWN"
 )
 

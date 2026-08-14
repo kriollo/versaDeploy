@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0rc] - 2026-08-14
+
+### Added
+
+- **Local deploy mode**: New `local`/`local_path` environment config for hosting without SSH access. `versa deploy <env>` builds the project locally and writes a full release to `local_path` (replacing it entirely on every run) instead of uploading over SSH — upload the contents of `local_path/app` to your hosting manually. There is no release history or rollback in this mode by design: `rollback`, `status`, `exec`, `hooks`, and `services-reload` now return a clear error for local environments instead of failing on a missing SSH config.
+- **`versa init` — SSH vs local prompt**: `versa init` now asks whether the project deploys to a VPS (SSH) or to local/no-SSH hosting, and generates the matching `deploy.yml` template. Pass `--local` to skip the prompt in scripts/CI.
+- **CLI `versa config validate [environment]`**: Validates `deploy.yml` without connecting to any server; prints a summary of the resolved environment (mode, builds, hook counts) when an environment name is given.
+- **CLI `versa services-reload [environment]`**: Runs the configured `services_reload` commands without a full deploy (previously only available from the TUI).
+- **CLI multi-environment deploy**: `versa deploy env1,env2` deploys to a comma-separated list of environments sequentially in one command.
+- **Self-update checksum verification**: Release binaries are now published with a `.sha256` file; `versa self-update` verifies the downloaded binary's SHA256 before replacing the running executable and aborts on a mismatch.
+
+### Changed
+
+- **Version now injected at build time**: `internal/version.Version` is set via `-ldflags -X ...=<tag>` in the release workflow instead of being hardcoded per release.
+- **Structured errors in `ssh`/`config`**: SSH connection/auth/timeout errors and config validation errors now return a `verserrors.VersaError` with an actionable suggestion instead of a raw `fmt.Errorf`. The TUI now surfaces these suggestions in its status/log panes instead of the raw error string.
+- **Internal Version**: Version bumped to 1.5.0rc.
+
+### Fixed
+
+- **`versa init` — YAML tab indentation**: The generated `go:` build section used tabs instead of spaces for `root`/`deploy_path`, which is invalid YAML indentation. Fixed to use spaces consistently.
+
 ## [1.4.1rc] - 2026-04-01
 
 ### Added

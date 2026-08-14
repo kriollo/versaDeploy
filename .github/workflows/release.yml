@@ -37,13 +37,15 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
         run: |
           mkdir -p dist
           # Standardize naming: versa_linux_amd64, versa_windows_amd64.exe, etc.
           # The internal build name is just 'versa' or 'versa.exe' as requested
           RELEASE_NAME="versa_${{ matrix.goos }}_${{ matrix.goarch }}$([ "${{ matrix.goos }}" = "windows" ] && echo ".exe" || echo "")"
 
-          go build -v -o "dist/${RELEASE_NAME}" ./cmd/versa
+          go build -v -ldflags "-X github.com/user/versaDeploy/internal/version.Version=${TAG}" -o "dist/${RELEASE_NAME}" ./cmd/versa
+          sha256sum "dist/${RELEASE_NAME}" > "dist/${RELEASE_NAME}.sha256"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

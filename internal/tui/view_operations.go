@@ -690,7 +690,7 @@ func (o operationsModel) viewRunning(width int, currentRelease string) string {
 
 	if o.done {
 		if o.err != nil {
-			rows = append(rows, StyleError.Render("  ✕ "+o.err.Error()))
+			rows = append(rows, StyleError.Render("  ✕ "+errDisplay(o.err)))
 		} else {
 			rows = append(rows, StyleSuccess.Render("  ✓ Operation completed successfully"))
 		}

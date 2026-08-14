@@ -99,6 +99,22 @@ environments:
     hook_timeout: 300          # Kill hooks if they take more than 5 minutes
     # deploy_timeout: 600     # Maximum total deploy time in seconds
 
+  # LOCAL DEPLOY: For hosting where SSH isn't available (shared hosting, etc.).
+  # Instead of connecting over SSH, versaDeploy builds the project and writes a
+  # full release to local_path/app (+ manifest.json, + bin/ for Go binaries).
+  # Every deploy REPLACES local_path entirely — there is no release history,
+  # no rollback, and no shared_paths/preserved_paths support in this mode.
+  # Upload the contents of local_path/app to your hosting (FTP, file manager, etc.).
+  # shared_hosting:
+  #   local: true
+  #   local_path: "./local-releases/shared-hosting" # never point this at a build tool's own output dir (e.g. frontend's "dist")
+  #   builds:
+  #     php:
+  #       enabled: true
+  #       composer_command: "composer install --no-dev --optimize-autoloader"
+  #   post_deploy:
+  #     - "php versaCLI cache:clear" # runs locally, cwd = local_path/app
+
 # FILES TO IGNORE: These patterns won't be included in the deployment artifact.
 # Note: versaDeploy is smart. If you ignore 'src' but a '.php' file inside changes,
 # it will still detect the change to trigger a build!

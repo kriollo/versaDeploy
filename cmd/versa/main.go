@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -87,10 +88,10 @@ var selfUpdateCmd = &cobra.Command{
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy [environment]",
-	Short: "Deploy to specified environment",
+	Short: "Deploy to specified environment (comma-separated list for multiple: env1,env2)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		env := args[0]
+		envNames := strings.Split(args[0], ",")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		initialDeploy, _ := cmd.Flags().GetBool("initial-deploy")
 		force, _ := cmd.Flags().GetBool("force")
@@ -122,28 +123,42 @@ var deployCmd = &cobra.Command{
 			return fmt.Errorf("failed to get current directory: %w", err)
 		}
 
-		// Create deployer
-		d, err := deployer.NewDeployer(cfg, env, repoPath, dryRun, initialDeploy, force, skipDirtyCheck, log)
-		if err != nil {
-			return err
-		}
+		for i, env := range envNames {
+			env = strings.TrimSpace(env)
+			if len(envNames) > 1 {
+				fmt.Printf("\n=== Deploying %s (%d/%d) ===\n", env, i+1, len(envNames))
+			}
 
-		// On initial deploy, confirm before running post_deploy hooks
-		if initialDeploy {
-			d.PostDeployConfirm = func() bool {
-				fmt.Println()
-				fmt.Println("  ⚠  INITIAL DEPLOY — post_deploy hooks are about to run.")
-				fmt.Println("     Make sure your configuration file and .env are correctly")
-				fmt.Println("     set up on the server before proceeding.")
-				fmt.Print("     Run post_deploy hooks? [y/N]: ")
-				var answer string
-				fmt.Scanln(&answer)
-				return strings.ToLower(strings.TrimSpace(answer)) == "y"
+			// Create deployer
+			d, err := deployer.NewDeployer(cfg, env, repoPath, dryRun, initialDeploy, force, skipDirtyCheck, log)
+			if err != nil {
+				return err
+			}
+
+			// On initial deploy, confirm before running post_deploy hooks
+			if initialDeploy {
+				d.PostDeployConfirm = func() bool {
+					fmt.Println()
+					fmt.Println("  ⚠  INITIAL DEPLOY — post_deploy hooks are about to run.")
+					fmt.Println("     Make sure your configuration file and .env are correctly")
+					fmt.Println("     set up on the server before proceeding.")
+					fmt.Print("     Run post_deploy hooks? [y/N]: ")
+					var answer string
+					fmt.Scanln(&answer)
+					return strings.ToLower(strings.TrimSpace(answer)) == "y"
+				}
+			}
+
+			// Execute deployment
+			if err := d.Deploy(); err != nil {
+				if len(envNames) > 1 {
+					return fmt.Errorf("deploy failed for %s: %w", env, err)
+				}
+				return err
 			}
 		}
 
-		// Execute deployment
-		return d.Deploy()
+		return nil
 	},
 }
 
@@ -308,53 +323,18 @@ var sshTestCmd = &cobra.Command{
 	},
 }
 
-var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Initialize a new versaDeploy configuration",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if _, err := os.Stat(configPath); err == nil {
-			return fmt.Errorf("%s already exists", configPath)
-		}
-
-		content := `project: "my-versa-project"
-
-environments:
-  production:
-    ssh:
-      host: "server.example.com"
-      user: "deploy"
-      key_path: "~/.ssh/id_rsa"
-      port: 22
-      known_hosts_file: "~/.ssh/known_hosts"
-      use_ssh_agent: false
-
-    remote_path: "/var/www/app"
-
-    # Timeout for each hook in seconds (optional, default: 300)
-    hook_timeout: 300
-
-    # Paths to ignore for SHA256 tracking
-    ignored_paths:
-      - ".git"
-      - "tests"
-      - "var/cache"
-      - "node_modules/.cache"
-
-    # Paths that persist between releases (symlinked into each release)
-    shared_paths:
-      - ".env"
-      # - "storage/logs"
-      # - "public/uploads"
-
-    builds:
+// buildsTemplate is shared by both the SSH (VPS) and local init templates —
+// which language builders are available doesn't depend on how the result gets
+// to the server.
+const buildsTemplate = `    builds:
       php:
         enabled: false
         composer_command: "composer install --no-dev --optimize-autoloader"
 
       go:
         enabled: false
-				root: ""                       # Subdirectory where your go.mod lives (if any)
-				deploy_path: "bin/go"          # Release-relative output path for the Go binary
+        root: ""                       # Subdirectory where your go.mod lives (if any)
+        deploy_path: "bin/go"          # Release-relative output path for the Go binary
         target_os: "linux"
         target_arch: "amd64"
         binary_name: "app"
@@ -413,7 +393,39 @@ environments:
         # Reuse .venv from previous release (speeds up deploys)
         reusable_paths:
           - ".venv"
+`
 
+var sshConfigTemplate = `project: "my-versa-project"
+
+environments:
+  production:
+    ssh:
+      host: "server.example.com"
+      user: "deploy"
+      key_path: "~/.ssh/id_rsa"
+      port: 22
+      known_hosts_file: "~/.ssh/known_hosts"
+      use_ssh_agent: false
+
+    remote_path: "/var/www/app"
+
+    # Timeout for each hook in seconds (optional, default: 300)
+    hook_timeout: 300
+
+    # Paths to ignore for SHA256 tracking
+    ignored_paths:
+      - ".git"
+      - "tests"
+      - "var/cache"
+      - "node_modules/.cache"
+
+    # Paths that persist between releases (symlinked into each release)
+    shared_paths:
+      - ".env"
+      # - "storage/logs"
+      # - "public/uploads"
+
+` + buildsTemplate + `
     # Hooks to run locally before cloning (abort on failure)
     # pre_deploy_local:
     #   - "make test"
@@ -429,13 +441,77 @@ environments:
       # - "sudo systemctl restart myapp"
       []
 `
-		err := os.WriteFile(configPath, []byte(content), 0644)
-		if err != nil {
+
+var localConfigTemplate = `project: "my-versa-project"
+
+environments:
+  local:
+    # Local mode: no SSH. versa builds the project and writes a full release
+    # to local_path, replacing it entirely on every deploy — upload the
+    # contents of local_path/app to your hosting (FTP, file manager, etc.).
+    # There is no release history in this mode, so shared_paths, preserved_paths
+    # and pre_deploy_server are not available (they only make sense with the
+    # symlink-based releases the SSH mode manages).
+    local: true
+    local_path: "./local-releases/local" # never point this at a build tool's own output dir (e.g. frontend's "dist")
+
+    # Timeout for hooks in seconds (optional, default: 300)
+    hook_timeout: 300
+
+    # Paths to ignore for SHA256 tracking
+    ignored_paths:
+      - ".git"
+      - "tests"
+      - "var/cache"
+      - "node_modules/.cache"
+
+` + buildsTemplate + `
+    # Hooks to run locally before building (abort on failure)
+    # pre_deploy_local:
+    #   - "make test"
+
+    # Hooks to run locally after the release is written to local_path
+    # (cwd = local_path/app)
+    # post_deploy:
+    #   - "php versaCLI cache:clear"
+`
+
+var initLocal bool
+
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize a new versaDeploy configuration",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if _, err := os.Stat(configPath); err == nil {
+			return fmt.Errorf("%s already exists", configPath)
+		}
+
+		local := initLocal
+		if !cmd.Flags().Changed("local") {
+			fmt.Println("¿Cómo vas a desplegar este proyecto?")
+			fmt.Println("  [1] VPS / servidor con acceso SSH (por defecto)")
+			fmt.Println("  [2] Hosting local sin SSH (genera una carpeta para subir manualmente)")
+			fmt.Print("Elige una opción [1/2]: ")
+			var answer string
+			fmt.Scanln(&answer)
+			local = strings.TrimSpace(answer) == "2"
+		}
+
+		content := sshConfigTemplate
+		if local {
+			content = localConfigTemplate
+		}
+
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("failed to create %s: %w", configPath, err)
 		}
 
 		fmt.Printf("🚀 Initialized versaDeploy! Created %s.\n", configPath)
-		fmt.Printf("Edit %s to match your server details and then run: versa deploy production --initial-deploy\n", configPath)
+		if local {
+			fmt.Printf("Edit %s to match your build settings and then run: versa deploy local\n", configPath)
+		} else {
+			fmt.Printf("Edit %s to match your server details and then run: versa deploy production --initial-deploy\n", configPath)
+		}
 		return nil
 	},
 }
@@ -585,6 +661,113 @@ var logsCmd = &cobra.Command{
 	},
 }
 
+var servicesReloadCmd = &cobra.Command{
+	Use:   "services-reload [environment]",
+	Short: "Run services_reload commands (e.g. reload php-fpm/nginx) without a full deploy",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		env := args[0]
+
+		log, err := logger.NewLogger(logFile, verbose, debug)
+		if err != nil {
+			return fmt.Errorf("failed to initialize logger: %w", err)
+		}
+		defer log.Close()
+
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
+
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		repoPath, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+
+		d, err := deployer.NewDeployer(cfg, env, repoPath, false, false, false, false, log)
+		if err != nil {
+			return err
+		}
+
+		return d.ReloadServices()
+	},
+}
+
+var configCmd = &cobra.Command{
+	Use:   "config",
+	Short: "Inspect and validate deploy.yml configuration",
+}
+
+var configValidateCmd = &cobra.Command{
+	Use:   "validate [environment]",
+	Short: "Validate deploy.yml without connecting to any server",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
+
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return err
+		}
+
+		names := make([]string, 0, len(cfg.Environments))
+		for n := range cfg.Environments {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		fmt.Printf("✅ %s is valid (%d environment(s): %s)\n", configPath, len(names), strings.Join(names, ", "))
+
+		if len(args) == 1 {
+			envCfg, err := cfg.GetEnvironment(args[0])
+			if err != nil {
+				return err
+			}
+			printEnvSummary(args[0], envCfg)
+		}
+
+		return nil
+	},
+}
+
+func printEnvSummary(name string, e *config.Environment) {
+	fmt.Printf("\nEnvironment %q:\n", name)
+	if e.Local {
+		fmt.Printf("  mode:       local\n")
+		fmt.Printf("  local_path: %s\n", e.LocalPath)
+	} else {
+		fmt.Printf("  mode:        ssh\n")
+		fmt.Printf("  ssh:         %s@%s:%d\n", e.SSH.User, e.SSH.Host, e.SSH.Port)
+		fmt.Printf("  remote_path: %s\n", e.RemotePath)
+	}
+
+	var builds []string
+	if e.Builds.PHP.Enabled {
+		builds = append(builds, "php")
+	}
+	if e.Builds.Go.Enabled {
+		builds = append(builds, "go")
+	}
+	if e.Builds.Frontend.Enabled {
+		builds = append(builds, "frontend")
+	}
+	if e.Builds.Python.Enabled {
+		builds = append(builds, "python")
+	}
+	fmt.Printf("  builds:      %s\n", strings.Join(builds, ", "))
+	fmt.Printf("  hooks:       pre_deploy_local=%d pre_deploy_server=%d post_deploy=%d\n",
+		len(e.PreDeployLocal), len(e.PreDeployServer), len(e.PostDeploy))
+}
+
 func getOrSelectConfig(cmd *cobra.Command) (string, error) {
 	// If the user explicitly provided a config flag, use it
 	if cmd.Flags().Changed("config") {
@@ -654,6 +837,10 @@ func init() {
 
 	logsCmd.Flags().Int("lines", 50, "Number of initial lines to show before following")
 
+	initCmd.Flags().BoolVar(&initLocal, "local", false, "Generate a local (no SSH) environment instead of prompting")
+
+	configCmd.AddCommand(configValidateCmd)
+
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(rollbackCmd)
 	rootCmd.AddCommand(statusCmd)
@@ -664,6 +851,8 @@ func init() {
 	rootCmd.AddCommand(execCmd)
 	rootCmd.AddCommand(hooksCmd)
 	rootCmd.AddCommand(logsCmd)
+	rootCmd.AddCommand(servicesReloadCmd)
+	rootCmd.AddCommand(configCmd)
 }
 
 func main() {

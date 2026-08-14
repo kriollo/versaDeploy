@@ -543,7 +543,7 @@ func detectKind(name string) fileKind {
 
 func (b *browserModel) renderFileContent() string {
 	if b.viewErr != nil {
-		return StyleError.Render("Error reading file: " + b.viewErr.Error())
+		return StyleError.Render("Error reading file: " + errDisplay(b.viewErr))
 	}
 	name := filepath.Base(b.viewPath)
 	switch detectKind(name) {
@@ -699,7 +699,7 @@ func (b browserModel) xferUploadBrowserView(width, height int) string {
 	}
 
 	if lb.err != nil {
-		rows = append(rows, StyleError.Render("  "+lb.err.Error()))
+		rows = append(rows, StyleError.Render("  "+errDisplay(lb.err)))
 	} else {
 		total := lb.totalVisible()
 		if total == 0 {
@@ -828,7 +828,7 @@ func (b browserModel) xferDownloadView(width, height int) string {
 	}
 
 	if lb.err != nil {
-		rows = append(rows, StyleError.Render("  "+lb.err.Error()))
+		rows = append(rows, StyleError.Render("  "+errDisplay(lb.err)))
 	} else {
 		total := lb.totalVisible()
 		if total == 0 {
@@ -916,7 +916,7 @@ func (b browserModel) xferLogView(width int) string {
 	stateStr := StyleWarning.Render("  \U000F0765 Running…") // mdi-circle
 	if b.xfer.done {
 		if b.xfer.err != nil {
-			stateStr = StyleError.Render("  \U000F0159 Failed: " + b.xfer.err.Error()) // mdi-close-circle
+			stateStr = StyleError.Render("  \U000F0159 Failed: " + errDisplay(b.xfer.err)) // mdi-close-circle
 		} else {
 			stateStr = StyleSuccess.Render("  \U000F012C Transfer complete") // mdi-check-circle
 		}
@@ -963,7 +963,7 @@ func (b browserModel) dirView(width, height int) string {
 	if !b.loaded {
 		rows = append(rows, "", StyleMuted.Render("  Loading…"))
 	} else if b.err != nil {
-		rows = append(rows, "", StyleError.Render("  Error: "+b.err.Error()))
+		rows = append(rows, "", StyleError.Render("  Error: "+errDisplay(b.err)))
 	} else {
 		total := b.totalVisible()
 		if total == 0 {

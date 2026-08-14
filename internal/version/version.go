@@ -1,4 +1,6 @@
 package version
 
-// Version is the current version of versaDeploy
-const Version = "1.4.1rc"
+// Version is the current version of versaDeploy. Overridden at build time via
+// -ldflags "-X github.com/user/versaDeploy/internal/version.Version=vX.Y.Z"
+// in the release workflow.
+var Version = "1.5.0rc"
