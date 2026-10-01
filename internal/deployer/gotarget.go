@@ -90,7 +90,11 @@ func (d *Deployer) checkGoTarget(c *ssh.Client) error {
 	if arches == nil {
 		d.log.Warn("Unknown server architecture %q: cannot verify go.target_arch %q", machine, goCfg.TargetArch)
 	} else if !contains(arches, goCfg.TargetArch) {
-		return fail(fmt.Sprintf("go.target_arch is %q but the server is %s", goCfg.TargetArch, machine),
+		msg := fmt.Sprintf("go.target_arch is %q but the server is %s", goCfg.TargetArch, machine)
+		if a := goarchesFor(goCfg.TargetArch); a != nil && !contains(a, goCfg.TargetArch) { // a `uname -m` name such as i686 or x86_64, not a GOARCH
+			msg = fmt.Sprintf("go.target_arch %q is a uname machine name, not a Go GOARCH value (server is %s)", goCfg.TargetArch, machine)
+		}
+		return fail(msg,
 			fmt.Sprintf("Set go.target_arch: %s in your deploy config.", arches[0]))
 	}
 
