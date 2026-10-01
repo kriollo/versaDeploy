@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.1] - 2026-10-01
+
+### Fixed
+
+- **Error suggestions were dropped for wrapped errors**: `FormatError` only recognised a `VersaError` at the top level, so any typed error wrapped with `fmt.Errorf("...: %w")` (e.g. every `failed to load config: ...`) lost its code and suggestion in the CLI output. It now unwraps with `errors.As`.
+- **Clear message for mis-indented environments**: when an environment's keys (`hook_timeout`, `builds`, `post_deploy`, ...) are indented at the same level as the environment name, YAML reported `cannot unmarshal !!seq into config.Environment`. versa now reports "environment keys are mis-indented" with a suggestion on how to fix the indentation.
+
+### Changed
+
+- **Internal Version**: Version bumped to 1.6.1.
+
 ## [1.6.0] - 2026-10-01
 
 ### Added

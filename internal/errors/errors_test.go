@@ -2,6 +2,7 @@ package verserrors
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -116,5 +117,12 @@ func TestWrap(t *testing.T) {
 				t.Errorf("expected code %s, got %s", tt.wantCode, vErr.Code)
 			}
 		})
+	}
+}
+
+func TestFormatError_WrappedKeepsSuggestion(t *testing.T) {
+	err := fmt.Errorf("failed to load config: %w", New(CodeConfigInvalid, "bad", "fix it", nil))
+	if out := FormatError(err); !strings.Contains(out, "fix it") {
+		t.Errorf("suggestion lost for wrapped error: %q", out)
 	}
 }

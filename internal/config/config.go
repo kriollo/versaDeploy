@@ -159,6 +159,11 @@ func Load(path string) (*Config, error) {
 
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(content), &cfg); err != nil {
+		if strings.Contains(err.Error(), "into config.Environment") {
+			// A key indented one level too little becomes a sibling "environment"
+			return nil, verserrors.New(verserrors.CodeConfigInvalid, "Failed to parse YAML: environment keys are mis-indented",
+				"An environment setting is probably indented at the same level as the environment name. Indent every key of an environment (ssh, remote_path, builds, hooks, ...) one level deeper than its name.", err)
+		}
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 

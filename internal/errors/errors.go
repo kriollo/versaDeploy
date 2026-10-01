@@ -52,8 +52,10 @@ func New(code ErrorCode, msg, suggestion string, err error) *VersaError {
 }
 
 // FormatError pretty-prints the error with suggestions
+// (also when wrapped, e.g. by fmt.Errorf("...: %w")).
 func FormatError(err error) string {
-	if vErr, ok := err.(*VersaError); ok {
+	var vErr *VersaError
+	if errors.As(err, &vErr) {
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("\n\x1b[31m[ERROR] %s\x1b[0m\n", vErr.Message))
 		sb.WriteString(fmt.Sprintf("\x1b[33mCode:\x1b[0m %s\n", vErr.Code))
