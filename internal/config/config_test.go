@@ -582,9 +582,9 @@ func TestConfig_Validate_HookExecutionModeDefault(t *testing.T) {
 		Project: "test",
 		Environments: map[string]Environment{
 			"prod": {
-				SSH: SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
+				SSH:        SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
 				RemotePath: "/var/www",
-				Builds: BuildsConfig{PHP: PHPBuildConfig{Enabled: true}},
+				Builds:     BuildsConfig{PHP: PHPBuildConfig{Enabled: true}},
 			},
 		},
 	}
@@ -607,10 +607,10 @@ func TestConfig_Validate_HookExecutionModeInvalid(t *testing.T) {
 		Project: "test",
 		Environments: map[string]Environment{
 			"prod": {
-				SSH: SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
-				RemotePath: "/var/www",
+				SSH:               SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
+				RemotePath:        "/var/www",
 				HookExecutionMode: "invalid",
-				Builds: BuildsConfig{PHP: PHPBuildConfig{Enabled: true}},
+				Builds:            BuildsConfig{PHP: PHPBuildConfig{Enabled: true}},
 			},
 		},
 	}
@@ -628,7 +628,7 @@ func TestConfig_Validate_GoDeployPathDefault(t *testing.T) {
 		Project: "test",
 		Environments: map[string]Environment{
 			"prod": {
-				SSH: SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
+				SSH:        SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
 				RemotePath: "/var/www",
 				Builds: BuildsConfig{
 					Go: GoBuildConfig{Enabled: true, TargetOS: "linux", TargetArch: "amd64", BinaryName: "svc"},
@@ -656,7 +656,7 @@ func TestConfig_Validate_GoDeployPathInvalid(t *testing.T) {
 			Project: "test",
 			Environments: map[string]Environment{
 				"prod": {
-					SSH: SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
+					SSH:        SSHConfig{Host: "host", User: "user", KeyPath: keyPath},
 					RemotePath: "/var/www",
 					Builds: BuildsConfig{
 						Go: GoBuildConfig{Enabled: true, TargetOS: "linux", TargetArch: "amd64", BinaryName: "svc", DeployPath: deployPath},
@@ -726,5 +726,15 @@ environments:
 
 	if len(env.PostDeploy[1].Parallel) != 2 {
 		t.Errorf("expected 2 parallel commands, got %d", len(env.PostDeploy[1].Parallel))
+	}
+}
+
+func TestEnvironmentPerformanceDefaults(t *testing.T) {
+	env := Environment{Local: true, LocalPath: "./dist", Builds: BuildsConfig{PHP: PHPBuildConfig{Enabled: true}}}
+	if err := env.Validate("test"); err != nil {
+		t.Fatal(err)
+	}
+	if env.ReleasesToKeep != 5 || env.UploadWorkers != 4 || env.ChunkSizeMB != 10 {
+		t.Errorf("defaults = %d/%d/%d, want 5/4/10", env.ReleasesToKeep, env.UploadWorkers, env.ChunkSizeMB)
 	}
 }

@@ -19,24 +19,31 @@ type Config struct {
 
 // Environment represents a single deployment environment
 type Environment struct {
-	Local          bool         `yaml:"local"`      // If true, deploy writes a full build to LocalPath instead of over SSH
-	LocalPath      string       `yaml:"local_path"` // Output directory for local deploys (replaced entirely on every deploy)
-	SSH            SSHConfig    `yaml:"ssh"`
-	RemotePath     string       `yaml:"remote_path"`
-	Builds         BuildsConfig `yaml:"builds"`
-	PreDeployLocal []HookConfig `yaml:"pre_deploy_local"`  // Local commands run before cloning; abort on error
-	PreDeployServer []HookConfig `yaml:"pre_deploy_server"` // Remote commands run before symlink switch; non-fatal
-	PostDeploy     []HookConfig `yaml:"post_deploy"`
-	ServicesReload []string     `yaml:"services_reload"`  // Commands to reload services after symlink switch (e.g. php-fpm, nginx, apache)
-	Ignored        []string     `yaml:"ignored_paths"`
-	SharedPaths    []string     `yaml:"shared_paths"`    // Paths to persist between releases (e.g. storage, uploads)
-	PreservedPaths []string     `yaml:"preserved_paths"` // Paths to KEEP from previous release (overwriting artifact)
-	RouteFiles     []string     `yaml:"route_files"`     // Files that trigger route cache regeneration
-	HookTimeout    int          `yaml:"hook_timeout"`    // Timeout for post-deploy hooks in seconds
-	DeployTimeout  int          `yaml:"deploy_timeout"`  // Global timeout for entire deploy in seconds (default: 600)
-	HookExecutionMode string    `yaml:"hook_execution_mode"` // Deprecated: use pre_deploy_local/pre_deploy_server instead
-	HealthCheck    HealthCheckConfig    `yaml:"health_check"`    // HTTP health check after deploy
-	Notifications  NotificationConfig   `yaml:"notifications"`   // Webhook notifications on deploy events
+	Local             bool               `yaml:"local"`      // If true, deploy writes a full build to LocalPath instead of over SSH
+	LocalPath         string             `yaml:"local_path"` // Output directory for local deploys (replaced entirely on every deploy)
+	SSH               SSHConfig          `yaml:"ssh"`
+	RemotePath        string             `yaml:"remote_path"`
+	Builds            BuildsConfig       `yaml:"builds"`
+	PreDeployLocal    []HookConfig       `yaml:"pre_deploy_local"`  // Local commands run before cloning; abort on error
+	PreDeployServer   []HookConfig       `yaml:"pre_deploy_server"` // Remote commands run before symlink switch; non-fatal
+	PostDeploy        []HookConfig       `yaml:"post_deploy"`
+	ServicesReload    []string           `yaml:"services_reload"` // Commands to reload services after symlink switch (e.g. php-fpm, nginx, apache)
+	Ignored           []string           `yaml:"ignored_paths"`
+	SharedPaths       []string           `yaml:"shared_paths"`        // Paths to persist between releases (e.g. storage, uploads)
+	PreservedPaths    []string           `yaml:"preserved_paths"`     // Paths to KEEP from previous release (overwriting artifact)
+	RouteFiles        []string           `yaml:"route_files"`         // Files that trigger route cache regeneration
+	HookTimeout       int                `yaml:"hook_timeout"`        // Timeout for post-deploy hooks in seconds
+	DeployTimeout     int                `yaml:"deploy_timeout"`      // Global timeout for entire deploy in seconds (default: 600)
+	HookExecutionMode string             `yaml:"hook_execution_mode"` // Deprecated: use pre_deploy_local/pre_deploy_server instead
+	HealthCheck       HealthCheckConfig  `yaml:"health_check"`        // HTTP health check after deploy
+	Notifications     NotificationConfig `yaml:"notifications"`       // Webhook notifications on deploy events
+	ReleasesToKeep    int                `yaml:"releases_to_keep"`    // Releases kept on the server (default: 5)
+	UploadWorkers     int                `yaml:"upload_workers"`      // Parallel SFTP uploads (default: 4)
+	ChunkSizeMB       int                `yaml:"chunk_size_mb"`       // Archive chunk size in MB (default: 10)
+	// IncrementalUpload uploads only files that changed since the previous release and
+	// hardlinks the rest (cp -al). Hooks must not modify release files in place
+	// (e.g. `echo >> file`), or the previous release is modified too.
+	IncrementalUpload bool `yaml:"incremental_upload"`
 }
 
 // SSHConfig holds SSH connection details
@@ -47,6 +54,9 @@ type SSHConfig struct {
 	Port           int    `yaml:"port"`             // Default: 22
 	KnownHostsFile string `yaml:"known_hosts_file"` // Optional: path to known_hosts file
 	UseSSHAgent    bool   `yaml:"use_ssh_agent"`    // Optional: use SSH agent for authentication
+	// LegacyAlgorithms enables SHA1 key exchanges, CBC ciphers and ssh-rsa/dss host keys
+	// for old servers (OpenSSH < 7, e.g. RHEL/CentOS 5). Insecure: use only when required.
+	LegacyAlgorithms bool `yaml:"legacy_algorithms"`
 }
 
 // BuildsConfig holds build configuration for each language
@@ -68,12 +78,13 @@ type PHPBuildConfig struct {
 // GoBuildConfig holds Go build settings
 type GoBuildConfig struct {
 	Enabled     bool   `yaml:"enabled"`
-	ProjectRoot string `yaml:"root"` // Subdirectory for go.mod
+	ProjectRoot string `yaml:"root"`        // Subdirectory for go.mod
 	DeployPath  string `yaml:"deploy_path"` // Relative path inside release for compiled binary (default: bin)
 	TargetOS    string `yaml:"target_os"`
 	TargetArch  string `yaml:"target_arch"`
 	BinaryName  string `yaml:"binary_name"`
 	BuildFlags  string `yaml:"build_flags"` // Optional additional flags
+	CGO         bool   `yaml:"cgo"`         // Build with CGO_ENABLED=1 (default: 0, static binary)
 }
 
 // FrontendBuildConfig holds frontend build settings
@@ -348,6 +359,16 @@ func (e *Environment) Validate(envName string) error {
 		}
 	}
 
+	if e.ReleasesToKeep <= 0 {
+		e.ReleasesToKeep = 5
+	}
+	if e.UploadWorkers <= 0 {
+		e.UploadWorkers = 4
+	}
+	if e.ChunkSizeMB <= 0 {
+		e.ChunkSizeMB = 10
+	}
+
 	// Default ignored paths
 	if len(e.Ignored) == 0 {
 		e.Ignored = []string{".git", "tests", "node_modules/.cache", "vendor/bin"}
@@ -368,6 +389,7 @@ func (c *Config) GetEnvironment(name string) (*Environment, error) {
 // HealthCheckConfig defines an HTTP health check to verify the app is working after deploy
 type HealthCheckConfig struct {
 	URL            string `yaml:"url"`             // URL to check (e.g. https://myapp.com/health)
+	Command        string `yaml:"command"`         // Remote command run in the new release's app dir; exit 0 = healthy
 	ExpectedStatus int    `yaml:"expected_status"` // Expected HTTP status code (default: 200)
 	Timeout        int    `yaml:"timeout"`         // Request timeout in seconds (default: 10)
 	Retries        int    `yaml:"retries"`         // Number of retries before failing (default: 3)

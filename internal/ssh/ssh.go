@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ type Client struct {
 	agentConn  net.Conn
 	config     *config.SSHConfig
 	log        *logger.Logger
+	done       chan struct{} // stops the keepalive goroutine
 }
 
 // NewClient creates a new SSH client
@@ -79,6 +81,13 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 		HostKeyCallback: createHostKeyCallback(cfg),
 		Timeout:         10 * time.Second,
 	}
+	if cfg.LegacyAlgorithms {
+		sup, ins := ssh.SupportedAlgorithms(), ssh.InsecureAlgorithms()
+		sshConfig.KeyExchanges = append(sup.KeyExchanges, ins.KeyExchanges...)
+		sshConfig.Ciphers = append(sup.Ciphers, ins.Ciphers...)
+		sshConfig.MACs = append(sup.MACs, ins.MACs...)
+		sshConfig.HostKeyAlgorithms = append(sup.HostKeys, ins.HostKeys...)
+	}
 
 	// Connect with retry logic
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
@@ -110,17 +119,56 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 		return nil, verserrors.New(verserrors.CodeSSHConnectFailed, "Failed to create SFTP client", "Ensure the SFTP subsystem is enabled on the remote server (check 'Subsystem sftp' in /etc/ssh/sshd_config).", err)
 	}
 
-	return &Client{
+	c := &Client{
 		sshClient:  sshClient,
 		sftpClient: sftpClient,
 		agentConn:  agentConn,
 		config:     cfg,
 		log:        log,
-	}, nil
+		done:       make(chan struct{}),
+	}
+	go c.keepAlive(30 * time.Second)
+	return c, nil
+}
+
+// keepAlive pings the server so long uploads/hooks survive NAT and firewall idle timeouts.
+// Servers that don't know the request reply with a failure, which still counts as alive.
+func (c *Client) keepAlive(interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-t.C:
+			if _, _, err := c.sshClient.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// shellQuote single-quotes s for POSIX sh.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// shWrap runs cmd under /bin/sh regardless of the remote user's login shell (csh/tcsh
+// would otherwise reject sh syntax like $(...), 2>/dev/null or [ ]). Only for versa's
+// own commands: user hooks run in the login shell (dash as /bin/sh lacks `source`, [[ ]]).
+func shWrap(cmd string) string {
+	return "/bin/sh -c " + shellQuote(cmd)
 }
 
 // Close closes the SSH and SFTP connections
 func (c *Client) Close() error {
+	if c.done != nil {
+		select {
+		case <-c.done:
+		default:
+			close(c.done)
+		}
+	}
 	if c.sftpClient != nil {
 		c.sftpClient.Close()
 	}
@@ -359,12 +407,13 @@ func (c *Client) ExtractArchive(archivePath, targetDir string) error {
 	return nil
 }
 
-// ExecuteCommand executes a command on the remote server with no timeout
+// ExecuteCommand executes one of versa's own commands under /bin/sh, with no timeout.
 func (c *Client) ExecuteCommand(cmd string) (string, error) {
-	return c.ExecuteCommandWithTimeout(cmd, 0)
+	return c.ExecuteCommandWithTimeout(shWrap(cmd), 0)
 }
 
-// ExecuteCommandWithTimeout executes a command with a specific timeout
+// ExecuteCommandWithTimeout executes a command with a specific timeout in the remote
+// user's login shell, so user hooks keep the shell features they were written for.
 func (c *Client) ExecuteCommandWithTimeout(cmd string, timeout time.Duration) (string, error) {
 	session, err := c.sshClient.NewSession()
 	if err != nil {
@@ -494,6 +543,11 @@ func (c *Client) CleanupOldReleases(releasesDir string, keepCount int) error {
 		return err
 	}
 
+	// Never delete the newest release, even with a bad keepCount
+	if keepCount < 1 {
+		keepCount = 1
+	}
+
 	// Keep newest releases
 	if len(releases) <= keepCount {
 		return nil // Nothing to clean up
@@ -517,46 +571,56 @@ func (c *Client) CleanupOldReleases(releasesDir string, keepCount int) error {
 	return nil
 }
 
-// CheckDiskSpace verifies sufficient disk space is available on remote server
-func (c *Client) CheckDiskSpace(path string, requiredBytes int64) error {
-	// Get disk usage for the path
-	cmd := fmt.Sprintf("df -B1 %q | tail -1 | awk '{print $4}'", path)
-	output, err := c.ExecuteCommand(cmd)
+// AvailableDiskBytes returns the free space of the filesystem holding path.
+func (c *Client) AvailableDiskBytes(path string) (int64, error) {
+	out, err := c.ExecuteCommand(fmt.Sprintf("df -Pk %q", path))
 	if err != nil {
-		// Non-fatal: just warn and continue
-		c.log.Warn("Failed to check disk space: %v", err)
-		return nil
+		return 0, err
 	}
+	return parseDfAvailable(out)
+}
 
-	output = strings.TrimSpace(output)
-	if output == "" {
-		// Non-fatal: just warn and continue
-		c.log.Warn("Empty output from disk space check command")
-		return nil
+// parseDfAvailable reads the "Available" column of `df -Pk` output (in bytes).
+// -P (POSIX) keeps each filesystem on one line; without it old coreutils (RHEL5) wrap
+// long LVM device names and the columns shift. -k is portable, -B1 is GNU-only.
+func parseDfAvailable(out string) (int64, error) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(lines) < 2 || len(fields) < 6 {
+		return 0, fmt.Errorf("unexpected df output: %q", out)
 	}
-
-	var availableBytes int64
-	_, err = fmt.Sscanf(output, "%d", &availableBytes)
+	kb, err := strconv.ParseInt(fields[3], 10, 64)
 	if err != nil {
-		// Non-fatal: show the output for debugging and continue
-		c.log.Warn("Failed to parse disk space output (got: '%s'): %v", output, err)
-		return nil
+		return 0, fmt.Errorf("unexpected df output: %q", out)
 	}
+	return kb * 1024, nil
+}
 
-	// Require 20% buffer on top of required space
-	requiredWithBuffer := int64(float64(requiredBytes) * 1.2)
-
-	if availableBytes < requiredWithBuffer {
-		return verserrors.New(verserrors.CodeUploadFailed,
-			fmt.Sprintf("Insufficient disk space: need %d MB, have %d MB available", requiredWithBuffer/(1024*1024), availableBytes/(1024*1024)),
-			"Free up space on the remote server, or lower ReleasesToKeep by cleaning up old releases manually.",
-			nil)
+// DirSizesKB runs `du -sk` over paths in order. du counts each hardlinked inode only
+// once, so a path's size excludes data already counted for an earlier path.
+func (c *Client) DirSizesKB(paths []string) (map[string]int64, error) {
+	quoted := make([]string, len(paths))
+	for i, p := range paths {
+		quoted[i] = fmt.Sprintf("%q", p)
 	}
+	out, err := c.ExecuteCommand("du -sk " + strings.Join(quoted, " ") + " 2>/dev/null")
+	sizes := map[string]int64{}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.SplitN(line, "\t", 2); len(f) == 2 {
+			if kb, perr := strconv.ParseInt(f[0], 10, 64); perr == nil {
+				sizes[f[1]] = kb
+			}
+		}
+	}
+	if len(sizes) == 0 && err != nil {
+		return nil, err
+	}
+	return sizes, nil
+}
 
-	c.log.Info("Disk space check passed: %d MB available, %d MB required",
-		availableBytes/(1024*1024), requiredWithBuffer/(1024*1024))
-
-	return nil
+// Rename renames a remote path via SFTP (fails if newPath exists; no `mv -T` needed).
+func (c *Client) Rename(oldPath, newPath string) error {
+	return c.sftpClient.Rename(oldPath, newPath)
 }
 
 // AcquireLock attempts to acquire a deployment lock using atomic directory creation via SFTP

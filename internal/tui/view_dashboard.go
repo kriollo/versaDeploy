@@ -14,13 +14,13 @@ type dashboardModel struct {
 	disk     string
 	releases []string
 	// Server stats
-	ram     string
-	cpu     string
-	load    string
-	uptime  string
-	os      string
-	loaded  bool
-	err     error
+	ram    string
+	cpu    string
+	load   string
+	uptime string
+	os     string
+	loaded bool
+	err    error
 }
 
 type msgDashboardData struct {
@@ -35,79 +35,56 @@ type msgDashboardData struct {
 	err      error
 }
 
+// serverStatsScript prints one key=value line per stat in a single SSH round-trip.
+// It sticks to /proc and POSIX tools so it works on old servers (RHEL/CentOS 5+):
+// df -P avoids line wrapping with long LVM device names, /proc/meminfo replaces
+// `free -h`, /proc/uptime replaces `uptime -p`, and /etc/redhat-release covers
+// distros without /etc/os-release. %s is the quoted remote path.
+const serverStatsScript = `echo "disk=$(df -Ph %s | tail -1 | awk '{print $3"/"$2" ("$5" used)"}')"
+echo "ram=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{if(!a)a=f+b+c; if(t)printf "%%.1fG/%%.1fG used", (t-a)/1048576, t/1048576}' /proc/meminfo)"
+echo "load=$(awk '{print $1", "$2", "$3}' /proc/loadavg)"
+echo "uptime=$(awk '{s=int($1); printf "up %%dd %%dh %%dm", s/86400, s%%86400/3600, s%%3600/60}' /proc/uptime)"
+echo "os=$(if [ -f /etc/os-release ]; then grep '^PRETTY_NAME=' /etc/os-release | cut -d= -f2 | tr -d '"'; elif [ -f /etc/redhat-release ]; then cat /etc/redhat-release; else head -1 /etc/issue; fi)"
+echo "cpu=$( (head -1 /proc/stat; sleep 1; head -1 /proc/stat) | awk '{t=0; for(k=2;k<=NF&&k<=9;k++)t+=$k; i=$5+$6; if(NR==1){t1=t;i1=i} else if(t>t1)printf "%%.1f%%%%", 100*(1-(i-i1)/(t-t1))}')"`
+
+// parseStats parses key=value lines; values may contain '='.
+func parseStats(out string) map[string]string {
+	stats := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			stats[k] = strings.TrimSpace(v)
+		}
+	}
+	return stats
+}
+
 func loadDashboard(client *versassh.Client, remotePath string) tea.Cmd {
 	return func() tea.Msg {
 		current := ""
-		disk := ""
-		ram := ""
-		cpu := ""
-		load := ""
-		uptime := ""
-		osInfo := ""
-		var releases []string
-
 		currentSymlink := filepath.ToSlash(filepath.Join(remotePath, "current"))
 		if target, err := client.ReadSymlink(currentSymlink); err == nil {
 			current = filepath.Base(target)
 		}
 
-		// Disk usage for remote path
-		dfCmd := fmt.Sprintf("df -h %q | tail -1 | awk '{print $3\"/\"$2\" (\"$5\" used)\"}'", remotePath)
-		if out, err := client.ExecuteCommand(dfCmd); err == nil {
-			disk = strings.TrimSpace(out)
-		}
-
 		releasesDir := filepath.ToSlash(filepath.Join(remotePath, "releases"))
-		releases, _ = client.ListReleases(releasesDir)
+		releases, _ := client.ListReleases(releasesDir)
 
-		// RAM: free -h → total and used
-		if out, err := client.ExecuteCommand("free -h 2>/dev/null | awk '/^Mem:/{print $3\"/\"$2\" used\"}'"); err == nil {
-			if v := strings.TrimSpace(out); v != "" {
-				ram = v
-			}
-		}
-
-		// CPU: single-shot mpstat or fallback to /proc/stat
-		cpuCmd := `mpstat 1 1 2>/dev/null | awk '/Average:/{printf "%.1f%%", 100-$NF}' || awk '/cpu /{u=$2+$4; t=$2+$3+$4+$5; printf "%.1f%%", (u/t)*100; exit}' /proc/stat`
-		if out, err := client.ExecuteCommand(cpuCmd); err == nil {
-			if v := strings.TrimSpace(out); v != "" {
-				cpu = v
-			}
-		}
-
-		// Load average
-		if out, err := client.ExecuteCommand("cat /proc/loadavg 2>/dev/null | awk '{print $1\", \"$2\", \"$3}'"); err == nil {
-			if v := strings.TrimSpace(out); v != "" {
-				load = v
-			}
-		}
-
-		// Uptime
-		if out, err := client.ExecuteCommand("uptime -p 2>/dev/null || uptime"); err == nil {
-			if v := strings.TrimSpace(out); v != "" {
-				if len(v) > 40 {
-					v = v[:40] + "…"
-				}
-				uptime = v
-			}
-		}
-
-		// OS info
-		if out, err := client.ExecuteCommand("cat /etc/os-release 2>/dev/null | grep '^PRETTY_NAME' | cut -d= -f2 | tr -d '\"'"); err == nil {
-			if v := strings.TrimSpace(out); v != "" {
-				osInfo = v
-			}
+		// Each stat is best-effort: a failing line just leaves its field empty
+		out, _ := client.ExecuteCommand(fmt.Sprintf(serverStatsScript, fmt.Sprintf("%q", remotePath)))
+		stats := parseStats(out)
+		if len(stats["uptime"]) > 40 {
+			stats["uptime"] = stats["uptime"][:40] + "…"
 		}
 
 		return msgDashboardData{
 			current:  current,
-			disk:     disk,
+			disk:     stats["disk"],
 			releases: releases,
-			ram:      ram,
-			cpu:      cpu,
-			load:     load,
-			uptime:   uptime,
-			os:       osInfo,
+			ram:      stats["ram"],
+			cpu:      stats["cpu"],
+			load:     stats["load"],
+			uptime:   stats["uptime"],
+			os:       stats["os"],
 		}
 	}
 }

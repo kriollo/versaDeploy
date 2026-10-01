@@ -162,6 +162,45 @@ var deployCmd = &cobra.Command{
 	},
 }
 
+var diffCmd = &cobra.Command{
+	Use:   "diff [environment]",
+	Short: "List the files a deploy would ship (committed HEAD vs the server's deploy.lock)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		log, err := logger.NewLogger(logFile, verbose, debug)
+		if err != nil {
+			return fmt.Errorf("failed to initialize logger: %w", err)
+		}
+		defer log.Close()
+
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		if env, err := cfg.GetEnvironment(args[0]); err != nil {
+			return err
+		} else if env.Local {
+			return fmt.Errorf("diff needs an SSH environment (local deploys have no server state)")
+		}
+
+		repoPath, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		// Dry run of a normal deploy; only HEAD is compared, so uncommitted changes don't matter
+		d, err := deployer.NewDeployer(cfg, args[0], repoPath, true, false, false, true, log)
+		if err != nil {
+			return err
+		}
+		return d.Deploy()
+	},
+}
+
 var rollbackCmd = &cobra.Command{
 	Use:   "rollback [environment]",
 	Short: "Rollback to previous release (or specific version with --to)",
@@ -842,6 +881,7 @@ func init() {
 	configCmd.AddCommand(configValidateCmd)
 
 	rootCmd.AddCommand(deployCmd)
+	rootCmd.AddCommand(diffCmd)
 	rootCmd.AddCommand(rollbackCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(sshTestCmd)

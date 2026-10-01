@@ -39,7 +39,7 @@ type terminalModel struct {
 	// Tab completion state
 	completions   []string
 	completionIdx int
-	completionOn  bool // true while cycling through completions
+	completionOn  bool   // true while cycling through completions
 	completionPfx string // the prefix text before the token being completed
 	completionTok string // the original token being completed
 }

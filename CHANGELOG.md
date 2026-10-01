@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-10-01
+
+### Added
+
+- **`versa diff [environment]`**: Lists the files a deploy would ship (committed HEAD vs the server's `deploy.lock`), grouped by language, plus which dependency manifests changed. `deploy --dry-run` now prints the same list. Dry runs no longer execute `pre_deploy_local` hooks.
+- **Incremental upload** (`incremental_upload: true`, opt-in): each release stores a `.versa-files` hash list; the next deploy hardlinks the previous release (`cp -al`), removes stale/changed paths and uploads only the changed files. Falls back to a full upload when not possible. Hooks must not modify release files in place (e.g. `echo >> file`), since unchanged files are shared with the previous release.
+- **Per-environment tuning**: `releases_to_keep` (default 5), `upload_workers` (default 4), `chunk_size_mb` (default 10).
+- **Legacy SSH servers**: `ssh.legacy_algorithms: true` enables SHA1 key exchanges, CBC ciphers and ssh-rsa/dss host keys for OpenSSH < 7 (e.g. RHEL/CentOS 5). Insecure; off by default.
+- **SSH keepalive**: `keepalive@openssh.com` every 30 s so long uploads and hooks survive NAT/firewall idle timeouts.
+- **Command health check**: `health_check.command` runs a remote command in the new release's app dir (exit 0 = healthy); can be combined with `health_check.url`.
+- **Go target validation**: before building, the deploy reads `uname -srm` from the server and aborts when `go.target_os`/`go.target_arch` can't run there (all Go Linux architectures mapped; 386 on x86_64 and arm on aarch64 accepted), warns about `GOARM` on ARMv5/v6 boards, and aborts when the local Go toolchain is 1.24+ but the server kernel is older than 3.2.
+- **`go.cgo`** option (default `false`).
+- **Chat-friendly notifications**: webhook payloads now include `text` (Slack/Teams) and `content` (Discord).
+
+### Changed
+
+- **Disk space check** now estimates the deploy's peak usage (chunks + reassembled archive, then archive + extracted tree) instead of artifact size × 1.2, and on failure reports how much deleting the releases cleanup would remove frees.
+- **TUI dashboard** gathers all server stats in a single SSH round-trip, using only `/proc` and POSIX tools; CPU usage is measured over 1 s from `/proc/stat` instead of `mpstat`.
+- versa's own remote commands run under `/bin/sh -c` regardless of the user's login shell; user hooks, `services_reload`, `exec` and the terminal still use the login shell.
+- `Deploy` and multi-server `DeployWithArtifact` now share one upload/activation path; releases are moved into place with an SFTP rename instead of `mv -T`.
+- CI checks `gofmt` and uses the Go version from `go.mod`.
+- **Internal Version**: Version bumped to 1.6.0.
+
+### Fixed
+
+- **Go builds were linked against the build machine's glibc**: native builds (e.g. linux/amd64 on linux/amd64) used CGO by default and failed on older servers with `GLIBC_2.xx not found`. Now built with `CGO_ENABLED=0` unless `go.cgo: true`.
+- **Go builds on Windows**: the build command used inline `GOOS=... go build`, which `cmd.exe` doesn't understand; target variables are now passed through the process environment.
+- **"Insufficient disk space" on old servers (RHEL 5)**: `df` wrapped long LVM device names onto two lines, so the free-space column read the `Use%` value (e.g. `50%` → 50 bytes). Now uses `df -Pk` and a strict parser.
+- **TUI dashboard on old servers**: disk, RAM (`free -h`), uptime (`uptime -p`), OS (`/etc/os-release`) and CPU (`mpstat` column layout) were wrong or empty on RHEL/CentOS 5–6.
+- **Multi-deploy nil panic**: `DeployWithArtifact` passed a nil changeset to runtime validation, which panicked when Python builds were enabled.
+- `CleanupOldReleases` never deletes the newest release, even with a keep count below 1.
+
 ## [1.5.0rc] - 2026-08-14
 
 ### Added

@@ -2,13 +2,18 @@ package artifact
 
 import (
 	"archive/tar"
+	"bufio"
+	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -198,14 +203,25 @@ func (cw *chunkWriter) ChunkPaths() []string {
 
 // CompressChunked creates a multi-part .tar.gz archive of the artifact directory
 func (g *Generator) CompressChunked(archivePath string, chunkSize int64) ([]string, error) {
+	return g.CompressChunkedFiltered(archivePath, chunkSize, nil)
+}
+
+// CompressChunkedFiltered is CompressChunked restricted to the non-directory entries
+// whose slash-separated relative path is in keep (nil keeps everything). Directories
+// are always included so new empty directories are created on extraction.
+func (g *Generator) CompressChunkedFiltered(archivePath string, chunkSize int64, keep map[string]bool) ([]string, error) {
 	// First, count files for progress bar
 	var fileCount int64
-	filepath.WalkDir(g.artifactDir, func(path string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			fileCount++
-		}
-		return nil
-	})
+	if keep != nil {
+		fileCount = int64(len(keep))
+	} else {
+		filepath.WalkDir(g.artifactDir, func(path string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				fileCount++
+			}
+			return nil
+		})
+	}
 
 	bar := progressbar.Default(fileCount, "Compressing artifact (chunked)")
 
@@ -234,6 +250,9 @@ func (g *Generator) CompressChunked(archivePath string, chunkSize int64) ([]stri
 		}
 
 		if relPath == "." {
+			return nil
+		}
+		if keep != nil && !d.IsDir() && !keep[filepath.ToSlash(relPath)] {
 			return nil
 		}
 
@@ -309,4 +328,106 @@ func (g *Generator) CompressChunked(archivePath string, chunkSize int64) ([]stri
 	cw.Close()
 
 	return cw.ChunkPaths(), nil
+}
+
+// HashFileName is written at the root of every release: one "<hash>  <path>" line per
+// artifact file, used to compute the next incremental upload.
+const HashFileName = ".versa-files"
+
+// HashTree returns sha256 hashes of every non-directory entry under dir, keyed by
+// slash-separated relative path. Symlinks hash as "link:<target>".
+func HashTree(dir string) (map[string]string, error) {
+	hashes := map[string]string{}
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if d.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			hashes[rel] = "link:" + filepath.ToSlash(target)
+			return nil
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			return err
+		}
+		hashes[rel] = hex.EncodeToString(h.Sum(nil))
+		return nil
+	})
+	return hashes, err
+}
+
+// EncodeHashes serializes hashes in sha256sum-like format, sorted by path.
+func EncodeHashes(hashes map[string]string) []byte {
+	paths := make([]string, 0, len(hashes))
+	for p := range hashes {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	var b bytes.Buffer
+	for _, p := range paths {
+		fmt.Fprintf(&b, "%s  %s\n", hashes[p], p)
+	}
+	return b.Bytes()
+}
+
+// DecodeHashes parses EncodeHashes output.
+func DecodeHashes(data []byte) map[string]string {
+	hashes := map[string]string{}
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		if hash, path, ok := strings.Cut(sc.Text(), "  "); ok {
+			hashes[path] = hash
+		}
+	}
+	return hashes
+}
+
+// Delta compares the previous release's hashes with the current artifact's.
+// upload: files to send. remove: paths to delete from a hardlinked copy of the previous
+// release before extracting, so changed files get a fresh inode instead of being written
+// through a hardlink into the previous release. Everything under a replaced dir (a
+// dependency dir like vendor/ that the new artifact rebuilt) is removed and re-uploaded
+// whole, since the previous release's copy may have come from reuse, not from its hashes.
+func Delta(prev, cur map[string]string, replacedDirs []string) (upload, remove []string) {
+	under := func(p string) bool {
+		for _, d := range replacedDirs {
+			if p == d || strings.HasPrefix(p, d+"/") {
+				return true
+			}
+		}
+		return false
+	}
+	remove = append(remove, replacedDirs...)
+	for p, h := range cur {
+		if under(p) {
+			upload = append(upload, p)
+		} else if old, ok := prev[p]; !ok || old != h {
+			// Removed even when new: the path may exist untracked (e.g. created by a hook).
+			upload = append(upload, p)
+			remove = append(remove, p)
+		}
+	}
+	for p := range prev {
+		if _, ok := cur[p]; !ok && !under(p) {
+			remove = append(remove, p)
+		}
+	}
+	sort.Strings(upload)
+	sort.Strings(remove)
+	return upload, remove
 }

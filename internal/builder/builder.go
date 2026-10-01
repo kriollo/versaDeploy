@@ -77,15 +77,15 @@ func (b *Builder) Build() (*BuildResult, error) {
 
 	// Local result holders — written only by their own goroutine, merged after Wait().
 	var (
-		phpCount      int
-		phpComposer   bool
-		phpTwig       bool
-		phpRoutes     bool
-		goBin         bool
-		feCount       int
-		feNPM         bool
-		pyCount       int
-		pyPip         bool
+		phpCount    int
+		phpComposer bool
+		phpTwig     bool
+		phpRoutes   bool
+		goBin       bool
+		feCount     int
+		feNPM       bool
+		pyCount     int
+		pyPip       bool
 	)
 
 	if b.config.Builds.PHP.Enabled {

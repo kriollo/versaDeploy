@@ -551,8 +551,6 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		return m, tea.Batch(cmds...)
 	}
 
-
-
 	// Shortcut: d goes to operations view from anywhere
 	if key.Matches(msg, Keys.Deploy) && m.currentView != viewOperations && m.currentView != viewBrowser {
 		m.currentView = viewOperations

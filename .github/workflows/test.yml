@@ -17,11 +17,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.21"
+          go-version-file: go.mod
           cache: true
 
       - name: Install dependencies
         run: go mod download
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l cmd internal)" || (gofmt -l cmd internal && exit 1)
 
       - name: Run Tests
         run: go test -v ./...

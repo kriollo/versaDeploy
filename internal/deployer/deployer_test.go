@@ -294,7 +294,7 @@ func TestDeployer_PerformHealthCheck_Success(t *testing.T) {
 	}
 
 	d, _ := NewDeployer(cfg, "prod", ".", false, false, false, false, log)
-	err := d.performHealthCheck(nil, nil)
+	err := d.performHealthCheck(nil, nil, "")
 	if err != nil {
 		t.Fatalf("health check should pass: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestDeployer_PerformHealthCheck_WrongStatus(t *testing.T) {
 	}
 
 	d, _ := NewDeployer(cfg, "prod", ".", false, false, false, false, log)
-	err := d.performHealthCheck(nil, nil)
+	err := d.performHealthCheck(nil, nil, "")
 	if err == nil {
 		t.Fatal("health check should fail with wrong status code")
 	}
@@ -343,7 +343,7 @@ func TestDeployer_PerformHealthCheck_NoURL(t *testing.T) {
 	}
 
 	d, _ := NewDeployer(cfg, "prod", ".", false, false, false, false, log)
-	err := d.performHealthCheck(nil, nil)
+	err := d.performHealthCheck(nil, nil, "")
 	if err != nil {
 		t.Fatalf("health check with no URL should be a no-op: %v", err)
 	}

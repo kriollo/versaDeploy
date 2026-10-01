@@ -14,8 +14,8 @@ import (
 	"github.com/user/versaDeploy/internal/config"
 	"github.com/user/versaDeploy/internal/deployer"
 	"github.com/user/versaDeploy/internal/logger"
-	versassh "github.com/user/versaDeploy/internal/ssh"
 	"github.com/user/versaDeploy/internal/selfupdate"
+	versassh "github.com/user/versaDeploy/internal/ssh"
 )
 
 // logCapture is an io.Writer that forwards each write to a channel.
@@ -40,13 +40,13 @@ type deployFlag struct {
 
 type operationsModel struct {
 	// viewport for deploy log output
-	viewport      viewport.Model
-	logBuf        *strings.Builder
-	logCh         chan string
-	running       bool
-	done          bool
-	err           error
-	status        string
+	viewport       viewport.Model
+	logBuf         *strings.Builder
+	logCh          chan string
+	running        bool
+	done           bool
+	err            error
+	status         string
 	userScrolledUp bool
 
 	logFilePath    string
@@ -61,8 +61,8 @@ type operationsModel struct {
 	deployLockExists bool
 
 	// initial-deploy post_deploy confirmation modal
-	confirmReqCh    chan struct{}
-	confirmRespCh   chan bool
+	confirmReqCh     chan struct{}
+	confirmRespCh    chan bool
 	showConfirmModal bool
 }
 

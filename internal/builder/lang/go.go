@@ -27,13 +27,22 @@ func (g *GoBuilder) Build(ctx *BuilderContext) (int, bool, error) {
 
 	ctx.Log.Info("Building Go binary: %s", goCfg.BinaryName)
 
-	// Prepare build command
-	buildCmd := fmt.Sprintf("GOOS=%s GOARCH=%s go build -o %s", goCfg.TargetOS, goCfg.TargetArch, binaryPath)
-	if goCfg.BuildFlags != "" {
-		buildCmd = fmt.Sprintf("GOOS=%s GOARCH=%s go build %s -o %s", goCfg.TargetOS, goCfg.TargetArch, goCfg.BuildFlags, binaryPath)
+	// Target settings go through the process env: inline `VAR=x cmd` doesn't work in cmd.exe.
+	// CGO is off by default so the binary is static and doesn't depend on the build
+	// machine's glibc (a newer glibc than the server's fails with "GLIBC_2.xx not found").
+	cgo := "0"
+	if goCfg.CGO {
+		cgo = "1"
 	}
+	env := []string{"GOOS=" + goCfg.TargetOS, "GOARCH=" + goCfg.TargetArch, "CGO_ENABLED=" + cgo}
 
-	output, err := executeCommand(buildCmd, filepath.Join(ctx.RepoPath, goCfg.ProjectRoot))
+	buildCmd := "go build"
+	if goCfg.BuildFlags != "" {
+		buildCmd += " " + goCfg.BuildFlags
+	}
+	buildCmd += ` -o "` + binaryPath + `"`
+
+	output, err := executeCommand(buildCmd, filepath.Join(ctx.RepoPath, goCfg.ProjectRoot), env...)
 	if err != nil {
 		return 0, false, verserrors.New(verserrors.CodeBuildFailed, "Go build failed", "Check your Go code for compilation errors and ensure all dependencies are resolved.", fmt.Errorf("%w: %s", err, string(output)))
 	}
@@ -47,7 +56,7 @@ func (g *GoBuilder) Build(ctx *BuilderContext) (int, bool, error) {
 }
 
 // executeCommand runs a command in a shell based on the current OS
-func executeCommand(command, dir string) ([]byte, error) {
+func executeCommand(command, dir string, env ...string) ([]byte, error) {
 	var shell, flag string
 	if runtime.GOOS == "windows" {
 		shell = os.Getenv("COMSPEC")
@@ -62,5 +71,8 @@ func executeCommand(command, dir string) ([]byte, error) {
 
 	cmd := exec.Command(shell, flag, command)
 	cmd.Dir = dir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	return cmd.CombinedOutput()
 }
