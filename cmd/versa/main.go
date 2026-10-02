@@ -294,8 +294,9 @@ var statusCmd = &cobra.Command{
 }
 
 var sshTestCmd = &cobra.Command{
-	Use:   "ssh-test [environment]",
-	Short: "Test SSH connection to specified environment",
+	Use:     "ssh-test [environment]",
+	Aliases: []string{"info"},
+	Short:   "Test SSH connection and show server info (OS, kernel, resources, runtimes)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env := args[0]
@@ -336,16 +337,12 @@ var sshTestCmd = &cobra.Command{
 
 		fmt.Println("✅ SSH connection established successfully!")
 
-		// Test command execution
-		fmt.Println("🔍 Testing command execution...")
-		output, err := client.ExecuteCommand("uname -a")
+		fmt.Println("🔍 Probing server...")
+		info, err := client.ServerInfo(envCfg.RemotePath, true)
 		if err != nil {
-			// Fallback for Windows or systems without uname
-			output, _ = client.ExecuteCommand("whoami")
+			return fmt.Errorf("❌ remote command execution failed: %w", err)
 		}
-		if output != "" {
-			fmt.Printf("✅ Remote system response: %s", output)
-		}
+		printServerInfo(info)
 
 		// Test SFTP
 		fmt.Println("🔍 Testing SFTP subsystem...")
@@ -360,6 +357,32 @@ var sshTestCmd = &cobra.Command{
 		fmt.Println("\n✨ SSH connection test passed!")
 		return nil
 	},
+}
+
+func printServerInfo(i *ssh.ServerInfo) {
+	cpu := i.CPUModel
+	if i.Cores != "" {
+		cpu += " (" + i.Cores + " cores)"
+	}
+	rows := [][2]string{
+		{"Host", i.Hostname}, {"OS", i.OS}, {"Kernel", strings.TrimSpace(i.Kernel + " " + i.Arch)},
+		{"Init / libc", strings.Trim(i.Init+" / "+i.Libc, " /")}, {"CPU", cpu}, {"CPU usage", i.CPU},
+		{"RAM", i.RAM}, {"Swap", i.Swap}, {"Load", i.Load}, {"Uptime", i.Uptime},
+		{"Disk (deploy)", i.Disk}, {"Inodes (deploy)", i.Inodes},
+	}
+	for _, rt := range []string{"php", "node", "python", "git"} {
+		rows = append(rows, [2]string{rt, i.Runtimes[rt]})
+	}
+	rows = append(rows, [2]string{"tools", strings.Join(i.Tools, " ")})
+	for _, r := range rows {
+		if r[1] == "" {
+			r[1] = "—"
+		}
+		fmt.Printf("   %-16s %s\n", r[0]+":", r[1])
+	}
+	if i.Sysname != "" && !i.Has("tar") {
+		fmt.Println("⚠️  tar not found: deploys will fail until it is installed")
+	}
 }
 
 // buildsTemplate is shared by both the SSH (VPS) and local init templates —

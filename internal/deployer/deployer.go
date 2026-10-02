@@ -36,6 +36,7 @@ type Deployer struct {
 	force          bool
 	skipDirtyCheck bool
 	log            *logger.Logger
+	server         *ssh.ServerInfo // set by preflight; nil if the probe failed
 
 	// PostDeployConfirm is called before post_deploy hooks on an initial deploy.
 	// Return true to run hooks, false to skip them. If nil, hooks always run.
@@ -149,7 +150,7 @@ func (d *Deployer) Deploy() (returnErr error) {
 		return nil
 	}
 
-	if err := d.checkGoTarget(sshClient); err != nil {
+	if err := d.preflight(sshClient); err != nil {
 		return err
 	}
 	if err := checkTimeout(); err != nil {
@@ -756,7 +757,7 @@ func (d *Deployer) DeployWithArtifact(a *PrebuiltArtifact) (returnErr error) {
 		d.log.Info("Server already at commit %s — skipping", a.CommitHash[:8])
 		return nil
 	}
-	if err := d.checkGoTarget(sshClient); err != nil {
+	if err := d.preflight(sshClient); err != nil {
 		return err
 	}
 

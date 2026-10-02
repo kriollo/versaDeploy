@@ -281,7 +281,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "Connection failed: " + errDisplay(msg.err)
 
 	case msgDashboardData:
-		m.dashboard.applyData(msg)
+		if msg.envName == m.activeEnvName() { // drop results for an env switched away from
+			m.dashboard.applyData(msg)
+		}
 
 	case msgReleasesLoaded:
 		m.releases.applyLoaded(msg)
@@ -296,7 +298,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if client := m.activeClient(); client != nil {
 				if env := m.activeEnvCfg(); env != nil {
 					cmds = append(cmds, loadReleases(client, env.RemotePath))
-					cmds = append(cmds, loadDashboard(client, env.RemotePath))
+					cmds = append(cmds, loadDashboard(client, m.activeEnvName(), env.RemotePath))
 				}
 			}
 		}
@@ -367,7 +369,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refresh dashboard after deploy
 		if client := m.activeClient(); client != nil {
 			if env := m.activeEnvCfg(); env != nil {
-				cmds = append(cmds, loadDashboard(client, env.RemotePath))
+				cmds = append(cmds, loadDashboard(client, m.activeEnvName(), env.RemotePath))
 				cmds = append(cmds, loadReleases(client, env.RemotePath))
 			}
 		}
@@ -1162,7 +1164,7 @@ func (m appModel) loadCurrentViewCmds() []tea.Cmd {
 
 	switch m.currentView {
 	case viewDashboard:
-		return []tea.Cmd{loadDashboard(client, env.RemotePath)}
+		return []tea.Cmd{loadDashboard(client, m.activeEnvName(), env.RemotePath)}
 	case viewReleases:
 		return []tea.Cmd{loadReleases(client, env.RemotePath)}
 	case viewBrowser:

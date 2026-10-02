@@ -61,28 +61,38 @@ func versionAtLeast(v string, want ...int) bool {
 	return true
 }
 
+// preflight probes the server once before building: it logs the platform, fails
+// early when tar (needed to extract the release) is missing, and checks the Go target.
+func (d *Deployer) preflight(c *ssh.Client) error {
+	info, err := c.ServerInfo(d.env.RemotePath, false)
+	if err != nil || info.Sysname == "" {
+		d.log.Warn("Could not probe server (continuing): %v", err)
+		return nil
+	}
+	d.server = info
+	d.log.Info("Server: %s — %s, kernel %s %s, %s", info.Hostname, info.OS, info.Kernel, info.Arch, info.Init)
+	if !info.Has("tar") {
+		return verserrors.New(verserrors.CodeConfigInvalid, "tar is not installed on the server",
+			"Install tar (and gzip) on the server; versa extracts each release with `tar -xzf`.", nil)
+	}
+	return d.checkGoTarget(info)
+}
+
 // checkGoTarget verifies the configured Go target can run on the server: OS, arch,
 // GOARM on old ARM boards, and the kernel minimum of the Go toolchain doing the build
 // (Go 1.24+ needs Linux >= 3.2; https://go.dev/wiki/MinimumRequirements).
-func (d *Deployer) checkGoTarget(c *ssh.Client) error {
+func (d *Deployer) checkGoTarget(info *ssh.ServerInfo) error {
 	goCfg := d.env.Builds.Go
 	if !goCfg.Enabled {
 		return nil
 	}
-	out, err := c.ExecuteCommand("uname -srm")
-	f := strings.Fields(out)
-	if err != nil || len(f) < 3 {
-		d.log.Warn("Could not detect server platform (continuing): %v %q", err, out)
-		return nil
-	}
-	sysname, release, machine := strings.ToLower(f[0]), f[1], f[len(f)-1]
-	d.log.Info("Server platform: %s %s %s", f[0], release, machine)
+	sysname, release, machine := strings.ToLower(info.Sysname), info.Kernel, info.Arch
 
 	fail := func(msg, hint string) error {
 		return verserrors.New(verserrors.CodeConfigInvalid, msg, hint, nil)
 	}
 	if goCfg.TargetOS != sysname {
-		return fail(fmt.Sprintf("go.target_os is %q but the server runs %s", goCfg.TargetOS, f[0]),
+		return fail(fmt.Sprintf("go.target_os is %q but the server runs %s", goCfg.TargetOS, info.Sysname),
 			fmt.Sprintf("Set go.target_os: %s in your deploy config.", sysname))
 	}
 
