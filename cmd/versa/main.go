@@ -297,7 +297,7 @@ var sshTestCmd = &cobra.Command{
 	Use:     "ssh-test [environment]",
 	Aliases: []string{"info"},
 	Short:   "Test SSH connection and show server info (OS, kernel, resources, runtimes)",
-	Args:  cobra.ExactArgs(1),
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		env := args[0]
 
