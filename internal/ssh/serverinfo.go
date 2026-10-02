@@ -47,7 +47,7 @@ echo "cores=$(grep -c '^processor' /proc/cpuinfo)"
 awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2}
  END{if(!a)a=f+b+c; if(t)printf "ram=%.1fG/%.1fG used\n", (t-a)/1048576, t/1048576; if(st)printf "swap=%.1fG/%.1fG used\n", (st-sf)/1048576, st/1048576; else print "swap=none"}' /proc/meminfo
 echo "disk=$(df -Ph "$p" 2>/dev/null | tail -1 | awk '{print $3"/"$2" ("$5" used)"}')"
-echo "inodes=$(df -Pi "$p" 2>/dev/null | tail -1 | awk '{print $5" used"}')"
+echo "inodes=$(df -Pi "$p" 2>/dev/null | tail -1 | awk '$5 ~ /%/{print $5" used"}')"
 echo "load=$(awk '{print $1", "$2", "$3}' /proc/loadavg)"
 echo "uptime=$(awk '{s=int($1); printf "up %dd %dh %dm", s/86400, s%86400/3600, s%3600/60}' /proc/uptime)"
 echo "init=$(if [ -d /run/systemd/system ]; then echo systemd; elif [ -x /sbin/openrc ] || [ -x /sbin/openrc-run ]; then echo openrc; elif [ -x /sbin/initctl ]; then echo upstart; else echo sysvinit; fi)"

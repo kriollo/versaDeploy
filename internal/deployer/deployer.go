@@ -1257,8 +1257,10 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 	if err != nil {
 		return fmt.Errorf("failed to reuse paths from previous release: %w (output: %s)", err, out)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		d.log.Info("  Reused: %s", line)
+	for _, line := range strings.Split(out, "\n") {
+		if line != "" {
+			d.log.Info("  Reused: %s", line)
+		}
 	}
 	return nil
 }
