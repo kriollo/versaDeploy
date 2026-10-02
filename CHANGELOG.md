@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.0] - 2026-10-02
+
+### Added
+
+- **Server info (`versa info <env>`)**: new alias of `ssh-test` that also prints the server's hostname, OS, kernel/arch, CPU model and cores, CPU/RAM/swap usage, disk and inode usage of `remote_path`, init system (systemd/openrc/upstart/sysvinit), libc (glibc/musl), php/node/python/git versions and available tools. Everything is collected in one POSIX round-trip that works on RHEL/CentOS 5, busybox/Alpine and current distros.
+- **TUI Dashboard shows the same server info**, plus a "Runtimes & tools" section.
+- **Deploy pre-flight**: the server is probed before building; the platform is logged and the deploy fails early when `tar` is missing on the server. The Go target check reuses this probe.
+- **`ssh.strict_host_key`**: refuse to connect when the host key can't be verified against known_hosts.
+
+### Changed
+
+- **Much faster uploads**: SFTP writes are pipelined (up to 64 packets in flight) instead of one 32 KB packet per network round-trip. A 28 MB release at 50 ms RTT went from ~20 s to ~5 s end to end.
+- **No reassembled archive on the server**: chunks are streamed into `tar` (`cat chunks | tar -xzf -`), cutting the deploy's peak disk usage to chunks + extracted tree.
+- **Fewer SSH round-trips**: shared paths, reused dependencies and preserved paths each run as a single remote script, stale files of incremental uploads are removed with batched `rm`, and old releases are deleted with one command.
+- **Host key verification**: when known_hosts is missing or unreadable versa still connects, but now logs a visible man-in-the-middle warning.
+- **Faster local hashing**: artifact hashing for incremental uploads runs in parallel; change detection uses `WalkDir` and skips FIFOs/sockets/devices.
+- **Internal Version**: Version bumped to 1.7.0.
+
+### Fixed
+
+- **Symlink switch on old busybox**: `current` was swapped with `mv -T`, which old busybox lacks. versa now falls back to `rename(2)` via perl/python, then to `rm` + `mv`.
+- **Paths with `$`, quotes, spaces or non-ASCII characters** in remote commands: Go's `%q` was used as if it were shell quoting. All remote paths now use POSIX single-quote escaping.
+- **`knownhosts: key mismatch` when only some host keys are known** (e.g. only the RSA key in known_hosts while the server prefers ed25519): versa now asks the server only for the key types known_hosts holds.
+- **Hooks that time out kept running on old servers**: OpenSSH < 7.9 ignores the kill signal. When the server has `timeout`, hooks are wrapped with `timeout -s KILL`.
+- **Dead connections hung until TCP gave up**: keepalive now closes the connection after 8 intervals without a reply.
+- **`.github/`, `.gitignore` and other `.git*` entries were silently left out of the artifact**: only `.git` itself is skipped now. Add them to `ignored_paths` if you don't want them on the server.
+- **Truncated archives went undetected**: errors from closing the tar/gzip writers were ignored.
+- **Shared-path errors were swallowed** (`mkdir`/`rm` failures) and are now reported.
+- **Change detection could leak goroutines** after a hashing error.
+- **TUI**: the dashboard could show data from the previously selected environment; the Shared view ran one `du` per entry (now a single call).
+
 ## [1.6.1] - 2026-10-01
 
 ### Fixed
