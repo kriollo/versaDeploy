@@ -148,8 +148,8 @@ func (c *Client) keepAlive(interval time.Duration) {
 	}
 }
 
-// shellQuote single-quotes s for POSIX sh.
-func shellQuote(s string) string {
+// ShellQuote single-quotes s for POSIX sh.
+func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
@@ -157,7 +157,7 @@ func shellQuote(s string) string {
 // would otherwise reject sh syntax like $(...), 2>/dev/null or [ ]). Only for versa's
 // own commands: user hooks run in the login shell (dash as /bin/sh lacks `source`, [[ ]]).
 func shWrap(cmd string) string {
-	return "/bin/sh -c " + shellQuote(cmd)
+	return "/bin/sh -c " + ShellQuote(cmd)
 }
 
 // Close closes the SSH and SFTP connections
@@ -398,7 +398,7 @@ func (c *Client) ExtractArchive(archivePath, targetDir string) error {
 	}
 
 	// Extract using shell (tar is too complex for SFTP)
-	cmd := fmt.Sprintf("tar -xzf %q -C %q", archivePath, targetDir)
+	cmd := "tar -xzf " + ShellQuote(archivePath) + " -C " + ShellQuote(targetDir)
 	output, err := c.ExecuteCommand(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to extract archive: %w (output: %s)", err, output)
@@ -518,10 +518,7 @@ func (c *Client) ReadSymlink(path string) (string, error) {
 // It creates a temporary symlink, atomically renames it to the final location,
 // then reads back the target for verification — all in one shell command.
 func (c *Client) CreateSymlink(target, linkPath string) error {
-	tmpLink := linkPath + ".tmp"
-	// Batch all three operations into a single SSH round-trip to reduce latency.
-	cmd := fmt.Sprintf("ln -sfn %s %s && mv -Tf %s %s && readlink %s",
-		target, tmpLink, tmpLink, linkPath, linkPath)
+	cmd := symlinkSwapCmd(target, linkPath)
 	output, err := c.ExecuteCommand(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to create symlink: %w", err)
@@ -534,6 +531,19 @@ func (c *Client) CreateSymlink(target, linkPath string) error {
 	}
 
 	return nil
+}
+
+// symlinkSwapCmd replaces linkPath with a symlink to target. `mv -T` (GNU, recent
+// busybox) is tried first; perl/python call rename(2) directly where mv lacks -T
+// (old busybox). The last resort, rm + mv, is not atomic but works everywhere.
+func symlinkSwapCmd(target, linkPath string) string {
+	t, l, tmp := ShellQuote(target), ShellQuote(linkPath), ShellQuote(linkPath+".tmp")
+	rename := `import os,sys;os.rename(sys.argv[1],sys.argv[2])`
+	return fmt.Sprintf("ln -sfn %[1]s %[3]s && { mv -Tf %[3]s %[2]s 2>/dev/null"+
+		" || perl -e 'rename $ARGV[0],$ARGV[1] or exit 1' %[3]s %[2]s 2>/dev/null"+
+		" || python3 -c '%[4]s' %[3]s %[2]s 2>/dev/null"+
+		" || python -c '%[4]s' %[3]s %[2]s 2>/dev/null"+
+		" || { rm -f %[2]s && mv -f %[3]s %[2]s; }; } && readlink %[2]s", t, l, tmp, rename)
 }
 
 // CleanupOldReleases removes old releases, keeping only the specified number
@@ -561,7 +571,7 @@ func (c *Client) CleanupOldReleases(releasesDir string, keepCount int) error {
 	for i := keepCount; i < len(releases); i++ {
 		releaseDir := filepath.ToSlash(filepath.Join(releasesDir, releases[i]))
 		// Use %q for safe quoting and -- to prevent arguments injection
-		cmd := fmt.Sprintf("rm -rf -- %q", releaseDir)
+		cmd := "rm -rf -- " + ShellQuote(releaseDir)
 		output, err := c.ExecuteCommand(cmd)
 		if err != nil {
 			return fmt.Errorf("failed to delete old release %s: %w (output: %s)", releases[i], err, output)
@@ -573,7 +583,7 @@ func (c *Client) CleanupOldReleases(releasesDir string, keepCount int) error {
 
 // AvailableDiskBytes returns the free space of the filesystem holding path.
 func (c *Client) AvailableDiskBytes(path string) (int64, error) {
-	out, err := c.ExecuteCommand(fmt.Sprintf("df -Pk %q", path))
+	out, err := c.ExecuteCommand("df -Pk " + ShellQuote(path))
 	if err != nil {
 		return 0, err
 	}
@@ -601,7 +611,7 @@ func parseDfAvailable(out string) (int64, error) {
 func (c *Client) DirSizesKB(paths []string) (map[string]int64, error) {
 	quoted := make([]string, len(paths))
 	for i, p := range paths {
-		quoted[i] = fmt.Sprintf("%q", p)
+		quoted[i] = ShellQuote(p)
 	}
 	out, err := c.ExecuteCommand("du -sk " + strings.Join(quoted, " ") + " 2>/dev/null")
 	sizes := map[string]int64{}

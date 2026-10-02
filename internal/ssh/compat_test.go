@@ -1,7 +1,10 @@
 package ssh
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,5 +39,51 @@ func TestShWrapQuoting(t *testing.T) {
 	wrapped, err := exec.Command("/bin/sh", "-c", shWrap(cmd)).Output()
 	if err != nil || string(wrapped) != string(direct) {
 		t.Errorf("shWrap changed behavior: %q vs %q (%v)", wrapped, direct, err)
+	}
+}
+
+// TestSymlinkSwap runs the swap against a "current" link that already points to a
+// directory (mv without -T would move the tmp link *into* it), including with mv -T,
+// perl and python all unavailable to exercise the rm + mv fallback.
+func TestSymlinkSwap(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	stub := func(dir, name, body string) {
+		os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0755)
+	}
+	noTools := t.TempDir()
+	stub(noTools, "mv", `case "$1" in -T*) exit 1;; esac; exec /bin/mv "$@"`)
+	for _, n := range []string{"perl", "python3", "python"} {
+		stub(noTools, n, "exit 1")
+	}
+
+	cases := map[string][]string{"default": {"sh", "-c"}, "fallback": {"sh", "-c"}}
+	if _, err := exec.LookPath("busybox"); err == nil {
+		cases["busybox"] = []string{"busybox", "sh", "-c"}
+	}
+	for name, shell := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			os.MkdirAll(filepath.Join(dir, "releases", "a"), 0755)
+			os.MkdirAll(filepath.Join(dir, "releases", "b dir"), 0755)
+			link := filepath.Join(dir, "current")
+			os.Symlink("releases/a", link)
+
+			cmd := exec.Command(shell[0], append(shell[1:], symlinkSwapCmd("releases/b dir", link))...)
+			if name == "fallback" {
+				cmd.Env = append(os.Environ(), "PATH="+noTools+":"+os.Getenv("PATH"))
+			}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("swap failed: %v: %s", err, out)
+			}
+			if got, _ := os.Readlink(link); got != "releases/b dir" || strings.TrimSpace(string(out)) != got {
+				t.Errorf("current -> %q (output %q), want releases/b dir", got, out)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, "releases", "a", "current.tmp")); err == nil {
+				t.Error("tmp link was moved into the old release")
+			}
+		})
 	}
 }

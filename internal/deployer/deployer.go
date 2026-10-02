@@ -359,7 +359,7 @@ func (d *Deployer) uploadRelease(c *ssh.Client, a *PrebuiltArtifact, previousLoc
 		if previousLock != nil {
 			if err := d.uploadDelta(c, a, previousLock.LastDeploy.ReleaseDir, hashes, stagingDir); err != nil {
 				d.log.Warn("Incremental upload not possible, uploading full release: %v", err)
-				c.ExecuteCommand(fmt.Sprintf("rm -rf -- %q", stagingDir))
+				c.ExecuteCommand("rm -rf -- "+ssh.ShellQuote(stagingDir))
 			} else {
 				uploaded = true
 			}
@@ -386,7 +386,7 @@ func (d *Deployer) uploadRelease(c *ssh.Client, a *PrebuiltArtifact, previousLoc
 	}
 
 	if err := c.Rename(stagingDir, finalDir); err != nil {
-		c.ExecuteCommand(fmt.Sprintf("rm -rf -- %q", stagingDir))
+		c.ExecuteCommand("rm -rf -- "+ssh.ShellQuote(stagingDir))
 		return fmt.Errorf("failed to finalize release: %w", err)
 	}
 	return nil
@@ -411,7 +411,7 @@ func (d *Deployer) uploadDelta(c *ssh.Client, a *PrebuiltArtifact, prevVersion s
 	upload, remove := artifact.Delta(artifact.DecodeHashes(data), hashes, replaced)
 	d.log.Info("Incremental upload: %d of %d files changed, %d paths to remove", len(upload), len(hashes), len(remove))
 
-	if _, err := c.ExecuteCommand(fmt.Sprintf("cp -al -- %q %q", prevDir, stagingDir)); err != nil {
+	if _, err := c.ExecuteCommand("cp -al -- "+ssh.ShellQuote(prevDir)+" "+ssh.ShellQuote(stagingDir)); err != nil {
 		return fmt.Errorf("hardlink copy of previous release failed: %w", err)
 	}
 
@@ -420,7 +420,7 @@ func (d *Deployer) uploadDelta(c *ssh.Client, a *PrebuiltArtifact, prevVersion s
 		if err := c.WriteRemoteBytes(listPath, []byte(strings.Join(remove, "\n")+"\n")); err != nil {
 			return err
 		}
-		cmd := fmt.Sprintf(`cd %q && while IFS= read -r f; do rm -rf -- "$f"; done < %q; rm -f -- %q`, stagingDir, listPath, listPath)
+		cmd := fmt.Sprintf(`cd %s && while IFS= read -r f; do rm -rf -- "$f"; done < %s; rm -f -- %s`, ssh.ShellQuote(stagingDir), ssh.ShellQuote(listPath), ssh.ShellQuote(listPath))
 		if _, err := c.ExecuteCommand(cmd); err != nil {
 			return fmt.Errorf("failed to remove stale files: %w", err)
 		}
@@ -499,8 +499,8 @@ func (d *Deployer) uploadArchive(c *ssh.Client, chunks []string, extractedSize i
 	}
 
 	d.log.Info("Reassembling artifact on server...")
-	defer c.ExecuteCommand(fmt.Sprintf("rm -f -- %q %q.*", remoteArchive, remoteArchive))
-	if _, err := c.ExecuteCommand(fmt.Sprintf("cat %q.* > %q && rm -f %q.*", remoteArchive, remoteArchive, remoteArchive)); err != nil {
+	defer c.ExecuteCommand(fmt.Sprintf("rm -f -- %s %s.*", ssh.ShellQuote(remoteArchive), ssh.ShellQuote(remoteArchive)))
+	if _, err := c.ExecuteCommand(fmt.Sprintf("cat %[1]s.* > %[1]s && rm -f %[1]s.*", ssh.ShellQuote(remoteArchive))); err != nil {
 		return fmt.Errorf("failed to reassemble artifact on server: %w", err)
 	}
 	return c.ExtractArchive(remoteArchive, stagingDir)
@@ -777,7 +777,7 @@ func (d *Deployer) runHook(sshClient *ssh.Client, finalDir, hook string, previou
 	}
 
 	appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
-	wrappedHook := fmt.Sprintf("cd %s && %s", appPath, hook)
+	wrappedHook := fmt.Sprintf("cd %s && %s", ssh.ShellQuote(appPath), hook)
 
 	d.log.Info("Executing: %s (in %s)", hook, appPath)
 	output, err := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
@@ -1098,14 +1098,14 @@ func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) e
 		sshClient.MkdirAll(sharedPath)
 
 		// 2. Remove directory in release if it exists to make room for symlink
-		sshClient.ExecuteCommand(fmt.Sprintf("rm -rf -- %q", releasePath))
+		sshClient.ExecuteCommand("rm -rf -- "+ssh.ShellQuote(releasePath))
 
 		// 3. Create parent directory in release if needed via SFTP
 		sshClient.MkdirAll(filepath.Dir(releasePath))
 
 		// 4. Create symlink (use absolute path for shared target to be safe)
 		// We use ln -sf directly for shared paths as they don't need the atomic switch logic of 'current'
-		cmd := fmt.Sprintf("ln -sfn %q %q", sharedPath, releasePath)
+		cmd := "ln -sfn "+ssh.ShellQuote(sharedPath)+" "+ssh.ShellQuote(releasePath)
 		if _, err := sshClient.ExecuteCommand(cmd); err != nil {
 			return fmt.Errorf("failed to link shared path %s: %w", cleanPath, err)
 		}
@@ -1142,7 +1142,7 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 				if err := sshClient.MkdirAll(filepath.Dir(newPath)); err != nil {
 					return fmt.Errorf("failed to create directory for reusable path %s: %w", relPath, err)
 				}
-				cmd := fmt.Sprintf("cp -al -- %q %q", sourceToUse, newPath)
+				cmd := "cp -al -- "+ssh.ShellQuote(sourceToUse)+" "+ssh.ShellQuote(newPath)
 				if _, err := sshClient.ExecuteCommand(cmd); err != nil {
 					return fmt.Errorf("failed to reuse path %s from previous release: %w", relPath, err)
 				}
@@ -1175,7 +1175,7 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 			return fmt.Errorf("failed to create directory for reusable release path %s: %w", relPath, err)
 		}
 
-		cmd := fmt.Sprintf("cp -al -- %q %q", sourceToUse, newPath)
+		cmd := "cp -al -- "+ssh.ShellQuote(sourceToUse)+" "+ssh.ShellQuote(newPath)
 		if _, err := sshClient.ExecuteCommand(cmd); err != nil {
 			return fmt.Errorf("failed to reuse release path %s from previous release: %w", relPath, err)
 		}
@@ -1385,11 +1385,11 @@ func (d *Deployer) handlePreservedPaths(sshClient *ssh.Client, previousVersion, 
 
 		if sourceToUse != "" {
 			// Remove whatever came in the artifact to ensure a clean copy
-			sshClient.ExecuteCommand(fmt.Sprintf("rm -rf -- %q", newPath))
+			sshClient.ExecuteCommand("rm -rf -- "+ssh.ShellQuote(newPath))
 
 			// Copy from old to new (using -p to preserve attributes)
 			// We still use shell for cp as it's the fastest way to copy on server
-			cmd := fmt.Sprintf("cp -rfp -- %q %q", sourceToUse, newPath)
+			cmd := "cp -rfp -- "+ssh.ShellQuote(sourceToUse)+" "+ssh.ShellQuote(newPath)
 			if _, err := sshClient.ExecuteCommand(cmd); err != nil {
 				return fmt.Errorf("failed to preserve path %s: %w", cleanPath, err)
 			}
@@ -1481,7 +1481,7 @@ func (d *Deployer) performHealthCheck(previousLock *state.DeployLock, sshClient 
 	client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
 	probe := func() error {
 		if hc.Command != "" {
-			cmd := fmt.Sprintf("cd %q && %s", filepath.ToSlash(filepath.Join(finalDir, "app")), hc.Command)
+			cmd := fmt.Sprintf("cd %s && %s", ssh.ShellQuote(filepath.ToSlash(filepath.Join(finalDir, "app"))), hc.Command)
 			if out, err := sshClient.ExecuteCommandWithTimeout(cmd, time.Duration(timeout)*time.Second); err != nil {
 				return fmt.Errorf("command %q failed: %w (output: %s)", hc.Command, err, strings.TrimSpace(out))
 			}
@@ -1694,7 +1694,7 @@ func (d *Deployer) RunHooks(indices []int) error {
 	for _, hookConfig := range hooks {
 		if hookConfig.Command != "" {
 			appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
-			wrappedHook := fmt.Sprintf("cd %s && %s", appPath, hookConfig.Command)
+			wrappedHook := fmt.Sprintf("cd %s && %s", ssh.ShellQuote(appPath), hookConfig.Command)
 			d.log.Info("Executing: %s", hookConfig.Command)
 			output, err := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
 			if err != nil {
@@ -1714,7 +1714,7 @@ func (d *Deployer) RunHooks(indices []int) error {
 				cmd := h
 				appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
 				g.Go(func() error {
-					wrappedHook := fmt.Sprintf("cd %s && %s", appPath, cmd)
+					wrappedHook := fmt.Sprintf("cd %s && %s", ssh.ShellQuote(appPath), cmd)
 					d.log.Info("Executing: %s", cmd)
 					output, hookErr := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
 					if hookErr != nil {

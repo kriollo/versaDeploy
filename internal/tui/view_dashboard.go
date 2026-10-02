@@ -70,7 +70,7 @@ func loadDashboard(client *versassh.Client, remotePath string) tea.Cmd {
 		releases, _ := client.ListReleases(releasesDir)
 
 		// Each stat is best-effort: a failing line just leaves its field empty
-		out, _ := client.ExecuteCommand(fmt.Sprintf(serverStatsScript, fmt.Sprintf("%q", remotePath)))
+		out, _ := client.ExecuteCommand(fmt.Sprintf(serverStatsScript, versassh.ShellQuote(remotePath)))
 		stats := parseStats(out)
 		if len(stats["uptime"]) > 40 {
 			stats["uptime"] = stats["uptime"][:40] + "…"
