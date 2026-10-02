@@ -566,9 +566,6 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 
 	// Content-area key handling per view
 	switch m.currentView {
-	case viewDashboard:
-		// Dashboard handles r (Refresh already handled above via F5)
-
 	case viewReleases:
 		switch {
 		case key.Matches(msg, Keys.Up):

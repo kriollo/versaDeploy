@@ -165,10 +165,3 @@ func (d dashboardModel) view(width, _ int) string {
 
 	return strings.Join(lines, "\n")
 }
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}

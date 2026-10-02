@@ -627,13 +627,6 @@ func hexDump(data []byte, maxBytes int) string {
 	return sb.String()
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // ── View ──────────────────────────────────────────────────────────────────────
 
 func (b browserModel) view(width, height int) string {

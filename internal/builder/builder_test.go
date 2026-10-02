@@ -20,6 +20,9 @@ func TestBuilder_copyEntireRepo(t *testing.T) {
 	os.WriteFile(filepath.Join(repoDir, "file1.txt"), []byte("1"), 0644)
 	os.MkdirAll(filepath.Join(repoDir, "dir1"), 0775)
 	os.WriteFile(filepath.Join(repoDir, "dir1/file2.txt"), []byte("2"), 0644)
+	os.MkdirAll(filepath.Join(repoDir, ".git"), 0775)
+	os.WriteFile(filepath.Join(repoDir, ".git/HEAD"), []byte("ref"), 0644)
+	os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("x"), 0644)
 
 	b := &Builder{
 		repoPath:    repoDir,
@@ -44,6 +47,10 @@ func TestBuilder_copyEntireRepo(t *testing.T) {
 	}{
 		{"app/file1.txt", "1"},
 		{"app/dir1/file2.txt", "2"},
+		{"app/.gitignore", "x"}, // only .git itself is skipped, not .git* siblings
+	}
+	if _, err := os.Stat(filepath.Join(artifactDir, "app/.git")); err == nil {
+		t.Error(".git should not be copied")
 	}
 
 	for _, f := range files {

@@ -86,28 +86,6 @@ func (g *Generator) GenerateManifest(buildResult *builder.BuildResult) error {
 	return nil
 }
 
-// Validate checks that the artifact is complete
-func (g *Generator) Validate() error {
-	// Check manifest exists
-	manifestPath := filepath.Join(g.artifactDir, "manifest.json")
-	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
-		return fmt.Errorf("manifest.json not found in artifact")
-	}
-
-	// Validate artifact directory structure
-	requiredDirs := []string{"app", "vendor", "node_modules", "public", "bin"}
-	for _, dir := range requiredDirs {
-		dirPath := filepath.Join(g.artifactDir, dir)
-		if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-			// Directory might not exist if that build type wasn't enabled
-			// This is acceptable
-			continue
-		}
-	}
-
-	return nil
-}
-
 // GenerateReleaseVersion creates a timestamp-based release version
 func GenerateReleaseVersion() string {
 	return time.Now().UTC().Format("20060102-150405")
@@ -322,10 +300,17 @@ func (g *Generator) CompressChunkedFiltered(archivePath string, chunkSize int64,
 		return nil, err
 	}
 
-	// Close tar and gzip before returning paths to ensure flushing
-	tw.Close()
-	gw.Close()
-	cw.Close()
+	// Close tar and gzip before returning paths to ensure flushing; a failed
+	// flush means a truncated archive.
+	if err := tw.Close(); err != nil {
+		return nil, fmt.Errorf("failed to finalize tar: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return nil, fmt.Errorf("failed to finalize gzip: %w", err)
+	}
+	if err := cw.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close archive chunk: %w", err)
+	}
 
 	return cw.ChunkPaths(), nil
 }

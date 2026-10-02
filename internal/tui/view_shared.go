@@ -39,14 +39,17 @@ func loadShared(client *versassh.Client, remotePath string) tea.Cmd {
 			return msgSharedData{entries: nil, err: nil}
 		}
 
+		paths := make([]string, len(fileInfos))
+		for i, fi := range fileInfos {
+			paths[i] = filepath.ToSlash(filepath.Join(sharedBase, fi.Name()))
+		}
+		sizes, _ := client.DirSizesKB(paths) // one round-trip for all entries
+
 		entries := make([]sharedEntry, 0, len(fileInfos))
-		for _, fi := range fileInfos {
+		for i, fi := range fileInfos {
 			size := "—"
-			fullPath := filepath.ToSlash(filepath.Join(sharedBase, fi.Name()))
-			if out, e := client.ExecuteCommand(
-				fmt.Sprintf("du -sh %q 2>/dev/null | awk '{print $1}'", fullPath),
-			); e == nil {
-				size = strings.TrimSpace(out)
+			if kb, ok := sizes[paths[i]]; ok {
+				size = humanSize(kb * 1024)
 			}
 			entries = append(entries, sharedEntry{
 				name:  fi.Name(),

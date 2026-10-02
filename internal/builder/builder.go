@@ -195,7 +195,7 @@ func (b *Builder) copyEntireRepo() error {
 			return nil
 		}
 
-		if strings.HasPrefix(relPath, ".git") {
+		if relPath == ".git" || strings.HasPrefix(relPath, ".git"+string(filepath.Separator)) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -345,8 +345,5 @@ func copyFile(src, dst string) error {
 		return err
 	}
 
-	// Copy permissions
-	os.Chmod(dst, info.Mode())
-
-	return nil
+	return os.Chmod(dst, info.Mode())
 }

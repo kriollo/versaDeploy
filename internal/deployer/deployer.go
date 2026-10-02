@@ -676,10 +676,7 @@ func (d *Deployer) buildFrom(tmpRepo, commitHash string, cs *changeset.ChangeSet
 
 	d.log.Debug("Generating manifest...")
 	gen := artifact.NewGenerator(artifactDir, releaseVersion, commitHash)
-	if err = gen.GenerateManifest(buildResult); err == nil {
-		err = gen.Validate()
-	}
-	if err != nil {
+	if err = gen.GenerateManifest(buildResult); err != nil {
 		os.RemoveAll(artifactDir)
 		return "", "", err
 	}

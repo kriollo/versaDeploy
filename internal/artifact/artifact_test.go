@@ -156,24 +156,6 @@ func TestGenerator_GenerateManifest(t *testing.T) {
 	}
 }
 
-func TestGenerator_Validate(t *testing.T) {
-	artifactDir := t.TempDir()
-	g := NewGenerator(artifactDir, "1.0.0", "abc123")
-
-	// Should fail if manifest missing
-	if err := g.Validate(); err == nil {
-		t.Error("Validate() should fail when manifest is missing")
-	}
-
-	// Create manifest
-	os.WriteFile(filepath.Join(artifactDir, "manifest.json"), []byte("{}"), 0644)
-
-	// Now should pass
-	if err := g.Validate(); err != nil {
-		t.Errorf("Validate() error = %v, want nil", err)
-	}
-}
-
 func TestGenerateReleaseVersion(t *testing.T) {
 	v := GenerateReleaseVersion()
 	if len(v) != 15 { // YYYYMMDD-HHMMSS is 8 + 1 + 6 = 15
