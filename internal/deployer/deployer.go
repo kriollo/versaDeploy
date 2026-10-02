@@ -359,7 +359,7 @@ func (d *Deployer) uploadRelease(c *ssh.Client, a *PrebuiltArtifact, previousLoc
 		if previousLock != nil {
 			if err := d.uploadDelta(c, a, previousLock.LastDeploy.ReleaseDir, hashes, stagingDir); err != nil {
 				d.log.Warn("Incremental upload not possible, uploading full release: %v", err)
-				c.ExecuteCommand("rm -rf -- "+ssh.ShellQuote(stagingDir))
+				c.ExecuteCommand("rm -rf -- " + ssh.ShellQuote(stagingDir))
 			} else {
 				uploaded = true
 			}
@@ -386,7 +386,7 @@ func (d *Deployer) uploadRelease(c *ssh.Client, a *PrebuiltArtifact, previousLoc
 	}
 
 	if err := c.Rename(stagingDir, finalDir); err != nil {
-		c.ExecuteCommand("rm -rf -- "+ssh.ShellQuote(stagingDir))
+		c.ExecuteCommand("rm -rf -- " + ssh.ShellQuote(stagingDir))
 		return fmt.Errorf("failed to finalize release: %w", err)
 	}
 	return nil
@@ -411,18 +411,20 @@ func (d *Deployer) uploadDelta(c *ssh.Client, a *PrebuiltArtifact, prevVersion s
 	upload, remove := artifact.Delta(artifact.DecodeHashes(data), hashes, replaced)
 	d.log.Info("Incremental upload: %d of %d files changed, %d paths to remove", len(upload), len(hashes), len(remove))
 
-	if _, err := c.ExecuteCommand("cp -al -- "+ssh.ShellQuote(prevDir)+" "+ssh.ShellQuote(stagingDir)); err != nil {
+	if _, err := c.ExecuteCommand("cp -al -- " + ssh.ShellQuote(prevDir) + " " + ssh.ShellQuote(stagingDir)); err != nil {
 		return fmt.Errorf("hardlink copy of previous release failed: %w", err)
 	}
 
-	if len(remove) > 0 {
-		listPath := stagingDir + ".remove"
-		if err := c.WriteRemoteBytes(listPath, []byte(strings.Join(remove, "\n")+"\n")); err != nil {
-			return err
+	// One rm per ~64 KB of quoted paths: one fork instead of one per path, and well
+	// under the 128 KB ARG_MAX of pre-2.6.23 kernels.
+	for len(remove) > 0 {
+		cmd := "cd " + ssh.ShellQuote(stagingDir) + " && rm -rf --"
+		for len(remove) > 0 && len(cmd) < 64<<10 {
+			cmd += " " + ssh.ShellQuote(remove[0])
+			remove = remove[1:]
 		}
-		cmd := fmt.Sprintf(`cd %s && while IFS= read -r f; do rm -rf -- "$f"; done < %s; rm -f -- %s`, ssh.ShellQuote(stagingDir), ssh.ShellQuote(listPath), ssh.ShellQuote(listPath))
-		if _, err := c.ExecuteCommand(cmd); err != nil {
-			return fmt.Errorf("failed to remove stale files: %w", err)
+		if out, err := c.ExecuteCommand(cmd); err != nil {
+			return fmt.Errorf("failed to remove stale files: %w (output: %s)", err, out)
 		}
 	}
 	if len(upload) == 0 {
@@ -498,23 +500,26 @@ func (d *Deployer) uploadArchive(c *ssh.Client, chunks []string, extractedSize i
 		return fmt.Errorf("parallel upload failed: %w", err)
 	}
 
-	d.log.Info("Reassembling artifact on server...")
-	defer c.ExecuteCommand(fmt.Sprintf("rm -f -- %s %s.*", ssh.ShellQuote(remoteArchive), ssh.ShellQuote(remoteArchive)))
-	if _, err := c.ExecuteCommand(fmt.Sprintf("cat %[1]s.* > %[1]s && rm -f %[1]s.*", ssh.ShellQuote(remoteArchive))); err != nil {
-		return fmt.Errorf("failed to reassemble artifact on server: %w", err)
+	// Stream the chunks straight into tar: no reassembled copy on disk.
+	d.log.Info("Extracting artifact on server...")
+	chunkGlob := ssh.ShellQuote(remoteArchive) + ".*"
+	defer c.ExecuteCommand("rm -f -- " + chunkGlob)
+	cmd := fmt.Sprintf("mkdir -p %[2]s && cat %[1]s | tar -xzf - -C %[2]s", chunkGlob, ssh.ShellQuote(stagingDir))
+	if out, err := c.ExecuteCommand(cmd); err != nil {
+		return fmt.Errorf("failed to extract artifact on server: %w (output: %s)", err, out)
 	}
-	return c.ExtractArchive(remoteArchive, stagingDir)
+	return nil
 }
 
 // checkDiskSpace fails when the remote filesystem can't hold the deploy's peak usage:
-// chunks + reassembled archive (2x compressed), then archive + extracted tree; +20% margin.
+// chunks + extracted tree (chunks are piped into tar); +20% margin.
 func (d *Deployer) checkDiskSpace(c *ssh.Client, compressed, extracted int64) error {
 	avail, err := c.AvailableDiskBytes(d.env.RemotePath)
 	if err != nil {
 		d.log.Warn("Could not check remote disk space (continuing): %v", err)
 		return nil
 	}
-	need := max(2*compressed, compressed+extracted) * 6 / 5
+	need := (compressed + extracted) * 6 / 5
 	if avail >= need {
 		d.log.Info("Disk space check passed: %d MB available, %d MB required", avail>>20, need>>20)
 		return nil
@@ -1079,40 +1084,48 @@ func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) e
 	d.log.Info("Linking shared directories...")
 	sharedBase := filepath.ToSlash(filepath.Join(d.env.RemotePath, "shared"))
 
-	// Ensure shared directory exists via SFTP
-	sshClient.MkdirAll(sharedBase)
-
+	script := sharedLinkScript(releaseDir, sharedBase, d.env.SharedPaths)
+	if script == "" {
+		return nil
+	}
+	if out, err := sshClient.ExecuteCommand(script); err != nil {
+		return fmt.Errorf("failed to link shared paths: %w (output: %s)", err, out)
+	}
 	for _, path := range d.env.SharedPaths {
+		d.log.Info("  Linked: %s", path)
+	}
+	return nil
+}
+
+// sharedLinkScript replaces each shared path in releaseDir/app with a symlink into
+// sharedBase, in one script; any failing step aborts it. Existing shared targets
+// (files like .env included) are left untouched; missing ones become directories.
+func sharedLinkScript(releaseDir, sharedBase string, paths []string) string {
+	var script []string
+	for _, path := range paths {
 		// Clean the path to avoid directory traversal or trailing slashes
 		cleanPath := filepath.ToSlash(filepath.Clean(path))
 		if strings.HasPrefix(cleanPath, "../") || cleanPath == ".." {
 			continue // Security: don't allow escaping release dir
 		}
-
-		// Path in release (now inside 'app' subfolder)
 		releasePath := filepath.ToSlash(filepath.Join(releaseDir, "app", cleanPath))
-		// Path in shared (e.g. shared/app/storage)
-		sharedPath := filepath.ToSlash(filepath.Join(sharedBase, cleanPath))
-
-		// 1. Ensure shared target exists via SFTP
-		sshClient.MkdirAll(sharedPath)
-
-		// 2. Remove directory in release if it exists to make room for symlink
-		sshClient.ExecuteCommand("rm -rf -- "+ssh.ShellQuote(releasePath))
-
-		// 3. Create parent directory in release if needed via SFTP
-		sshClient.MkdirAll(filepath.Dir(releasePath))
-
-		// 4. Create symlink (use absolute path for shared target to be safe)
-		// We use ln -sf directly for shared paths as they don't need the atomic switch logic of 'current'
-		cmd := "ln -sfn "+ssh.ShellQuote(sharedPath)+" "+ssh.ShellQuote(releasePath)
-		if _, err := sshClient.ExecuteCommand(cmd); err != nil {
-			return fmt.Errorf("failed to link shared path %s: %w", cleanPath, err)
-		}
-		d.log.Info("  Linked: %s -> %s", cleanPath, sharedPath)
+		script = append(script, fmt.Sprintf("{ [ -e %[1]s ] || mkdir -p %[1]s; } && rm -rf -- %[2]s && mkdir -p %[3]s && ln -sfn %[1]s %[2]s",
+			ssh.ShellQuote(filepath.ToSlash(filepath.Join(sharedBase, cleanPath))),
+			ssh.ShellQuote(releasePath), ssh.ShellQuote(filepath.ToSlash(filepath.Dir(releasePath)))))
 	}
+	return strings.Join(script, " &&\n")
+}
 
-	return nil
+// reuseSnippet hardlinks the first existing source to dst unless dst already exists,
+// printing dst when it does.
+func reuseSnippet(dst string, sources ...string) string {
+	q := make([]string, len(sources))
+	for i, src := range sources {
+		q[i] = ssh.ShellQuote(src)
+	}
+	d := ssh.ShellQuote(dst)
+	return fmt.Sprintf(`if [ ! -e %[1]s ]; then for s in %[2]s; do if [ -e "$s" ]; then { mkdir -p %[3]s && cp -al -- "$s" %[1]s && echo %[1]s; } || exit 1; break; fi; done; fi`,
+		d, strings.Join(q, " "), ssh.ShellQuote(filepath.ToSlash(filepath.Dir(dst))))
 }
 
 // reuseDependencies attempts to recover vendor/node_modules and other build assets from previous release using hardlinks
@@ -1121,66 +1134,24 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 		return nil
 	}
 
-	// Internal helper to reuse a specific path
+	// Every reuse is a shell snippet; all of them run in one round-trip at the end.
+	var script []string
+	releases := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion))
+
+	// reusePath hardlinks app/<projectRoot>/<relPath> from the previous release
+	// (or its legacy pre-app/ location) when the new release lacks it.
 	reusePath := func(projectRoot, relPath string) error {
-		oldPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, "app", projectRoot, relPath))
-		oldPathLegacy := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, projectRoot, relPath))
 		newPath := filepath.ToSlash(filepath.Join(finalDir, "app", projectRoot, relPath))
-
-		// Check if it's missing in new but exists in old (tries /app first, then legacy root)
-		// Use SFTP for existence check as it's more reliable than shell [ -e ]
-		sourceToUse := ""
-		if exists, _ := sshClient.FileExists(oldPath); exists {
-			sourceToUse = oldPath
-		} else if exists, _ := sshClient.FileExists(oldPathLegacy); exists {
-			sourceToUse = oldPathLegacy
-		}
-
-		if sourceToUse != "" {
-			// Check if already exists in new artifact
-			if exists, _ := sshClient.FileExists(newPath); !exists {
-				if err := sshClient.MkdirAll(filepath.Dir(newPath)); err != nil {
-					return fmt.Errorf("failed to create directory for reusable path %s: %w", relPath, err)
-				}
-				cmd := "cp -al -- "+ssh.ShellQuote(sourceToUse)+" "+ssh.ShellQuote(newPath)
-				if _, err := sshClient.ExecuteCommand(cmd); err != nil {
-					return fmt.Errorf("failed to reuse path %s from previous release: %w", relPath, err)
-				}
-				d.log.Info("  Reused: %s", newPath)
-			}
-		}
-
+		script = append(script, reuseSnippet(newPath,
+			filepath.ToSlash(filepath.Join(releases, "app", projectRoot, relPath)),
+			filepath.ToSlash(filepath.Join(releases, projectRoot, relPath))))
 		return nil
 	}
 
 	// Reuse release-level path (outside app/), e.g. bin/app for Go
 	reuseReleasePath := func(relPath string) error {
-		oldPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, relPath))
 		newPath := filepath.ToSlash(filepath.Join(finalDir, relPath))
-
-		sourceToUse := ""
-		if exists, _ := sshClient.FileExists(oldPath); exists {
-			sourceToUse = oldPath
-		}
-
-		if sourceToUse == "" {
-			return nil
-		}
-
-		if exists, _ := sshClient.FileExists(newPath); exists {
-			return nil
-		}
-
-		if err := sshClient.MkdirAll(filepath.Dir(newPath)); err != nil {
-			return fmt.Errorf("failed to create directory for reusable release path %s: %w", relPath, err)
-		}
-
-		cmd := "cp -al -- "+ssh.ShellQuote(sourceToUse)+" "+ssh.ShellQuote(newPath)
-		if _, err := sshClient.ExecuteCommand(cmd); err != nil {
-			return fmt.Errorf("failed to reuse release path %s from previous release: %w", relPath, err)
-		}
-
-		d.log.Info("  Reused: %s", newPath)
+		script = append(script, reuseSnippet(newPath, filepath.ToSlash(filepath.Join(releases, relPath))))
 		return nil
 	}
 
@@ -1268,6 +1239,16 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 		}
 	}
 
+	if len(script) == 0 {
+		return nil
+	}
+	out, err := sshClient.ExecuteCommand(strings.Join(script, "\n"))
+	if err != nil {
+		return fmt.Errorf("failed to reuse paths from previous release: %w (output: %s)", err, out)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		d.log.Info("  Reused: %s", line)
+	}
 	return nil
 }
 
@@ -1365,41 +1346,34 @@ func (d *Deployer) handlePreservedPaths(sshClient *ssh.Client, previousVersion, 
 	}
 
 	d.log.Info("Restoring preserved paths (locking to server version)...")
-	for _, path := range d.env.PreservedPaths {
-		cleanPath := filepath.ToSlash(filepath.Clean(path))
-
-		// Paths are inside 'app' in the new structure, but might be at root in legacy releases
-		oldPath := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, "app", cleanPath))
-		oldPathLegacy := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion, cleanPath))
-		newPath := filepath.ToSlash(filepath.Join(finalDir, "app", cleanPath))
-
-		// Check if source exists before trying to copy (tries /app first, then legacy root)
-		// Use SFTP instead of shell for better reliability
-		sourceToUse := ""
-		if exists, _ := sshClient.FileExists(oldPath); exists {
-			sourceToUse = oldPath
-		} else if exists, _ := sshClient.FileExists(oldPathLegacy); exists {
-			sourceToUse = oldPathLegacy
-			d.log.Info("  Found %s in legacy root (migrating to /app structure)", cleanPath)
-		}
-
-		if sourceToUse != "" {
-			// Remove whatever came in the artifact to ensure a clean copy
-			sshClient.ExecuteCommand("rm -rf -- "+ssh.ShellQuote(newPath))
-
-			// Copy from old to new (using -p to preserve attributes)
-			// We still use shell for cp as it's the fastest way to copy on server
-			cmd := "cp -rfp -- "+ssh.ShellQuote(sourceToUse)+" "+ssh.ShellQuote(newPath)
-			if _, err := sshClient.ExecuteCommand(cmd); err != nil {
-				return fmt.Errorf("failed to preserve path %s: %w", cleanPath, err)
-			}
-			d.log.Info("  Preserved: %s (restored from previous release)", cleanPath)
-		} else {
-			d.log.Warn("  Could not preserve %s: source not found in previous release (tried %s and %s)", cleanPath, oldPath, oldPathLegacy)
+	releases := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", previousVersion))
+	script := preserveScript(releases, finalDir, d.env.PreservedPaths)
+	out, err := sshClient.ExecuteCommand(script)
+	if err != nil {
+		return fmt.Errorf("failed to preserve paths: %w (output: %s)", err, out)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if status, path, _ := strings.Cut(line, " "); status == "ok" {
+			d.log.Info("  Preserved: %s (restored from previous release)", path)
+		} else if status == "missing" {
+			d.log.Warn("  Could not preserve %s: source not found in previous release", path)
 		}
 	}
-
 	return nil
+}
+
+// preserveScript copies each path from prevRelease/app (or the legacy release root)
+// over whatever came in the artifact; prints "ok <path>" or "missing <path>".
+func preserveScript(prevRelease, finalDir string, paths []string) string {
+	var script []string
+	for _, path := range paths {
+		cleanPath := filepath.ToSlash(filepath.Clean(path))
+		script = append(script, fmt.Sprintf(`f=; for s in %s %s; do if [ -e "$s" ]; then f=$s; break; fi; done
+if [ -n "$f" ]; then { rm -rf -- %[3]s && cp -rfp -- "$f" %[3]s; } || exit 1; echo ok %[4]s; else echo missing %[4]s; fi`,
+			ssh.ShellQuote(prevRelease+"/app/"+cleanPath), ssh.ShellQuote(prevRelease+"/"+cleanPath),
+			ssh.ShellQuote(filepath.ToSlash(filepath.Join(finalDir, "app", cleanPath))), ssh.ShellQuote(cleanPath)))
+	}
+	return strings.Join(script, "\n")
 }
 
 // ReloadServices connects to the remote server and re-executes all services_reload commands.

@@ -367,23 +367,6 @@ func (c *Client) UploadFileWithProgress(localPath, remotePath string) error {
 	return c.uploadFile(localPath, remotePath, bar)
 }
 
-// ExtractArchive extracts a tar.gz archive on the remote server
-func (c *Client) ExtractArchive(archivePath, targetDir string) error {
-	// Create target directory if it doesn't exist using SFTP
-	if err := c.sftpClient.MkdirAll(targetDir); err != nil {
-		return fmt.Errorf("failed to create target directory: %w", err)
-	}
-
-	// Extract using shell (tar is too complex for SFTP)
-	cmd := "tar -xzf " + ShellQuote(archivePath) + " -C " + ShellQuote(targetDir)
-	output, err := c.ExecuteCommand(cmd)
-	if err != nil {
-		return fmt.Errorf("failed to extract archive: %w (output: %s)", err, output)
-	}
-
-	return nil
-}
-
 // ExecuteCommand executes one of versa's own commands under /bin/sh, with no timeout.
 func (c *Client) ExecuteCommand(cmd string) (string, error) {
 	return c.ExecuteCommandWithTimeout(shWrap(cmd), 0)
