@@ -28,8 +28,10 @@ type ServerInfo struct {
 	Tools    []string          // which of serverTools are installed
 }
 
-// serverTools are the commands versa or common hooks depend on.
-const serverTools = "tar gzip perl python3 timeout rsync systemctl service rc-service sudo"
+// serverTools are the commands versa or common hooks depend on. "timeout" is probed
+// separately: it is listed only if it takes `timeout -s SIG SECS CMD` (busybox before
+// 1.30 wanted `-t SECS`).
+const serverTools = "tar gzip perl python3 rsync systemctl service rc-service sudo"
 
 // serverInfoScript prints one key=value line per probe in a single round-trip. It
 // sticks to /proc and POSIX tools so it runs on old servers (RHEL/CentOS 5+, busybox):
@@ -55,7 +57,7 @@ command -v php >/dev/null 2>&1 && echo "rt_php=$(php -v 2>/dev/null | head -1 | 
 command -v node >/dev/null 2>&1 && echo "rt_node=$(node -v 2>/dev/null)"
 if command -v python3 >/dev/null 2>&1; then echo "rt_python=$(python3 -V 2>&1 | awk '{print $2}')"; elif command -v python >/dev/null 2>&1; then echo "rt_python=$(python -V 2>&1 | awk '{print $2}')"; fi
 command -v git >/dev/null 2>&1 && echo "rt_git=$(git --version | awk '{print $3}')"
-echo "tools=$(for t in ` + serverTools + `; do command -v $t >/dev/null 2>&1 && printf '%s ' $t; done)"
+echo "tools=$(for t in ` + serverTools + `; do command -v $t >/dev/null 2>&1 && printf '%s ' $t; done; timeout -s KILL 5 true >/dev/null 2>&1 && printf timeout)"
 [ -n "$cpu" ] && echo "cpu=$( (head -1 /proc/stat; sleep 1; head -1 /proc/stat) | awk '{t=0; for(k=2;k<=NF&&k<=9;k++)t+=$k; i=$5+$6; if(NR==1){t1=t;i1=i} else if(t>t1)printf "%.1f%%", 100*(1-(i-i1)/(t-t1))}')"
 true`
 

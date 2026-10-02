@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/user/versaDeploy/internal/ssh"
 )
 
 // runShells runs script under sh and, when installed, busybox sh (Alpine, old embedded).
@@ -55,7 +58,7 @@ func TestReuseSnippet(t *testing.T) {
 	}, func(root string) string {
 		return strings.Join([]string{
 			reuseSnippet(root+"/new/app/vendor", root+"/missing/vendor", root+"/old/vendor"),
-			reuseSnippet(root+"/new/kept", root+"/old/vendor"),     // already present: untouched
+			reuseSnippet(root+"/new/kept", root+"/old/vendor"),      // already present: untouched
 			reuseSnippet(root+"/new/nothing", root+"/missing/none"), // no source: skipped
 		}, "\n")
 	}, func(root, out string) {
@@ -91,4 +94,19 @@ func TestPreserveScript(t *testing.T) {
 			t.Errorf("legacy path not restored: %q", b)
 		}
 	})
+}
+
+// The remote `timeout` wrapper must kill a hook that outlives hook_timeout.
+func TestHookCmdTimeout(t *testing.T) {
+	if exec.Command("timeout", "-s", "KILL", "5", "true").Run() != nil {
+		t.Skip("no usable timeout")
+	}
+	d := &Deployer{server: &ssh.ServerInfo{Tools: []string{"timeout"}}}
+	start := time.Now()
+	cmd := exec.Command("sh", "-c", d.hookCmd(t.TempDir(), `echo "it's running"; sleep 10`, time.Second))
+	cmd.Env = append(os.Environ(), "SHELL=/bin/sh")
+	out, err := cmd.CombinedOutput()
+	if err == nil || time.Since(start) > 5*time.Second || !strings.Contains(string(out), "it's running") {
+		t.Errorf("err=%v after %v, output %q", err, time.Since(start), out)
+	}
 }

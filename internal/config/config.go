@@ -57,6 +57,9 @@ type SSHConfig struct {
 	// LegacyAlgorithms enables SHA1 key exchanges, CBC ciphers and ssh-rsa/dss host keys
 	// for old servers (OpenSSH < 7, e.g. RHEL/CentOS 5). Insecure: use only when required.
 	LegacyAlgorithms bool `yaml:"legacy_algorithms"`
+	// StrictHostKey refuses to connect when the host key can't be checked against
+	// known_hosts (missing/unreadable file). Default false: connect with a warning.
+	StrictHostKey bool `yaml:"strict_host_key"`
 }
 
 // BuildsConfig holds build configuration for each language

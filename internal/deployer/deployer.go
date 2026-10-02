@@ -783,7 +783,7 @@ func (d *Deployer) runHook(sshClient *ssh.Client, finalDir, hook string, previou
 	}
 
 	appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
-	wrappedHook := fmt.Sprintf("cd %s && %s", ssh.ShellQuote(appPath), hook)
+	wrappedHook := d.hookCmd(appPath, hook, hookTimeout)
 
 	d.log.Info("Executing: %s (in %s)", hook, appPath)
 	output, err := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
@@ -1115,6 +1115,16 @@ func sharedLinkScript(releaseDir, sharedBase string, paths []string) string {
 			ssh.ShellQuote(releasePath), ssh.ShellQuote(filepath.ToSlash(filepath.Dir(releasePath)))))
 	}
 	return strings.Join(script, " &&\n")
+}
+
+// hookCmd runs hook from appPath in the user's login shell. When the server has a
+// usable `timeout`, the limit is also enforced remotely: OpenSSH before 7.9 ignores the
+// SIGKILL sent when the local timer fires, which would leave the hook running.
+func (d *Deployer) hookCmd(appPath, hook string, limit time.Duration) string {
+	if d.server != nil && d.server.Has("timeout") {
+		hook = fmt.Sprintf(`timeout -s KILL %d "$SHELL" -c %s`, int(limit.Seconds()), ssh.ShellQuote(hook))
+	}
+	return "cd " + ssh.ShellQuote(appPath) + " && " + hook
 }
 
 // reuseSnippet hardlinks the first existing source to dst unless dst already exists,
@@ -1669,7 +1679,7 @@ func (d *Deployer) RunHooks(indices []int) error {
 	for _, hookConfig := range hooks {
 		if hookConfig.Command != "" {
 			appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
-			wrappedHook := fmt.Sprintf("cd %s && %s", ssh.ShellQuote(appPath), hookConfig.Command)
+			wrappedHook := d.hookCmd(appPath, hookConfig.Command, hookTimeout)
 			d.log.Info("Executing: %s", hookConfig.Command)
 			output, err := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
 			if err != nil {
@@ -1689,7 +1699,7 @@ func (d *Deployer) RunHooks(indices []int) error {
 				cmd := h
 				appPath := filepath.ToSlash(filepath.Join(finalDir, "app"))
 				g.Go(func() error {
-					wrappedHook := fmt.Sprintf("cd %s && %s", ssh.ShellQuote(appPath), cmd)
+					wrappedHook := d.hookCmd(appPath, cmd, hookTimeout)
 					d.log.Info("Executing: %s", cmd)
 					output, hookErr := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
 					if hookErr != nil {

@@ -2,11 +2,14 @@ package ssh
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,25 +77,41 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 		return nil, verserrors.New(verserrors.CodeSSHAuthFailed, "No valid SSH authentication methods found", "Set ssh.key_path to a valid private key, or enable ssh.use_ssh_agent and ensure SSH_AUTH_SOCK is set.", nil)
 	}
 
+	hostKeyCallback, err := createHostKeyCallback(cfg, log)
+	if err != nil {
+		return nil, err
+	}
+
 	// Configure SSH client
 	sshConfig := &ssh.ClientConfig{
 		User:            cfg.User,
 		Auth:            authMethods,
-		HostKeyCallback: createHostKeyCallback(cfg),
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         10 * time.Second,
 	}
+	hostKeyAlgos := ssh.SupportedAlgorithms().HostKeys
 	if cfg.LegacyAlgorithms {
 		sup, ins := ssh.SupportedAlgorithms(), ssh.InsecureAlgorithms()
 		sshConfig.KeyExchanges = append(sup.KeyExchanges, ins.KeyExchanges...)
 		sshConfig.Ciphers = append(sup.Ciphers, ins.Ciphers...)
 		sshConfig.MACs = append(sup.MACs, ins.MACs...)
-		sshConfig.HostKeyAlgorithms = append(sup.HostKeys, ins.HostKeys...)
+		hostKeyAlgos = append(sup.HostKeys, ins.HostKeys...)
+		sshConfig.HostKeyAlgorithms = hostKeyAlgos
+	}
+
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	var allowed []string
+	for _, a := range knownHostKeyAlgorithms(hostKeyCallback, addr, cfg.Port) {
+		if slices.Contains(hostKeyAlgos, a) {
+			allowed = append(allowed, a)
+		}
+	}
+	if len(allowed) > 0 {
+		sshConfig.HostKeyAlgorithms = allowed
 	}
 
 	// Connect with retry logic
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	var sshClient *ssh.Client
-	var err error
 
 	maxRetries := 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -134,16 +153,35 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 
 // keepAlive pings the server so long uploads/hooks survive NAT and firewall idle timeouts.
 // Servers that don't know the request reply with a failure, which still counts as alive.
+// With no reply for 8 intervals the link is dead: the connection is closed so pending
+// operations fail instead of hanging until TCP gives up (often 15+ minutes). The window
+// is generous because replies queue behind in-flight upload data on slow links.
 func (c *Client) keepAlive(interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	reply := make(chan error, 1)
+	pending, last := false, time.Now()
 	for {
 		select {
 		case <-c.done:
 			return
-		case <-t.C:
-			if _, _, err := c.sshClient.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+		case err := <-reply:
+			if err != nil {
 				return
+			}
+			pending, last = false, time.Now()
+		case <-t.C:
+			if time.Since(last) > 8*interval {
+				c.log.Warn("SSH server unresponsive for %v, closing connection", time.Since(last).Round(time.Second))
+				c.sshClient.Close()
+				return
+			}
+			if !pending {
+				pending = true
+				go func() {
+					_, _, err := c.sshClient.SendRequest("keepalive@openssh.com", true, nil)
+					reply <- err
+				}()
 			}
 		}
 	}
@@ -662,32 +700,50 @@ func (c *Client) Remove(path string) error {
 	return c.sftpClient.Remove(path)
 }
 
-// createHostKeyCallback returns an SSH HostKeyCallback based on configuration
-func createHostKeyCallback(cfg *config.SSHConfig) ssh.HostKeyCallback {
+// createHostKeyCallback returns an SSH HostKeyCallback based on configuration. Without
+// a usable known_hosts file it accepts any host key (warning), or fails when
+// ssh.strict_host_key is set.
+func createHostKeyCallback(cfg *config.SSHConfig, log *logger.Logger) (ssh.HostKeyCallback, error) {
 	knownHostsPath := cfg.KnownHostsFile
-
-	// If no path specified, try to find default known_hosts
 	if knownHostsPath == "" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			defaultPath := filepath.Join(home, ".ssh", "known_hosts")
-			if _, err := os.Stat(defaultPath); err == nil {
-				knownHostsPath = defaultPath
-			}
+		if home, err := os.UserHomeDir(); err == nil {
+			knownHostsPath = filepath.Join(home, ".ssh", "known_hosts")
 		}
 	}
 
-	// If we still don't have a path, fallback to insecure for now but log it
-	if knownHostsPath == "" {
-		return ssh.InsecureIgnoreHostKey()
-	}
-
 	callback, err := knownhosts.New(knownHostsPath)
-	if err != nil {
-		// If failed to load known_hosts, fallback to insecure but we should probably fail instead
-		// For versaDeploy, we want to be safe but not break existing setups that don't have it.
-		return ssh.InsecureIgnoreHostKey()
+	if err == nil {
+		return callback, nil
 	}
+	if cfg.StrictHostKey {
+		return nil, verserrors.New(verserrors.CodeSSHConnectFailed, "Cannot verify the server's host key: "+err.Error(),
+			"Add the server to known_hosts (ssh-keyscan -p PORT HOST >> ~/.ssh/known_hosts) or set ssh.known_hosts_file.", err)
+	}
+	if log != nil {
+		log.Warn("Host key NOT verified (%v): connection is open to man-in-the-middle attacks. Add the server to known_hosts, or set ssh.strict_host_key: true to refuse.", err)
+	}
+	return ssh.InsecureIgnoreHostKey(), nil
+}
 
-	return callback
+// knownHostKeyAlgorithms returns the host key algorithms known_hosts holds for addr,
+// so the server is asked for a key we can verify (e.g. its RSA key when only that is
+// known, instead of an unknown ed25519 key that would fail as a mismatch). nil when
+// addr has no entries.
+func knownHostKeyAlgorithms(cb ssh.HostKeyCallback, addr string, port int) []string {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	probe, _ := ssh.NewSignerFromKey(priv) // never in known_hosts: the error lists the known keys
+	var keyErr *knownhosts.KeyError
+	if err := cb(addr, &net.TCPAddr{IP: net.IPv4zero, Port: port}, probe.PublicKey()); !errors.As(err, &keyErr) {
+		return nil
+	}
+	var algos []string
+	for _, k := range keyErr.Want {
+		switch t := k.Key.Type(); t {
+		case ssh.KeyAlgoRSA:
+			algos = append(algos, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSA)
+		default:
+			algos = append(algos, t)
+		}
+	}
+	return algos
 }
