@@ -71,25 +71,9 @@ func executeGitInternal(repoPath string, args ...string) (string, error) {
 
 	allArgs := append([]string{"-C", repoPath}, args...)
 
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		// If we have an absolute path, use it directly. exec.Command handles spaces on Windows.
-		// Only use cmd /c if we are relying on the shell to find "git" in the PATH.
-		if filepath.IsAbs(gitPath) {
-			cmd = exec.Command(gitPath, allArgs...)
-		} else {
-			shell := os.Getenv("COMSPEC")
-			if shell == "" {
-				shell = "cmd.exe"
-			}
-			gitCmd := "git " + strings.Join(allArgs, " ")
-			cmd = exec.Command(shell, "/c", gitCmd)
-		}
-	} else {
-		cmd = exec.Command(gitPath, allArgs...)
-	}
-
-	output, err := cmd.CombinedOutput()
+	// Run git directly (exec resolves "git" through PATH on every OS): going through
+	// cmd /c would split repo paths that contain spaces.
+	output, err := exec.Command(gitPath, allArgs...).CombinedOutput()
 	if err != nil {
 		return string(output), fmt.Errorf("git command failed: %w (output: %s)", err, strings.TrimSpace(string(output)))
 	}

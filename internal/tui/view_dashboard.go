@@ -12,6 +12,7 @@ import (
 type dashboardModel struct {
 	msgDashboardData
 	loaded bool
+	offset int // first visible line when the dashboard is taller than the pane
 }
 
 type msgDashboardData struct {
@@ -39,6 +40,15 @@ func (d *dashboardModel) applyData(msg msgDashboardData) {
 	d.loaded = true
 }
 
+// scroll moves the visible window by delta lines, clamped to the content.
+func (d *dashboardModel) scroll(delta, height int) {
+	d.offset = clampOffset(d.offset+delta, len(d.lines(0)), height)
+}
+
+func clampOffset(offset, total, height int) int {
+	return max(0, min(offset, total-height))
+}
+
 func stat(label, value string) string {
 	v := value
 	if v == "" {
@@ -47,12 +57,31 @@ func stat(label, value string) string {
 	return fmt.Sprintf("  %-24s %s", label, v)
 }
 
-func (d dashboardModel) view(width, _ int) string {
+func (d dashboardModel) view(width, height int) string {
+	lines := d.lines(width)
+	if height <= 0 || len(lines) <= height {
+		return strings.Join(lines, "\n")
+	}
+
+	// Taller than the pane: show a window and mark the hidden parts, so the
+	// overflow doesn't push the header off screen.
+	off := clampOffset(d.offset, len(lines), height)
+	visible := append([]string(nil), lines[off:off+height]...)
+	if off > 0 {
+		visible[0] = StyleMuted.Render("  ↑ more")
+	}
+	if off+height < len(lines) {
+		visible[height-1] = StyleMuted.Render("  ↓ more  (↑/↓ PgUp/PgDn to scroll)")
+	}
+	return strings.Join(visible, "\n")
+}
+
+func (d dashboardModel) lines(width int) []string {
 	if !d.loaded {
-		return StyleMuted.Render("\n  Loading dashboard…")
+		return []string{"", StyleMuted.Render("  Loading dashboard…")}
 	}
 	if d.err != nil {
-		return StyleError.Render("\n  Error: " + errDisplay(d.err))
+		return []string{"", StyleError.Render("  Error: " + errDisplay(d.err))}
 	}
 
 	sep := StyleMuted.Render(strings.Repeat("─", max(width-4, 4)))
@@ -118,5 +147,5 @@ func (d dashboardModel) view(width, _ int) string {
 		StyleMuted.Render("  2=releases  5=deploy  F5=refresh"),
 	)
 
-	return strings.Join(lines, "\n")
+	return lines
 }

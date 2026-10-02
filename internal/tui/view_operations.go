@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -28,7 +29,10 @@ func (lc *logCapture) Write(p []byte) (int, error) {
 
 type msgDeployLogLine struct{ line string }
 type msgDeployDone struct{ err error }
-type msgRollbackDone struct{ err error }
+type msgRollbackDone struct {
+	err  error
+	warn string // rollback done, but something after it failed
+}
 type msgConfirmPostDeployRequest struct{}
 
 // deployFlag is a toggleable deploy option shown in the Operations panel.
@@ -469,17 +473,40 @@ func doRunHooks(cfg *config.Config, envName, repoPath string, ch chan string) te
 }
 
 // doRollback rolls back to the explicitly named release.
-func doRollback(client *versassh.Client, remotePath, targetRelease string) tea.Cmd {
+func doRollback(client *versassh.Client, remotePath, targetRelease string, env *config.Environment) tea.Cmd {
 	return func() tea.Msg {
 		currentSymlink := filepath.ToSlash(filepath.Join(remotePath, "current"))
 		relTarget := filepath.ToSlash(filepath.Join("releases", targetRelease))
-		err := client.CreateSymlink(relTarget, currentSymlink)
-		return msgRollbackDone{err: err}
+		return rollbackDone(client, client.CreateSymlink(relTarget, currentSymlink), env)
 	}
 }
 
+// rollbackDone runs services_reload and restarts the env's services after a successful
+// symlink switch (PHP-FPM caches the old target of current, and long-running services
+// keep running the old binary); failures here don't undo the rollback.
+func rollbackDone(client *versassh.Client, err error, env *config.Environment) msgRollbackDone {
+	if err != nil {
+		return msgRollbackDone{err: err}
+	}
+	var failed []string
+	for _, cmd := range env.ServicesReload {
+		if _, err := client.ExecuteCommandWithTimeout(cmd, 30*time.Second); err != nil {
+			failed = append(failed, cmd)
+		}
+	}
+	for _, cmd := range deployer.ServiceRestartCommands(env) {
+		if _, err := client.ExecuteCommandWithTimeout(cmd, 3*time.Minute); err != nil {
+			failed = append(failed, "restart of services (see 'versa service <env> status')")
+		}
+	}
+	if len(failed) > 0 {
+		return msgRollbackDone{warn: "this failed: " + strings.Join(failed, "; ")}
+	}
+	return msgRollbackDone{}
+}
+
 // doRollbackToPrevious rolls back to the release immediately before the current one.
-func doRollbackToPrevious(client *versassh.Client, remotePath string) tea.Cmd {
+func doRollbackToPrevious(client *versassh.Client, remotePath string, env *config.Environment) tea.Cmd {
 	return func() tea.Msg {
 		releasesDir := filepath.ToSlash(filepath.Join(remotePath, "releases"))
 		releases, err := client.ListReleases(releasesDir)
@@ -509,8 +536,7 @@ func doRollbackToPrevious(client *versassh.Client, remotePath string) tea.Cmd {
 		}
 
 		relTarget := filepath.ToSlash(filepath.Join("releases", previous))
-		err = client.CreateSymlink(relTarget, currentSymlink)
-		return msgRollbackDone{err: err}
+		return rollbackDone(client, client.CreateSymlink(relTarget, currentSymlink), env)
 	}
 }
 

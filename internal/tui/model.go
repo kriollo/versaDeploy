@@ -236,7 +236,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		contentH := m.height - 3 // header + tabbar + statusbar
+		contentH := m.contentHeight()
 		contentW := m.width - sidebarWidth - 2
 		if contentW < 10 {
 			contentW = 10
@@ -293,8 +293,12 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.releases.status = StyleError.Render("Rollback failed: " + errDisplay(msg.err))
 			m.operations.status = StyleError.Render("Rollback failed: " + errDisplay(msg.err))
 		} else {
-			m.releases.status = StyleSuccess.Render("Rollback successful!")
-			m.operations.status = StyleSuccess.Render("Rollback successful!")
+			status := StyleSuccess.Render("Rollback successful!")
+			if msg.warn != "" {
+				status = StyleWarning.Render("Rollback successful, but " + msg.warn)
+			}
+			m.releases.status = status
+			m.operations.status = status
 			if client := m.activeClient(); client != nil {
 				if env := m.activeEnvCfg(); env != nil {
 					cmds = append(cmds, loadReleases(client, env.RemotePath))
@@ -568,6 +572,22 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 
 	// Content-area key handling per view
 	switch m.currentView {
+	case viewDashboard:
+		page := m.contentHeight()
+		switch {
+		case key.Matches(msg, Keys.Up):
+			m.dashboard.scroll(-1, page)
+		case key.Matches(msg, Keys.Down):
+			m.dashboard.scroll(1, page)
+		case key.Matches(msg, Keys.PageUp):
+			m.dashboard.scroll(-page, page)
+		case key.Matches(msg, Keys.PageDown):
+			m.dashboard.scroll(page, page)
+		case key.Matches(msg, Keys.Home):
+			m.dashboard.scroll(-1<<30, page)
+		case key.Matches(msg, Keys.End):
+			m.dashboard.scroll(1<<30, page)
+		}
 	case viewReleases:
 		switch {
 		case key.Matches(msg, Keys.Up):
@@ -592,7 +612,7 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 				if client := m.activeClient(); client != nil {
 					if env := m.activeEnvCfg(); env != nil {
 						m.releases.status = StyleWarning.Render("Rolling back to " + rel + "…")
-						cmds = append(cmds, doRollback(client, env.RemotePath, rel))
+						cmds = append(cmds, doRollback(client, env.RemotePath, rel, env))
 					}
 				}
 			}
@@ -991,7 +1011,7 @@ func (m *appModel) handleOperationsKey(msg tea.KeyMsg) []tea.Cmd {
 			if env := m.activeEnvCfg(); env != nil {
 				if client := m.sshClients[envName]; client != nil {
 					m.operations.status = StyleWarning.Render("Rolling back to previous release…")
-					cmds = append(cmds, doRollbackToPrevious(client, env.RemotePath))
+					cmds = append(cmds, doRollbackToPrevious(client, env.RemotePath, env))
 				}
 			}
 		}
@@ -1215,6 +1235,11 @@ func (m appModel) renderTabBar(contentW int) string {
 	return StyleSurface.Width(contentW).Render(bar + connHint)
 }
 
+// contentHeight is the number of rows available to a view below the tab bar.
+func (m appModel) contentHeight() int {
+	return m.height - 3 // header + tabbar + statusbar
+}
+
 func (m appModel) View() string {
 	if m.width == 0 {
 		return "Initializing…"
@@ -1226,7 +1251,7 @@ func (m appModel) View() string {
 	headerStr := renderHeader(m.width, version.Version, envName, connected)
 	statusbarStr := renderStatusbar(m.width, Keys.ShortHelp(), m.statusMsg)
 
-	contentH := m.height - 3 // header + tabbar + statusbar
+	contentH := m.contentHeight()
 	sidebar := renderSidebar(contentH+1, m.envNames, m.activeEnv, m.sidebarFocused, m.connStates)
 
 	contentW := m.width - sidebarWidth - 2
@@ -1258,7 +1283,9 @@ func (m appModel) View() string {
 
 	contentPane := lipgloss.JoinVertical(lipgloss.Left,
 		tabBar,
-		StyleContent.Width(contentW).Height(contentH).Render(content),
+		// Height only pads; MaxHeight clips views taller than the pane so they
+		// can't push the header off screen.
+		StyleContent.Width(contentW).Height(contentH).MaxHeight(contentH).Render(content),
 	)
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, contentPane)

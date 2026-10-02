@@ -77,3 +77,12 @@ func TestSSHTestCommand(t *testing.T) {
 		t.Error("expected failure for missing environment argument")
 	}
 }
+
+func TestServiceCommandArgs(t *testing.T) {
+	for _, args := range [][]string{{"service"}, {"service", "prod", "restart", "extra"}} {
+		rootCmd.SetArgs(args)
+		if err := rootCmd.Execute(); err == nil {
+			t.Errorf("versa %v: expected an argument error", args)
+		}
+	}
+}

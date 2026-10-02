@@ -1,39 +1,24 @@
-# versaDeploy Quick Start Guide
+# ⚡ Quick Start
 
-## 🚀 Get Started in 5 Minutes
-
-### Step 1: Install versaDeploy
-
-versaDeploy is a single Go binary. You can build it from source on any platform.
-
-#### Windows
-
-```powershell
-# Open PowerShell and run:
-go build -o versa.exe ./cmd/versa/main.go
-# Add the current directory to your PATH or move versa.exe to a folder in your PATH
-```
-
-#### Linux / macOS
+The short version, for when you already have a server with SSH access. For a step-by-step setup (server preparation, web server config, sudoers), see [Getting Started](GETTING_STARTED.md).
 
 ```bash
-go build -o versa ./cmd/versa/main.go
-sudo mv versa /usr/local/bin/
+# 1. In the root of your Git repository
+versa init                                   # choose [1] SSH server
+
+# 2. Edit deploy.yml (host, user, key_path, remote_path, builds), then commit it
+versa config validate production
+versa info production                        # tests SSH + SFTP and shows server info
+
+# 3. First deploy
+versa deploy production --initial-deploy
+
+# 4. From now on
+git commit -am "changes"
+versa deploy production
 ```
 
-### Step 2: Initialize your project
-
-Run the following command in your project root:
-
-```bash
-versa init
-```
-
-This creates a `deploy.yml` template. Edit it to match your environment.
-
-### Step 3: Configure `deploy.yml`
-
-A minimal configuration for a PHP project looks like this:
+Minimal `deploy.yml`:
 
 ```yaml
 project: "my-app"
@@ -47,82 +32,42 @@ environments:
     builds:
       php:
         enabled: true
+    shared_paths:
+      - ".env"                               # create /var/www/app/shared/.env on the server first
+    services_reload:
+      - "sudo systemctl reload php8.2-fpm"
 ```
 
-> [!NOTE]
-> For a full list of configuration options, see **[DEPLOY.md](DEPLOY.md)**.
+Point your web server at `/var/www/app/current/app/public`.
 
-### Step 4: First Deployment
+## What a deploy does
 
-Before running the first deploy, ensure you have SSH access to your Linux server and the `remote_path` exists (or the user has permissions to create it).
+1. Checks the working tree is committed and clones `HEAD` to a temp directory.
+2. Compares file hashes with the server's `deploy.lock`; stops if nothing changed.
+3. Builds locally (composer, npm, go, pip…), only for what changed.
+4. Uploads the release in parallel chunks to `releases/<timestamp>/`.
+5. Links `shared_paths`, switches `current` atomically, reloads services, runs `post_deploy` hooks, restarts `services`.
+6. Rolls back automatically if a `post_deploy` hook, a service or the health check fails.
+
+## Cheat sheet
 
 ```bash
-versa deploy production --initial-deploy
+versa                                        # full-screen interface (TUI)
+versa diff production                        # what would be deployed
+versa deploy production --dry-run            # same, through the deploy flow
+versa deploy production --force              # redeploy without changes
+versa deploy staging,production              # several environments in a row
+versa status production                      # releases on the server
+versa rollback production                    # previous release
+versa rollback production --to 20261001-183807
+versa logs production                        # tail -f the Laravel log
+versa exec production "df -h"                # any command on the server
+versa hooks production                       # re-run post_deploy hooks
+versa services-reload production             # re-run services_reload
+versa service production                     # status of the Go/Python services
+versa service production restart
+versa service production logs --name api
+versa deploy production --log-file deploy.log
 ```
 
-**What happens:**
-
-1. ✅ **Detection**: Calculates SHA256 hashes for all local files.
-2. ✅ **First Build**: Runs your configured builds (composer, go build, etc.).
-3. ✅ **Package**: Creates a full release artifact (including all non-ignored files).
-4. ✅ **Upload**: Transports the artifact to the server via SFTP.
-5. ✅ **Atomic Switch**: Creates the `/var/www/app/current` symlink.
-6. ✅ **State**: Saves the `deploy.lock` on the server for future diffing.
-
-### Step 5: Subsequent Deploys
-
-```bash
-# Make changes to your code
-versa deploy production
-```
-
-versaDeploy will now only upload **changed files**, making deployments incredibly fast.
-
-### Step 6: Rollback (if needed)
-
-```bash
-versa rollback production
-```
-
-Instantly switches the symlink back to the previous successful release.
-
----
-
-## 📋 Common Scenarios
-
-### Framework in a Subdirectory
-
-If your framework is in an `api/` folder:
-
-```yaml
-builds:
-  php:
-    enabled: true
-    root: "api"
-```
-
-### Static Assets (Images, Storage)
-
-versaDeploy automatically detects and copies images or PDFs if they change. Ensure your `public` folder is not ignored in `deploy.yml`.
-
-### Post-Deploy Tasks
-
-Run migrations or clear cache automatically:
-
-```yaml
-post_deploy:
-  - "php artisan migrate --force"
-  - "php artisan cache:clear"
-```
-
----
-
-## 🎯 Pro Tips
-
-1. **Dry Run**: Use `versa deploy production --dry-run` to see exactly what will be uploaded without actually doing it.
-2. **Local Pathing**: You can use `~/` or absolute paths for your SSH keys on both Windows and Linux.
-3. **Log Files**: Use `--log-file deploy.log` to keep a history of your deployments.
-
----
-
-**You're ready to deploy! 🎉**
+All commands and flags: [CLI Reference](CLI_REFERENCE.md). All config options: [Configuration Reference](DEPLOY.md).

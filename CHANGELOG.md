@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.0] - 2026-10-02
+
+### Added
+
+- **Services (`services`)**: run Go binaries and Python servers through the server's init system. versa writes a wrapper plus a systemd unit, an OpenRC script and a SysV init script to `<remote_path>/.versa/`, installs the one matching the server (only when it changed), enables it at boot, restarts it after `post_deploy` on every deploy and checks it stays up (rolling back otherwise). Every rollback restarts services too. Works on systemd, OpenRC (Alpine) and SysV init (RHEL/CentOS 5-6).
+- **`versa service <env> [status|start|stop|restart|logs|install|uninstall|sudoers]`**: manage services by hand; `sudoers` prints the exact sudoers line for the server.
+- **`versa info` checks sudo** for the environment's services.
+- **`services[].stop_timeout`** (default 30 s): how long a stop waits before SIGKILL (systemd `TimeoutStopSec`, OpenRC `retry`, SysV init script).
+- **MIT license** (`LICENSE`).
+- **Windows CI**: tests also run on `windows-latest`.
+
+### Changed
+
+- **Python dependencies are installed on the server**: each release gets a virtualenv created there (`python3 -m venv` + pip/poetry/pipenv), reused via hardlinks when requirements don't change. Your machine no longer needs Python (except for `build_binary`).
+- **`run_server.sh`** uses the release's virtualenv, `exec`s the server, and no longer runs `migrate`/`collectstatic` (move them to `post_deploy` hooks). Django now runs with gunicorn (`<project>.wsgi`) instead of `runserver`. It is written on every build, so `web_*` changes apply without touching Python files.
+- **TUI Dashboard scrolls** (↑/↓, PgUp/PgDn) when the server info doesn't fit, instead of pushing the header off screen.
+- **Internal Version**: Version bumped to 1.8.0.
+- **`python.service_name` is deprecated**: it's migrated to `services` automatically; the `.service` file is no longer written into the app directory.
+
+### Fixed
+
+- **A failed deploy after a manual rollback re-activated the wrong release**: automatic rollbacks (failed `post_deploy` hook, service or health check) went back to the last *deployed* release from `deploy.lock`, not to the one that was live. After `versa rollback` that re-activated the release you had just rolled back from. They now go back to whatever `current` pointed to.
+- **Every runtime error printed the command's full help and the error twice**: help is now only shown for wrong arguments.
+- **Python dependencies never reached the server**: `pip install` ran on the developer's machine, into its global Python, and no virtualenv was created in the release.
+- **`python.build_binary` on Windows/macOS produced a binary the Linux server can't run**: it now fails with a clear message (PyInstaller can't cross-compile).
+- **uvicorn was started with `--threads`**, an option it doesn't have (`web_threads` now only applies to gunicorn).
+- **`ssh.known_hosts_file: "~/.ssh/known_hosts"` was never read**: `~` was expanded only in `key_path`, so the host key was not verified and a `Host key NOT verified` warning was printed. `~/` is now expanded in `known_hosts_file` too.
+- **`$` in hooks was mangled**: env var interpolation used `os.Expand`, which also replaced `$1`, `$@`, `$?` (`awk '{print $1}'` became `awk '{print }'`) and had no escape. Now only `$NAME`/`${NAME}` are replaced, and `$$` is a literal `$` (`echo $$HOME` runs `echo $HOME` on the server).
+- **Lockfile-only changes didn't reinstall dependencies**: only `composer.json`/`package.json`/`go.mod`/the requirements file were compared. Now `composer.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `go.sum`, `poetry.lock`, `Pipfile.lock` count too (the first deploy after upgrading reinstalls once when a lockfile exists).
+- **Python dependencies were reinstalled on every deploy** when `pyproject.toml` or `Pipfile` existed. They are now hashed like the requirements file.
+- **Lockfiles under `ignored_paths` were not hashed**: `composer.lock`, `pnpm-lock.yaml`, `Pipfile` were never matched by the "critical file" check.
+- **Rollbacks didn't reload services**: `versa rollback` (without `--to`), TUI rollbacks and the automatic rollback after a failed `post_deploy` hook now run `services_reload`, so PHP-FPM serves the restored release.
+- **Builds failed on Windows when a command had quotes**: commands were passed to `cmd.exe /c` as one escaped argument, so inner quotes reached `cmd` as `\"`. Go builds always failed (`go build -o "C:\..."` → `mkdir "C:: invalid syntax`), as did `composer`/`npm`/`pip` commands with quoted arguments. The command line is now handed to `cmd.exe` as typed.
+- **git failed on Windows for repository paths with spaces** when `git` was found through `PATH`: it ran via `cmd /c` with the path unquoted. git is now always executed directly.
+- **`no common algorithm for host key` on old servers listed in known_hosts**: when known_hosts held an `ssh-rsa` key, versa asked only for `rsa-sha2-*`, which OpenSSH < 7.2 doesn't support. `ssh-rsa` is accepted again, as the SSH library does by default.
+
+### Documentation
+
+- Rewrote the CLI reference (all commands including `diff`, `info`, `services-reload`, `config validate`, `init --local`; config file discovery; TUI shortcuts; local-mode support), the configuration reference (every option and default, hooks, health check, notifications, local mode, server layout), Getting Started (web root is `current/app/...`), Quick Start, Install (real asset names and URLs) and Troubleshooting.
+- `deploy.example.yml`: `root` instead of the never-read `project_root`, `ignored_paths` inside the environment instead of a top-level `ignored`, new SSH/upload options.
+
 ## [1.7.0] - 2026-10-02
 
 ### Added

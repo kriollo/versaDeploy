@@ -3,9 +3,7 @@ package lang
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 
 	verserrors "github.com/user/versaDeploy/internal/errors"
 )
@@ -55,21 +53,9 @@ func (g *GoBuilder) Build(ctx *BuilderContext) (int, bool, error) {
 	return 0, true, nil
 }
 
-// executeCommand runs a command in a shell based on the current OS
+// executeCommand runs a command in the OS shell (cmd.exe on Windows, sh elsewhere)
 func executeCommand(command, dir string, env ...string) ([]byte, error) {
-	var shell, flag string
-	if runtime.GOOS == "windows" {
-		shell = os.Getenv("COMSPEC")
-		if shell == "" {
-			shell = "cmd.exe"
-		}
-		flag = "/c"
-	} else {
-		shell = "sh"
-		flag = "-c"
-	}
-
-	cmd := exec.Command(shell, flag, command)
+	cmd := shellCommand(command)
 	cmd.Dir = dir
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)

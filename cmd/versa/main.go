@@ -354,6 +354,20 @@ var sshTestCmd = &cobra.Command{
 			fmt.Println("✅ SFTP subsystem working.")
 		}
 
+		if len(envCfg.Services) > 0 {
+			fmt.Println("🔍 Checking sudo for services...")
+			missing, err := deployer.ServiceSudoCheck(client, envCfg)
+			switch {
+			case err != nil:
+				fmt.Printf("⚠️  Could not check sudo: %v\n", err)
+			case len(missing) > 0:
+				fmt.Printf("⚠️  %s can't restart %s with passwordless sudo: deploys will fail at the service step.\n", envCfg.SSH.User, strings.Join(missing, ", "))
+				fmt.Printf("   Run 'versa service %s sudoers' and add the printed line on the server.\n", env)
+			default:
+				fmt.Println("✅ Services can be managed with sudo.")
+			}
+		}
+
 		fmt.Println("\n✨ SSH connection test passed!")
 		return nil
 	},
@@ -410,8 +424,10 @@ const buildsTemplate = `    builds:
         enabled: true
 
         # --- Basic settings ---
+        # Dependencies are installed on the SERVER, in a virtualenv inside each release
+        # (reused when requirements don't change). The server needs python3 + venv.
         root: ""                          # Subdirectory where your Python project lives (if any)
-        python_command: "python3"
+        python_command: "python3"         # Python on the server
         package_manager: "pip"            # pip (default), poetry, pipenv
         requirements_file: "requirements.txt"
         venv_path: ".venv"
@@ -429,14 +445,9 @@ const buildsTemplate = `    builds:
         # Custom run command (overrides web_framework auto-detection)
         # run_command: "python3 -m uvicorn main:app --host 0.0.0.0 --port 8000"
 
-        # --- systemd service management ---
-        # If set, generates a .service file ready to install on the server.
-        # First deploy: sudo cp /var/www/app/current/app/<name>.service /etc/systemd/system/
-        #               sudo systemctl enable <name> && sudo systemctl start <name>
-        service_name: ""                  # e.g. "myapp"
-
         # --- Binary build (PyInstaller) ---
-        # Compiles a standalone executable (no Python needed on server)
+        # Compiles a standalone executable (no Python needed on server).
+        # PyInstaller can't cross-compile: only works when you run versa on Linux.
         build_binary: false
         # entry_point: "main.py"          # Required when build_binary: true
         # binary_name: "myapp"
@@ -498,10 +509,16 @@ environments:
     #   - "sudo systemctl stop myapp || true"
 
     # Hooks to run on remote server after symlink switch (rollback on failure)
-    post_deploy:
-      # Restart systemd service after each deploy (requires service_name to be set above)
-      # - "sudo systemctl restart myapp"
-      []
+    post_deploy: []
+
+    # Long-running processes (Go binary, Python server). versa installs them in the
+    # server's init system (systemd / OpenRC / SysV), starts them at boot and restarts
+    # them on every deploy and rollback. Run 'versa service production sudoers' to get
+    # the sudoers line the SSH user needs.
+    # services:
+    #   - name: "myapp"
+    #     # exec: "./bin/go/app --port 8080"   # default: the go binary or python's run_server.sh
+    #     env_file: ".env"                     # loaded from <remote_path>/shared/.env
 `
 
 var localConfigTemplate = `project: "my-versa-project"
@@ -761,6 +778,62 @@ var servicesReloadCmd = &cobra.Command{
 	},
 }
 
+var serviceCmd = &cobra.Command{
+	Use:   "service [environment] [action]",
+	Short: "Manage the environment's services (status, start, stop, restart, logs, install, uninstall, sudoers)",
+	Long: `Manage the long-running processes listed under 'services' in the config. They run
+through the server's init system (systemd, OpenRC or SysV init), start at boot and are
+restarted on every deploy and rollback.
+
+Actions:
+  status     show whether each service is running (default)
+  start      start, then check it stays up
+  stop       stop
+  restart    restart, then check it stays up
+  logs       follow the log (journalctl on systemd, /var/log/<name>.log otherwise)
+  install    (re)install and enable at boot, without deploying
+  uninstall  stop, disable and remove from the init system
+  sudoers    print the sudoers line the deploy user needs on this server`,
+	Example: `  versa service production
+  versa service production restart
+  versa service production logs --name api --lines 200
+  versa service production sudoers`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		action := "status"
+		if len(args) == 2 {
+			action = args[1]
+		}
+		name, _ := cmd.Flags().GetString("name")
+		lines, _ := cmd.Flags().GetInt("lines")
+
+		log, err := logger.NewLogger(logFile, verbose, debug)
+		if err != nil {
+			return fmt.Errorf("failed to initialize logger: %w", err)
+		}
+		defer log.Close()
+
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		repoPath, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		d, err := deployer.NewDeployer(cfg, args[0], repoPath, false, false, false, false, log)
+		if err != nil {
+			return err
+		}
+		return d.ServiceAction(action, name, lines, os.Stdout)
+	},
+}
+
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Inspect and validate deploy.yml configuration",
@@ -828,6 +901,13 @@ func printEnvSummary(name string, e *config.Environment) {
 	fmt.Printf("  builds:      %s\n", strings.Join(builds, ", "))
 	fmt.Printf("  hooks:       pre_deploy_local=%d pre_deploy_server=%d post_deploy=%d\n",
 		len(e.PreDeployLocal), len(e.PreDeployServer), len(e.PostDeploy))
+	for _, s := range e.Services {
+		exec := s.Exec
+		if exec == "" {
+			exec, _ = e.DefaultServiceExec(e.RemotePath + "/current")
+		}
+		fmt.Printf("  service:     %s (user %s): %s\n", s.Name, s.User, exec)
+	}
 }
 
 func getOrSelectConfig(cmd *cobra.Command) (string, error) {
@@ -899,6 +979,9 @@ func init() {
 
 	logsCmd.Flags().Int("lines", 50, "Number of initial lines to show before following")
 
+	serviceCmd.Flags().String("name", "", "Act on one service only (default: all; required for logs with several services)")
+	serviceCmd.Flags().Int("lines", 50, "logs: number of initial lines to show before following")
+
 	initCmd.Flags().BoolVar(&initLocal, "local", false, "Generate a local (no SSH) environment instead of prompting")
 
 	configCmd.AddCommand(configValidateCmd)
@@ -915,10 +998,15 @@ func init() {
 	rootCmd.AddCommand(hooksCmd)
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(servicesReloadCmd)
+	rootCmd.AddCommand(serviceCmd)
 	rootCmd.AddCommand(configCmd)
 }
 
 func main() {
+	// main prints errors itself (formatted); usage is only useful for bad arguments, and
+	// cobra validates those before PersistentPreRun runs
+	rootCmd.SilenceErrors = true
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) { cmd.SilenceUsage = true }
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, verserrors.FormatError(verserrors.Wrap(err)))
 		os.Exit(1)

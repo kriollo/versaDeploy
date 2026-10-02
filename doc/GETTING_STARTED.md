@@ -1,162 +1,252 @@
-# 🚀 Getting Started with versaDeploy
+# 🚀 Getting Started
 
-Welcome! `versaDeploy` is a high-performance deployment tool designed to be fast, secure, and easy to use. This guide will help you set up your first deployment from scratch.
+From zero to your first deploy, step by step. The example deploys a PHP (Laravel) app to an Ubuntu server with Nginx/Apache + PHP-FPM; other stacks follow the same steps with a different `builds` section (see the [Configuration Reference](DEPLOY.md#builds-builds)).
+
+1. [Prerequisites](#1-prerequisites)
+2. [Prepare the server](#2-prepare-the-server)
+3. [Create the configuration](#3-create-the-configuration)
+4. [Check everything before deploying](#4-check-everything-before-deploying)
+5. [First deploy](#5-first-deploy)
+6. [Everyday use](#6-everyday-use)
+7. [Go or Python apps: run them as a service](#7-go-or-python-apps-run-them-as-a-service)
+
+---
 
 ## 1. Prerequisites
 
-### Local Machine (where you run `versa`)
+### On your machine (where you run `versa`)
 
-- **Go**: Installed and in your PATH.
-- **Git**: Installed and configured.
-- **Tools**: `composer` (for PHP), `npm`/`pnpm` (for Frontend) if you plan to use build engines.
+- **versa** installed: see [INSTALL.md](INSTALL.md).
+- **Git**: versa deploys the last commit of the repository you run it from.
+- **The build tools your project uses**, in `PATH`: `composer` for PHP, `npm`/`pnpm`/`yarn` for frontend, `go` for Go. Builds run locally, not on the server. (Python dependencies are the exception: they're installed on the server.)
+- **Windows**: hooks that run locally (`pre_deploy_local`) use `sh`. Install Git for Windows and add `C:\Program Files\Git\bin` to `PATH`.
+- An **SSH key** that can log in to the server.
 
-### Remote Server
+### On the server
 
-- **SSH Access**: You must be able to connect via SSH key.
-- **OS**: Linux (Ubuntu/Debian recommended).
-- **Permissions**: The SSH user must have write access to the deployment directory.
+- Linux with SSH and SFTP enabled. Old distributions (e.g. CentOS 5) work too, see [`legacy_algorithms`](DEPLOY.md#ssh-connection-ssh).
+- `tar` and `gzip` (present on virtually every distribution).
+- A user that can write to the deploy directory.
 
-### 2. Server Preparation
+## 2. Prepare the server
 
-Before your first deploy, you need to prepare the remote directory structure.
+### 2.1 Deploy user and SSH key
 
-1.  **Create the root folder**:
+From your machine, copy your public key to the server and accept its host key once:
 
-    ```bash
-    mkdir -p /var/www/my-project
-    chown -R my-user:my-group /var/www/my-project
-    ```
+```bash
+ssh-copy-id deploy@your-server.com        # or append the .pub file to ~/.ssh/authorized_keys on the server
+ssh deploy@your-server.com                # answer "yes" so the server is saved in ~/.ssh/known_hosts
+```
 
-2.  **Web Server Config**:
+> [!TIP]
+> Connecting once with `ssh` saves the server in `~/.ssh/known_hosts`, which versa uses to verify the server. Without it versa still connects but warns `Host key NOT verified`.
 
-    #### Nginx
+### 2.2 Deploy directory
 
-    Ensure your Nginx configuration uses `$realpath_root` to avoid OpCache issues with symlinks:
+```bash
+sudo mkdir -p /var/www/my-app
+sudo chown -R deploy:www-data /var/www/my-app
+```
 
-    ```nginx
-    fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
-    fastcgi_param DOCUMENT_ROOT $realpath_root;
-    ```
+versa creates `releases/`, `shared/` and the `current` symlink inside it.
 
-    #### Apache
+### 2.3 Shared files
 
-    In Apache, ensure that the `DocumentRoot` points to the `current` symlink and that `FollowSymLinks` is enabled. If you are using PHP-FPM, you should also use the absolute path to avoid caching issues:
+Files that must survive between releases (like `.env`) live in `shared/`. Create them **before** the first deploy; versa would otherwise create them as empty directories:
 
-    ```apache
-    <VirtualHost *:80>
-        DocumentRoot /var/www/my-project/current/public
+```bash
+mkdir -p /var/www/my-app/shared
+nano /var/www/my-app/shared/.env
+```
 
-        <Directory /var/www/my-project/current/public>
-            Options +FollowSymLinks
-            AllowOverride All
-            Require all granted
-        </Directory>
+### 2.4 Web server
 
-        # Disable sendfile and mmap to avoid serving stale content from kernel cache
-        EnableSendfile Off
-        EnableMMAP Off
+Each release is stored as `releases/<version>/app/`, and `current` points to the active release. Your web root is therefore **`/var/www/my-app/current/app/<public dir>`**.
 
-        # If using PHP-FPM, ensure paths are resolved correctly
-        <FilesMatch \.php$>
-            SetHandler "proxy:unix:/var/run/php/php8.2-fpm.sock|fcgi://localhost"
-        </FilesMatch>
-    </VirtualHost>
-    ```
+**Nginx**: use `$realpath_root` so PHP resolves the real release path, not the symlink:
 
-    > [!IMPORTANT]
-    > **PHP-FPM caches symlink paths** via OPcache and `realpath_cache` (TTL=120s). After each deploy, PHP-FPM must be reloaded to clear these caches. Configure `services_reload` in your `deploy.yml` (see below). Without this, your site will serve stale code after symlink switch.
+```nginx
+server {
+    root /var/www/my-app/current/app/public;
 
-    > [!TIP]
-    > `EnableSendfile Off` and `EnableMMAP Off` prevent Apache from serving stale static files from the kernel file cache after a symlink change.
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT $realpath_root;
+    }
+}
+```
 
-3.  **Sudoers for Deploy User**:
+**Apache**:
 
-    The deploy user needs permission to reload services without a password. Add this to `/etc/sudoers.d/deploy`:
+```apache
+<VirtualHost *:80>
+    DocumentRoot /var/www/my-app/current/app/public
 
-    ```bash
-    deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload php8.2-fpm
-    deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload apache2
-    deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload nginx
-    ```
+    <Directory /var/www/my-app/current/app/public>
+        Options +FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
 
-4.  **Service Reload (REQUIRED)**:
+    # Don't serve stale static files from the kernel cache after a switch
+    EnableSendfile Off
+    EnableMMAP Off
 
-    Add `services_reload` to your `deploy.yml` to automatically reload PHP-FPM (and optionally your web server) after every deploy:
+    <FilesMatch \.php$>
+        SetHandler "proxy:unix:/run/php/php8.2-fpm.sock|fcgi://localhost"
+    </FilesMatch>
+</VirtualHost>
+```
 
-    ```yaml
-    environments:
-      production:
-        services_reload:
-          - "sudo systemctl reload php8.2-fpm"
-          - "sudo systemctl reload apache2" # or nginx
-    ```
+### 2.5 Allow reloading services without a password
 
-    > [!WARNING]
-    > Without `services_reload`, deployed changes **will not take effect** until PHP-FPM workers expire naturally (up to 120 seconds or more). This is the most common cause of "stale deploy" issues.
+PHP-FPM caches where `current` points, so it must be reloaded after each deploy (versa does it through [`services_reload`](DEPLOY.md#service-reload-services_reload)). Allow the deploy user to do that without a password, with `sudo visudo -f /etc/sudoers.d/deploy`:
 
-## 3. Initialize your Project
+```
+deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload php8.2-fpm
+deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload nginx
+```
 
-In your project root, run:
+## 3. Create the configuration
+
+In the root of your repository:
 
 ```bash
 versa init
 ```
 
-This will create a `deploy.yml` file.
-
-## 4. Configure `deploy.yml`
-
-Edit `deploy.yml` with your server details. Here is a minimal example for a Laravel/PHP project:
+Choose `1` (server with SSH). This creates a commented `deploy.yml`. Edit it; a minimal Laravel setup looks like:
 
 ```yaml
-project: "my-awesome-app"
+project: "my-app"
 
 environments:
   production:
     ssh:
-      host: "1.2.3.4"
+      host: "your-server.com"
       user: "deploy"
       key_path: "~/.ssh/id_rsa"
 
-    remote_path: "/var/www/my-project"
+    remote_path: "/var/www/my-app"
 
     builds:
       php:
         enabled: true
-        composer_command: "composer install --no-dev --optimize-autoloader"
+      frontend:
+        enabled: true
+        npm_command: "npm ci"
+        compile_command: "npm run build"
 
     shared_paths:
-      - "storage"
       - ".env"
+      - "storage"
 
-    # REQUIRED: reload services after symlink switch to clear PHP caches
     services_reload:
       - "sudo systemctl reload php8.2-fpm"
 
     post_deploy:
       - "php artisan migrate --force"
-      - "php artisan cache:clear"
+      - "php artisan config:cache"
 ```
 
-## 5. First Deployment
+Commit `deploy.yml` (and everything you want deployed): versa only deploys committed files.
 
-Since it's the first time, you must use the `--initial-deploy` flag to tell `versa` it's okay that there is no previous state on the server:
+## 4. Check everything before deploying
+
+```bash
+versa config validate production    # the file is valid (no connection)
+versa info production               # SSH, host key, SFTP and server details
+```
+
+Fix whatever these report before going on; [TROUBLESHOOTING.md](TROUBLESHOOTING.md) covers the usual errors.
+
+## 5. First deploy
+
+The server has no `deploy.lock` yet, so tell versa this is the first deploy:
 
 ```bash
 versa deploy production --initial-deploy
 ```
 
-## 6. Normal Deployment
+versa builds the project, uploads it, links `shared_paths`, switches `current`, and reloads PHP-FPM. Before running the `post_deploy` hooks it asks for confirmation: check that `shared/.env` is right, then answer `y`.
 
-After the first one, just run:
+## 6. Everyday use
 
 ```bash
-versa deploy production
+git commit -am "New feature"
+versa deploy production             # builds and ships only if something changed
 ```
 
----
+| I want to…                                  | Command                                     |
+| :------------------------------------------ | :------------------------------------------ |
+| See what would be deployed                  | `versa diff production`                     |
+| See releases on the server                  | `versa status production`                   |
+| Go back to the previous release             | `versa rollback production`                 |
+| Go back to a specific release               | `versa rollback production --to 20261001-183807` |
+| Redeploy even though nothing changed        | `versa deploy production --force`           |
+| Follow the app log                          | `versa logs production`                     |
+| Run a command on the server                 | `versa exec production "php artisan queue:restart"` |
+| Check / restart a Go or Python service      | `versa service production [restart]`        |
+| Do all of this from a full-screen interface | `versa`                                     |
 
-### Next Steps
+## 7. Go or Python apps: run them as a service
 
-- Read the [Full Configuration Guide](DEPLOY.md) for advanced options like Shared Paths and Build Engines.
-- Check the [CLI Reference](CLI_REFERENCE.md) for all available commands.
+A PHP app is served by PHP-FPM, but a Go binary or a Python server is a process that has to be running. Declare it under `services` and versa takes care of the rest: it installs it in the server's init system (systemd, or `/etc/init.d` on old servers), starts it at boot, restarts it on every deploy and rollback, and rolls the deploy back if it doesn't stay up.
+
+**Go API:**
+
+```yaml
+environments:
+  production:
+    # ssh, remote_path …
+    builds:
+      go:
+        enabled: true
+        target_os: "linux"
+        target_arch: "amd64"
+        binary_name: "api"
+        deploy_path: "bin"
+    shared_paths:
+      - ".env"
+    services:
+      - name: "myapi"
+        env_file: ".env"            # /var/www/my-app/shared/.env
+        environment:
+          PORT: "8080"
+```
+
+**Python (FastAPI) API:** dependencies are installed on the server, in a virtualenv per release. The server needs `python3` and `python3-venv`.
+
+```yaml
+    builds:
+      python:
+        enabled: true
+        web_server: true
+        web_framework: "fastapi"
+        entry_point: "main.py"      # main.py defines `app`
+        web_port: 8000
+    services:
+      - name: "myapi"
+        env_file: ".env"
+```
+
+Then:
+
+```bash
+versa service production sudoers    # prints the sudoers line the deploy user needs
+# on the server: sudo visudo -f /etc/sudoers.d/versa   (paste the line)
+versa info production               # confirms sudo is OK
+versa deploy production
+versa service production            # is it running?
+versa service production logs       # follow its output
+```
+
+Put a reverse proxy (Nginx) in front of the port if the service must be reachable from outside. All options: [Services](DEPLOY.md#services-services).
+
+### Next steps
+
+- [CLI Reference](CLI_REFERENCE.md): every command and flag.
+- [Configuration Reference](DEPLOY.md): hooks, health checks, notifications, incremental uploads, local mode.

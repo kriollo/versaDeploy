@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -455,6 +456,11 @@ func TestInterpolateEnvVars(t *testing.T) {
 		{"${VAR1}-${VAR2}", "val1-val2"},
 		{"no-vars", "no-vars"},
 		{"${MISSING}", ""},
+		{"echo $$HOME", "echo $HOME"},
+		{"cost: $$5 and $$$VAR1", "cost: $5 and $val1"},
+		{"awk '{print $1}'", "awk '{print $1}'"},
+		{"echo $? $@ $# ${1} $", "echo $? $@ $# ${1} $"},
+		{"$VAR1_x ${VAR1}_x", " val1_x"},
 	}
 
 	for _, tt := range tests {
@@ -736,5 +742,72 @@ func TestEnvironmentPerformanceDefaults(t *testing.T) {
 	}
 	if env.ReleasesToKeep != 5 || env.UploadWorkers != 4 || env.ChunkSizeMB != 10 {
 		t.Errorf("defaults = %d/%d/%d, want 5/4/10", env.ReleasesToKeep, env.UploadWorkers, env.ChunkSizeMB)
+	}
+}
+
+func TestValidateServices(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "id_rsa")
+	os.WriteFile(keyPath, []byte("fake"), 0600)
+	goBuild := GoBuildConfig{Enabled: true, TargetOS: "linux", TargetArch: "amd64", BinaryName: "api", DeployPath: "bin/go"}
+	pyWeb := PythonBuildConfig{Enabled: true, WebServer: true, ProjectRoot: "py"}
+	base := func(b BuildsConfig, services ...ServiceConfig) Environment {
+		return Environment{SSH: SSHConfig{Host: "h", User: "deploy", KeyPath: keyPath}, RemotePath: "/srv/app", Builds: b, Services: services}
+	}
+
+	tests := []struct {
+		name    string
+		env     Environment
+		wantErr string
+		check   func(t *testing.T, e Environment)
+	}{
+		{"go default exec and defaults", base(BuildsConfig{Go: goBuild}, ServiceConfig{Name: "api"}), "", func(t *testing.T, e Environment) {
+			s := e.Services[0]
+			if s.User != "deploy" || s.StartWait != 3 || s.StopTimeout != 30 {
+				t.Errorf("defaults not applied: %+v", s)
+			}
+			if exec, _ := e.DefaultServiceExec("/srv/app/current"); exec != "/srv/app/current/bin/go/api" {
+				t.Errorf("go exec = %q", exec)
+			}
+		}},
+		{"python web default exec", base(BuildsConfig{Python: pyWeb}, ServiceConfig{Name: "web"}), "", func(t *testing.T, e Environment) {
+			if exec, _ := e.DefaultServiceExec("/c"); exec != "/bin/sh /c/app/py/run_server.sh" {
+				t.Errorf("python exec = %q", exec)
+			}
+		}},
+		{"go and python need exec", base(BuildsConfig{Go: goBuild, Python: pyWeb}, ServiceConfig{Name: "x"}), "set exec", nil},
+		{"go and python with exec", base(BuildsConfig{Go: goBuild, Python: pyWeb}, ServiceConfig{Name: "x", Exec: "./bin/go/api"}), "", nil},
+		{"nothing to derive exec from", base(BuildsConfig{PHP: PHPBuildConfig{Enabled: true}}, ServiceConfig{Name: "worker"}), "exec is required", nil},
+		{"bad name", base(BuildsConfig{Go: goBuild}, ServiceConfig{Name: "my api"}), "is invalid", nil},
+		{"duplicate", base(BuildsConfig{Go: goBuild}, ServiceConfig{Name: "a"}, ServiceConfig{Name: "a"}), "defined twice", nil},
+		{"bad env var", base(BuildsConfig{Go: goBuild}, ServiceConfig{Name: "a", Environment: map[string]string{"A-B": "x"}}), "invalid environment variable", nil},
+		{"absolute env_file", base(BuildsConfig{Go: goBuild}, ServiceConfig{Name: "a", EnvFile: "/etc/x"}), "relative paths", nil},
+		{"service_name migrated", base(BuildsConfig{Python: PythonBuildConfig{Enabled: true, WebServer: true, ServiceName: "legacy"}}), "", func(t *testing.T, e Environment) {
+			if len(e.Services) != 1 || e.Services[0].Name != "legacy" || e.Builds.Python.ServiceName != "" {
+				t.Errorf("service_name not migrated: %+v", e.Services)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := tt.env
+			err := e.Validate("prod")
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("want error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.check != nil {
+				tt.check(t, e)
+			}
+		})
+	}
+
+	local := Environment{Local: true, LocalPath: "./out", Builds: BuildsConfig{Go: goBuild}, Services: []ServiceConfig{{Name: "api"}}}
+	if err := local.Validate("l"); err == nil || !strings.Contains(err.Error(), "local mode") {
+		t.Errorf("services in local mode must be rejected, got %v", err)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -286,25 +285,6 @@ func (b *Builder) cleanupIgnoredPaths() error {
 // calculateDirSize calculates the total size of a directory recursively
 func (b *Builder) calculateDirSize(path string) (int64, error) {
 	return fsutil.CalculateDirSize(path)
-}
-
-// executeCommand runs a command in a shell based on the current OS
-func (b *Builder) executeCommand(command, dir string) ([]byte, error) {
-	var shell, flag string
-	if runtime.GOOS == "windows" {
-		shell = os.Getenv("COMSPEC")
-		if shell == "" {
-			shell = "cmd.exe"
-		}
-		flag = "/c"
-	} else {
-		shell = "sh"
-		flag = "-c"
-	}
-
-	cmd := exec.Command(shell, flag, command)
-	cmd.Dir = dir
-	return cmd.CombinedOutput()
 }
 
 // copyFile copies a single file using io.Copy for efficiency and reliability

@@ -31,6 +31,7 @@ func runShells(t *testing.T, setup func(root string), script func(root string) s
 }
 
 func TestSharedLinkScript(t *testing.T) {
+	requireRealSymlinks(t)
 	runShells(t, func(root string) {
 		os.MkdirAll(filepath.Join(root, "rel/app/storage/logs"), 0755)
 		os.MkdirAll(filepath.Join(root, "shared"), 0755)
@@ -108,5 +109,24 @@ func TestHookCmdTimeout(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err == nil || time.Since(start) > 5*time.Second || !strings.Contains(string(out), "it's running") {
 		t.Errorf("err=%v after %v, output %q", err, time.Since(start), out)
+	}
+}
+
+// requireRealSymlinks skips the test when this machine can't create real symlinks
+// from Go and from sh (Windows without Developer Mode, where Git Bash's ln -s copies
+// instead). The scripts under test only ever run on the Linux server.
+func requireRealSymlinks(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Symlink("d", filepath.Join(dir, "go-link")); err != nil {
+		t.Skipf("symlinks not supported here: %v", err)
+	}
+	cmd := exec.Command("sh", "-c", "mkdir d && ln -s d sh-link")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("sh can't create symlinks: %v: %s", err, out)
+	}
+	if _, err := os.Readlink(filepath.Join(dir, "sh-link")); err != nil {
+		t.Skip("sh's ln -s doesn't create real symlinks here (Git Bash without Developer Mode)")
 	}
 }

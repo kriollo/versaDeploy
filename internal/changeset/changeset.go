@@ -132,16 +132,11 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 		switch ext {
 		case ".php", ".twig", ".go", ".mod", ".sum", ".js", ".ts", ".vue", ".jsx", ".tsx", ".css", ".scss", ".sass", ".less", ".py":
 			isCritical = true
-		case ".json":
-			base := filepath.Base(relPath)
-			if base == "composer.json" || base == "package.json" || base == "composer.lock" || base == "package-lock.json" || base == "pnpm-lock.yaml" || base == "pyproject.toml" || base == "poetry.lock" {
-				isCritical = true
-			}
-		case ".txt":
-			base := filepath.Base(relPath)
-			if base == "requirements.txt" || base == "Pipfile" {
-				isCritical = true
-			}
+		}
+		switch filepath.Base(relPath) {
+		case "composer.json", "composer.lock", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+			"requirements.txt", "pyproject.toml", "poetry.lock", "Pipfile", "Pipfile.lock":
+			isCritical = true
 		}
 
 		if ignored && !isCritical {
@@ -268,27 +263,21 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 	}
 
 	// Check dependency files
-	composerPath := filepath.ToSlash(filepath.Join(d.phpRoot, "composer.json"))
-	composerPath = strings.TrimPrefix(composerPath, "./")
-	cs.ComposerHash = cs.AllFileHashes[composerPath]
+	cs.ComposerHash = depHash(cs.AllFileHashes, d.phpRoot, "composer.json", "composer.lock")
 	if d.previousLock != nil {
 		cs.ComposerChanged = cs.ComposerHash != "" && cs.ComposerHash != d.previousLock.LastDeploy.ComposerHash
 	} else {
 		cs.ComposerChanged = cs.ComposerHash != ""
 	}
 
-	packagePath := filepath.ToSlash(filepath.Join(d.frontendRoot, "package.json"))
-	packagePath = strings.TrimPrefix(packagePath, "./")
-	cs.PackageHash = cs.AllFileHashes[packagePath]
+	cs.PackageHash = depHash(cs.AllFileHashes, d.frontendRoot, "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock")
 	if d.previousLock != nil {
 		cs.PackageChanged = cs.PackageHash != "" && cs.PackageHash != d.previousLock.LastDeploy.PackageJSONHash
 	} else {
 		cs.PackageChanged = cs.PackageHash != ""
 	}
 
-	goModPath := filepath.ToSlash(filepath.Join(d.goRoot, "go.mod"))
-	goModPath = strings.TrimPrefix(goModPath, "./")
-	cs.GoModHash = cs.AllFileHashes[goModPath]
+	cs.GoModHash = depHash(cs.AllFileHashes, d.goRoot, "go.mod", "go.sum")
 	if d.previousLock != nil {
 		cs.GoModChanged = cs.GoModHash != "" && cs.GoModHash != d.previousLock.LastDeploy.GoModHash
 	} else {
@@ -296,26 +285,36 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 	}
 
 	// Check Python dependency files
-	requirementsPath := filepath.ToSlash(filepath.Join(d.pythonRoot, d.requirementsFile))
-	requirementsPath = strings.TrimPrefix(requirementsPath, "./")
-	cs.RequirementsHash = cs.AllFileHashes[requirementsPath]
+	cs.RequirementsHash = depHash(cs.AllFileHashes, d.pythonRoot, d.requirementsFile, "pyproject.toml", "poetry.lock", "Pipfile", "Pipfile.lock")
 	if d.previousLock != nil {
 		cs.RequirementsChanged = cs.RequirementsHash != "" && cs.RequirementsHash != d.previousLock.LastDeploy.RequirementsHash
 	} else {
 		cs.RequirementsChanged = cs.RequirementsHash != ""
 	}
 
-	// Also check pyproject.toml and Pipfile
-	pyprojectPath := filepath.ToSlash(filepath.Join(d.pythonRoot, "pyproject.toml"))
-	if _, ok := cs.AllFileHashes[pyprojectPath]; ok {
-		cs.RequirementsChanged = true
-	}
-	pipfilePath := filepath.ToSlash(filepath.Join(d.pythonRoot, "Pipfile"))
-	if _, ok := cs.AllFileHashes[pipfilePath]; ok {
-		cs.RequirementsChanged = true
-	}
-
 	return cs, nil
+}
+
+// depHash fingerprints a dependency manifest and its lock files under root, so a
+// change to any of them (e.g. only composer.lock) triggers a reinstall. When only the
+// manifest (files[0]) exists its plain hash is returned, the value deploy.lock held
+// before lock files were included. "" when none exists.
+func depHash(hashes map[string]string, root string, files ...string) string {
+	var parts []string
+	for _, f := range files {
+		p := strings.TrimPrefix(filepath.ToSlash(filepath.Join(root, f)), "./")
+		if h, ok := hashes[p]; ok {
+			parts = append(parts, f+"="+h)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(parts) == 1 && strings.HasPrefix(parts[0], files[0]+"=") {
+		return strings.TrimPrefix(parts[0], files[0]+"=")
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	return hex.EncodeToString(sum[:])
 }
 
 // isFileChanged checks if a file has changed compared to previous deployment

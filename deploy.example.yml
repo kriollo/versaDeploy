@@ -10,18 +10,34 @@ environments:
     ssh:
       host: "1.2.3.4"          # Server IP or hostname
       user: "deploy"           # SSH user
-      key_path: "~/.ssh/id_rsa"# Path to private key (supports ~/ on Linux/macOS)
+      key_path: "~/.ssh/id_rsa" # Path to private key (~/ is expanded on every OS)
       port: 22                 # SSH port (default 22)
+      # known_hosts_file: "~/.ssh/known_hosts" # Host key verification (this is the default)
+      # strict_host_key: true  # Refuse to connect if the host key can't be verified
+      # use_ssh_agent: true    # Also try keys loaded in the SSH agent
+      # legacy_algorithms: true # Only for very old servers (OpenSSH < 7, CentOS 5/6)
 
-    # Absolute path on the server where the project will live
+    # Absolute path on the server where the project will live.
+    # Each release is stored in releases/<timestamp>/app and "current" points to the
+    # active one, so the web root is e.g. /var/www/my-project/current/app/public
     remote_path: "/var/www/my-project"
+
+    # FILES TO IGNORE: excluded from change detection and removed from the release
+    # after building (builds still see them). Setting this replaces the defaults
+    # (.git, tests, node_modules/.cache, vendor/bin).
+    ignored_paths:
+      - ".git"
+      - ".github"
+      - "tests"
+      - "node_modules/.cache"
+      - "vendor/bin"
 
     # BUILD ENGINES: versaDeploy can build your app locally before uploading
     builds:
       # PHP / Composer Settings
       php:
         enabled: true
-        project_root: ""       # Subdirectory where composer.json is (optional)
+        root: ""               # Subdirectory where composer.json is (optional)
         composer_command: "composer install --no-dev --optimize-autoloader"
         # Folders to reuse from previous release via hardlinks (speeds up deploy)
         reusable_paths: ["vendor"]
@@ -29,7 +45,7 @@ environments:
       # Frontend / Node Settings
       frontend:
         enabled: true
-        project_root: "frontend" # Example of building in a subdirectory
+        root: "frontend"         # Example of building in a subdirectory
         npm_command: "pnpm install"
         compile_command: "pnpm run build"
         cleanup_dev_deps: true   # Remove node_modules after build and reinstall prod-only
@@ -49,11 +65,12 @@ environments:
     shared_paths:
       - "storage/logs"         # Log files
       - "public/uploads"       # User uploaded content
-      - ".env"                 # Environment configuration
+      - ".env"                 # Environment configuration (create shared/.env on the server first)
 
-    # IMMUTABILITY: Files that should NOT be updated after the first deploy
+    # IMMUTABILITY: Files copied from the previous release over the new one, so the
+    # server's copy wins after the first deploy. Don't list a path that is also in
+    # shared_paths (it would replace the shared symlink).
     preserved_paths:
-      - ".env"
       - "config.php"
 
     # HOOKS: Commands run at different stages of the deployment pipeline.
@@ -68,11 +85,17 @@ environments:
     #   - "sudo systemctl stop myapp || true"
     #
     # post_deploy: Remote commands run after symlink switch (rollback on failure)
+    # Remote hooks run in <release>/app. Use a "parallel:" block to run several at once.
+    # NOTE: $NAME / ${NAME} anywhere in this file is replaced with YOUR local environment
+    # variables, hooks included. Write $$NAME for a variable of the server's shell
+    # ("echo $$HOME" runs "echo $HOME" on the server). $1, $@, $? are left untouched.
     post_deploy:
       - "php versaCLI migrate:up"
-      - "php versaCLI cache:clear"
+      - parallel:
+          - "php versaCLI cache:clear"
+          - "php versaCLI route:cache"
 
-    # SERVICES TO RELOAD after every deploy/rollback (critical for PHP-FPM OPcache!)
+    # SERVICES TO RELOAD after every deploy and rollback (critical for PHP-FPM OPcache!)
     # This runs AFTER the symlink switch but BEFORE post_deploy hooks.
     # For Apache + PHP-FPM: always include php-fpm reload to clear OPcache/realpath_cache.
     services_reload:
@@ -80,11 +103,29 @@ environments:
       # - "sudo systemctl reload apache2"
       # - "sudo systemctl reload nginx"
 
+    # SERVICES: long-running processes (Go binary, Python server). versa installs them
+    # in the server's init system (systemd, OpenRC or SysV /etc/init.d), enables them at
+    # boot, restarts them after post_deploy on every deploy and rollback, and rolls the
+    # deploy back if one doesn't stay up. The SSH user needs passwordless sudo for the
+    # init commands: `versa service production sudoers` prints the exact line.
+    # services:
+    #   - name: "my-service"
+    #     exec: "./bin/go/my-service --port 8080" # "./" = <remote_path>/current. Default: the go
+    #                                             # binary, or python's run_server.sh
+    #     env_file: ".env"                        # <remote_path>/shared/.env
+    #     environment:
+    #       APP_ENV: "production"
+    #     # user: "deploy"                        # default: ssh.user
+    #     # working_dir: "app"                    # relative to current (default: app)
+    #     # start_wait: 3                         # seconds before checking it's still running
+    #     # stop_timeout: 30                      # seconds to shut down cleanly before SIGKILL
+
     # HEALTH CHECK: Verify the application is responding after deployment.
     # If the check fails after retries, automatic rollback is triggered.
     # health_check:
     #   url: "https://myapp.com/health"
     #   expected_status: 200   # HTTP status code to expect (default: 200)
+    #   command: "php artisan about" # And/or a command run on the server in the new release (exit 0 = healthy)
     #   timeout: 10            # Seconds to wait per request (default: 10)
     #   retries: 3             # Number of retry attempts (default: 3)
     #   retry_delay: 2         # Seconds between retries (default: 2)
@@ -98,6 +139,13 @@ environments:
     # LIMITS:
     hook_timeout: 300          # Kill hooks if they take more than 5 minutes
     # deploy_timeout: 600     # Maximum total deploy time in seconds
+
+    # RELEASES & UPLOAD:
+    # releases_to_keep: 5      # Releases kept on the server (rollback depth)
+    # upload_workers: 4        # Parallel SFTP uploads
+    # chunk_size_mb: 10        # Size of each uploaded archive chunk
+    # incremental_upload: true # Upload only changed files over a hardlinked copy of the
+    #                          # previous release. Hooks must not edit release files in place.
 
   # LOCAL DEPLOY: For hosting where SSH isn't available (shared hosting, etc.).
   # Instead of connecting over SSH, versaDeploy builds the project and writes a
@@ -114,16 +162,3 @@ environments:
   #       composer_command: "composer install --no-dev --optimize-autoloader"
   #   post_deploy:
   #     - "php versaCLI cache:clear" # runs locally, cwd = local_path/app
-
-# FILES TO IGNORE: These patterns won't be included in the deployment artifact.
-# Note: versaDeploy is smart. If you ignore 'src' but a '.php' file inside changes,
-# it will still detect the change to trigger a build!
-ignored:
-  - ".git"
-  - ".github"
-  - "node_modules"
-  - "vendor"
-  - "tests"
-  - ".env"
-  - "README.md"
-  - "deploy.yml"

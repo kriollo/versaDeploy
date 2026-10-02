@@ -37,13 +37,21 @@ func TestHashTreeRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "app", "sub dir"), 0755)
 	os.WriteFile(filepath.Join(dir, "app", "sub dir", "a b.txt"), []byte("x"), 0644)
-	os.Symlink("sub dir", filepath.Join(dir, "app", "link"))
+	// Creating symlinks needs Developer Mode or admin on Windows; without it only the file is checked
+	hasLink := os.Symlink("sub dir", filepath.Join(dir, "app", "link")) == nil
 
 	hashes, err := HashTree(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hashes) != 2 || hashes["app/link"] != "link:sub dir" {
+	want := 1
+	if hasLink {
+		want = 2
+		if hashes["app/link"] != "link:sub dir" {
+			t.Errorf("app/link = %q, want link:sub dir", hashes["app/link"])
+		}
+	}
+	if len(hashes) != want || len(hashes["app/sub dir/a b.txt"]) != 64 {
 		t.Fatalf("unexpected hashes: %v", hashes)
 	}
 	if got := DecodeHashes(EncodeHashes(hashes)); !reflect.DeepEqual(got, hashes) {

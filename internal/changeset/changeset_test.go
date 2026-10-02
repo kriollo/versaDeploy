@@ -199,3 +199,57 @@ func TestDetector_Detect_Fail(t *testing.T) {
 		t.Error("expected error for non-existent repo path")
 	}
 }
+
+func TestDetector_Detect_LockFileChanges(t *testing.T) {
+	repoDir := t.TempDir()
+	write := func(name, content string) {
+		os.WriteFile(filepath.Join(repoDir, name), []byte(content), 0644)
+	}
+	write("composer.json", `{"require":{}}`)
+	write("composer.lock", `{"v":1}`)
+	write("requirements.txt", "flask")
+	write("pyproject.toml", "[tool]")
+
+	detect := func(prev *state.DeployLock) *ChangeSet {
+		cs, err := NewDetector(repoDir, nil, nil, "", "", "", "", "requirements.txt", prev).Detect()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cs
+	}
+	asLock := func(cs *ChangeSet) *state.DeployLock {
+		l := cs.AllFileHashesAsLock()
+		l.LastDeploy.RequirementsHash = cs.RequirementsHash
+		return l
+	}
+
+	cs1 := detect(nil)
+	cs2 := detect(asLock(cs1))
+	if cs2.ComposerChanged || cs2.RequirementsChanged {
+		t.Errorf("nothing changed, got composer=%v requirements=%v", cs2.ComposerChanged, cs2.RequirementsChanged)
+	}
+
+	write("composer.lock", `{"v":2}`)
+	write("pyproject.toml", "[tool.poetry]")
+	cs3 := detect(asLock(cs2))
+	if !cs3.ComposerChanged {
+		t.Error("expected a composer.lock-only change to mark composer as changed")
+	}
+	if !cs3.RequirementsChanged {
+		t.Error("expected a pyproject.toml change to mark requirements as changed")
+	}
+}
+
+func TestDepHash_ManifestOnlyKeepsPlainHash(t *testing.T) {
+	hashes := map[string]string{"api/composer.json": "abc"}
+	if got := depHash(hashes, "api", "composer.json", "composer.lock"); got != "abc" {
+		t.Errorf("manifest only: got %q, want plain hash abc", got)
+	}
+	hashes["api/composer.lock"] = "def"
+	if got := depHash(hashes, "api", "composer.json", "composer.lock"); got == "abc" || got == "" {
+		t.Errorf("manifest + lock: got %q, want a combined hash", got)
+	}
+	if got := depHash(hashes, "", "composer.json"); got != "" {
+		t.Errorf("missing manifest: got %q, want empty", got)
+	}
+}

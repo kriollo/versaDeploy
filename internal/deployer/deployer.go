@@ -279,6 +279,9 @@ func (d *Deployer) ship(c *ssh.Client, a *PrebuiltArtifact, previousLock *state.
 			return err
 		}
 	}
+	if err := d.ensurePythonVenv(c, finalDir); err != nil {
+		return err
+	}
 
 	// Validate runtime artifacts before activating symlink
 	if err := d.validateRuntimeArtifacts(c, finalDir, a.ChangeSet); err != nil {
@@ -297,6 +300,17 @@ func (d *Deployer) ship(c *ssh.Client, a *PrebuiltArtifact, previousLock *state.
 	}
 	d.log.Info("Activating release...")
 	currentSymlink := d.remote("current")
+	// A failed activation must go back to the release that is live now, which isn't the
+	// last deployed one after a manual rollback (deploy.lock keeps the last deploy).
+	if previousLock != nil {
+		if target, err := c.ReadSymlink(currentSymlink); err == nil {
+			if active := filepath.Base(target); active != previousLock.LastDeploy.ReleaseDir {
+				live := *previousLock
+				live.LastDeploy.ReleaseDir = active
+				previousLock = &live
+			}
+		}
+	}
 	d.log.Info("  Linking: %s -> %s", currentSymlink, finalDir)
 	if err := c.CreateSymlink(finalDir, currentSymlink); err != nil {
 		return err
@@ -317,6 +331,18 @@ func (d *Deployer) ship(c *ssh.Client, a *PrebuiltArtifact, previousLock *state.
 		if err := d.executePostDeployHooks(c, finalDir, previousLock); err != nil {
 			return err
 		}
+	}
+
+	if err := d.activateServices(c); err != nil {
+		if previousLock == nil {
+			return fmt.Errorf("%w (first deploy: nothing to roll back to)", err)
+		}
+		d.log.Error("Services failed to start: rolling back to %s", previousLock.LastDeploy.ReleaseDir)
+		if rbErr := d.rollback(c, previousLock); rbErr != nil {
+			return fmt.Errorf("services failed and rollback also failed: %w (services: %v)", rbErr, err)
+		}
+		d.afterRollback(c)
+		return fmt.Errorf("services failed to start (rolled back to %s): %w", previousLock.LastDeploy.ReleaseDir, err)
 	}
 
 	if err := d.performHealthCheck(previousLock, c, finalDir); err != nil {
@@ -796,6 +822,7 @@ func (d *Deployer) runHook(sshClient *ssh.Client, finalDir, hook string, previou
 			if rollbackErr := d.rollback(sshClient, previousLock); rollbackErr != nil {
 				return fmt.Errorf("hook failed and rollback also failed: %w", rollbackErr)
 			}
+			d.afterRollback(sshClient)
 			return fmt.Errorf("post-deploy hook failed (rolled back to %s): %w", previousLock.LastDeploy.ReleaseDir, err)
 		}
 		return fmt.Errorf("post-deploy hook failed (no previous version for rollback): %w", err)
@@ -953,6 +980,9 @@ func (d *Deployer) Rollback() error {
 	if err := sshClient.CreateSymlink(relativeTarget, currentSymlink); err != nil {
 		return err
 	}
+
+	// Reload services (clears PHP-FPM's cached realpath of current) and restart services
+	d.afterRollback(sshClient)
 
 	d.log.Success("Rollback successful!")
 	return nil
@@ -1232,13 +1262,6 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 			paths = append(paths, d.env.Builds.Python.VenvPath)
 		}
 
-		if d.env.Builds.Python.WebServer {
-			paths = append(paths, "run_server.sh")
-			if d.env.Builds.Python.ServiceName != "" {
-				paths = append(paths, d.env.Builds.Python.ServiceName+".service")
-			}
-		}
-
 		if d.env.Builds.Python.BuildBinary && d.env.Builds.Python.BinaryName != "" {
 			paths = append(paths, d.env.Builds.Python.BinaryName)
 		}
@@ -1507,8 +1530,8 @@ func (d *Deployer) performHealthCheck(previousLock *state.DeployLock, sshClient 
 		if err := d.rollback(sshClient, previousLock); err != nil {
 			return fmt.Errorf("health check failed and rollback also failed: %w (health: %v)", err, lastErr)
 		}
-		// Re-reload services after rollback
-		d.executeServicesReload(sshClient)
+		// Reload services and restart services after rollback
+		d.afterRollback(sshClient)
 		return fmt.Errorf("health check failed (rolled back to %s): %w", previousLock.LastDeploy.ReleaseDir, lastErr)
 	}
 
@@ -1616,8 +1639,8 @@ func (d *Deployer) RollbackTo(targetVersion string) error {
 		return err
 	}
 
-	// Reload services after rollback
-	d.executeServicesReload(sshClient)
+	// Reload services and restart services after rollback
+	d.afterRollback(sshClient)
 
 	d.log.Success("Rollback to %s successful!", targetVersion)
 	return nil

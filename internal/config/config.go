@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -44,6 +45,22 @@ type Environment struct {
 	// hardlinks the rest (cp -al). Hooks must not modify release files in place
 	// (e.g. `echo >> file`), or the previous release is modified too.
 	IncrementalUpload bool `yaml:"incremental_upload"`
+	// Services are long-running processes (Go binaries, Python servers) that versa
+	// installs in the server's init system, enables at boot and restarts on deploy.
+	Services []ServiceConfig `yaml:"services"`
+}
+
+// ServiceConfig describes a process run by the server's init system (systemd, OpenRC
+// or SysV init). Paths in Exec and WorkingDir are relative to <remote_path>/current.
+type ServiceConfig struct {
+	Name        string            `yaml:"name"`         // Unit / init script name
+	Exec        string            `yaml:"exec"`         // Command line; default derived from the go/python build
+	WorkingDir  string            `yaml:"working_dir"`  // Default: app (or app/<python.root>)
+	User        string            `yaml:"user"`         // Default: ssh.user
+	EnvFile     string            `yaml:"env_file"`     // File under <remote_path>/shared loaded into the environment
+	Environment map[string]string `yaml:"environment"`  // Extra environment variables
+	StartWait   int               `yaml:"start_wait"`   // Seconds to wait before checking it's running (default: 3)
+	StopTimeout int               `yaml:"stop_timeout"` // Seconds to wait for a graceful stop before SIGKILL (default: 30)
 }
 
 // SSHConfig holds SSH connection details
@@ -227,6 +244,13 @@ func (e *Environment) Validate(envName string) error {
 			}
 			e.SSH.KeyPath = filepath.Join(home, e.SSH.KeyPath[2:])
 		}
+		if strings.HasPrefix(e.SSH.KnownHostsFile, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("environment %s: failed to expand home directory: %w", envName, err)
+			}
+			e.SSH.KnownHostsFile = filepath.Join(home, e.SSH.KnownHostsFile[2:])
+		}
 
 		// Validate SSH key exists
 		if _, err := os.Stat(e.SSH.KeyPath); os.IsNotExist(err) {
@@ -367,6 +391,10 @@ func (e *Environment) Validate(envName string) error {
 		}
 	}
 
+	if err := e.validateServices(envName); err != nil {
+		return err
+	}
+
 	if e.ReleasesToKeep <= 0 {
 		e.ReleasesToKeep = 5
 	}
@@ -383,6 +411,103 @@ func (e *Environment) Validate(envName string) error {
 	}
 
 	return nil
+}
+
+var (
+	serviceNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]*$`)
+	unixUserRe    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
+	envNameRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
+
+// validateServices migrates the deprecated python.service_name and checks services.
+func (e *Environment) validateServices(envName string) error {
+	py := &e.Builds.Python
+	if py.Enabled && py.ServiceName != "" {
+		fmt.Printf("[WARN] environment %s: python.service_name is deprecated. Migrating it to services (see 'services' in the docs).\n", envName)
+		found := false
+		for _, s := range e.Services {
+			found = found || s.Name == py.ServiceName
+		}
+		if !found {
+			e.Services = append(e.Services, ServiceConfig{Name: py.ServiceName})
+		}
+		py.ServiceName = ""
+	}
+	if len(e.Services) == 0 {
+		return nil
+	}
+	if e.Local {
+		return fmt.Errorf("environment %s: services are not supported in local mode (there is no server to run them)", envName)
+	}
+
+	seen := map[string]bool{}
+	for i := range e.Services {
+		s := &e.Services[i]
+		if !serviceNameRe.MatchString(s.Name) {
+			return fmt.Errorf("environment %s: services[%d].name %q is invalid (use letters, digits, '-', '_', '.', '@')", envName, i, s.Name)
+		}
+		if seen[s.Name] {
+			return fmt.Errorf("environment %s: service %q is defined twice", envName, s.Name)
+		}
+		seen[s.Name] = true
+		if s.User == "" {
+			s.User = e.SSH.User
+		}
+		if !unixUserRe.MatchString(s.User) {
+			return fmt.Errorf("environment %s: service %s: invalid user %q", envName, s.Name, s.User)
+		}
+		for k := range s.Environment {
+			if !envNameRe.MatchString(k) {
+				return fmt.Errorf("environment %s: service %s: invalid environment variable name %q", envName, s.Name, k)
+			}
+		}
+		for _, p := range []string{s.WorkingDir, s.EnvFile} {
+			if strings.HasPrefix(p, "/") || p == ".." || strings.HasPrefix(filepath.ToSlash(p), "../") {
+				return fmt.Errorf("environment %s: service %s: working_dir and env_file must be relative paths (got %q)", envName, s.Name, p)
+			}
+		}
+		if s.StartWait <= 0 {
+			s.StartWait = 3
+		}
+		if s.StopTimeout <= 0 {
+			s.StopTimeout = 30
+		}
+		if s.Exec == "" {
+			if _, err := e.DefaultServiceExec("current"); err != nil {
+				return fmt.Errorf("environment %s: service %s: %w", envName, s.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// DefaultServiceExec is the command a service runs when it sets no exec, with paths
+// under current (<remote_path>/current): the Go binary, or the Python binary /
+// run_server.sh / entry point. It fails when that's ambiguous (go and python both
+// enabled) or undefined.
+func (e *Environment) DefaultServiceExec(current string) (string, error) {
+	g, py := e.Builds.Go, e.Builds.Python
+	pyExec := ""
+	if py.Enabled {
+		root := current + "/" + filepath.ToSlash(filepath.Join("app", py.ProjectRoot))
+		switch {
+		case py.BuildBinary:
+			pyExec = root + "/" + py.BinaryName
+		case py.WebServer:
+			pyExec = "/bin/sh " + root + "/run_server.sh"
+		case py.EntryPoint != "":
+			pyExec = root + "/" + filepath.ToSlash(py.VenvPath) + "/bin/python " + py.EntryPoint
+		}
+	}
+	switch {
+	case g.Enabled && pyExec != "":
+		return "", fmt.Errorf("both go and python builds are enabled: set exec to say which one to run")
+	case g.Enabled:
+		return current + "/" + filepath.ToSlash(filepath.Join(g.DeployPath, g.BinaryName)), nil
+	case pyExec != "":
+		return pyExec, nil
+	}
+	return "", fmt.Errorf("exec is required (no go build, and no python web_server, build_binary or entry_point to derive it from)")
 }
 
 // GetEnvironment retrieves a specific environment configuration
@@ -438,7 +563,17 @@ func (h *HookConfig) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+// envVarRef matches $$ (escaped $), ${NAME} and $NAME. Anything else after a $
+// ($1, $@, $?, ${1} ...) is left as is, so shell syntax in hooks survives.
+var envVarRef = regexp.MustCompile(`\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
+
 // interpolateEnvVars replaces ${VAR} or $VAR with environment variable values
+// (empty when unset) and $$ with a literal $.
 func interpolateEnvVars(content string) string {
-	return os.Expand(content, os.Getenv)
+	return envVarRef.ReplaceAllStringFunc(content, func(m string) string {
+		if m == "$$" {
+			return "$"
+		}
+		return os.Getenv(strings.Trim(m, "${}"))
+	})
 }

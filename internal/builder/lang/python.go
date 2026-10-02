@@ -4,53 +4,49 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/user/versaDeploy/internal/config"
+	verserrors "github.com/user/versaDeploy/internal/errors"
 )
 
 // PythonBuilder implements LanguageBuilder for Python environments
 type PythonBuilder struct{}
 
-// Build sets up pip/poetry dependencies, PyInstaller, and Gunicorn/Uvicorn systemd services
+// Build writes run_server.sh (web_server) and builds the PyInstaller binary
+// (build_binary). Dependencies are not installed here: the deployer creates the
+// virtualenv on the server, since one built on this machine wouldn't run there.
 func (p *PythonBuilder) Build(ctx *BuilderContext) (int, bool, error) {
-	if len(ctx.Changeset.PythonFiles) == 0 && !ctx.Changeset.RequirementsChanged {
-		ctx.Log.Debug("No Python files changed, skipping build")
-		return 0, false, nil
-	}
-
 	cfg := ctx.Config.Builds.Python
-	projectRoot := cfg.ProjectRoot
-	if projectRoot == "" {
-		projectRoot = "."
-	}
+	appDir := filepath.Join(ctx.ArtifactDir, "app", cfg.ProjectRoot)
 
-	appDir := filepath.Join(ctx.ArtifactDir, "app", projectRoot)
-
-	if err := os.MkdirAll(appDir, 0775); err != nil {
-		return 0, false, fmt.Errorf("failed to create Python project directory: %w", err)
-	}
-
-	if err := p.installDependencies(ctx, appDir, cfg); err != nil {
-		return 0, false, err
-	}
-
-	filesBuilt := 0
-	if cfg.BuildBinary {
-		if err := p.buildBinary(ctx, appDir, cfg); err != nil {
-			return 0, false, err
-		}
-		filesBuilt = 1
-	}
-
+	// Always written (it's tiny) so changes to web_* settings apply without code changes
 	if cfg.WebServer {
+		if err := os.MkdirAll(appDir, 0775); err != nil {
+			return 0, false, fmt.Errorf("failed to create Python project directory: %w", err)
+		}
 		if err := p.setupWebServer(ctx, appDir, cfg); err != nil {
 			return 0, false, err
 		}
 	}
 
-	ctx.Log.Info("Python build completed: %d files", len(ctx.Changeset.PythonFiles))
-	return filesBuilt, true, nil
+	if !cfg.BuildBinary || (len(ctx.Changeset.PythonFiles) == 0 && !ctx.Changeset.RequirementsChanged && !ctx.Changeset.Force) {
+		return 0, cfg.WebServer, nil
+	}
+	if runtime.GOOS != "linux" {
+		return 0, false, verserrors.New(verserrors.CodeBuildFailed, "python.build_binary needs versa to run on Linux",
+			"PyInstaller can't cross-compile: on "+runtime.GOOS+" it builds a binary for "+runtime.GOOS+", which the server can't run. Deploy from Linux (or WSL/CI), or disable build_binary to run the code with a virtualenv on the server.", nil)
+	}
+	// PyInstaller bundles the packages installed where it runs
+	if err := p.installDependencies(ctx, appDir, cfg); err != nil {
+		return 0, false, err
+	}
+	if err := p.buildBinary(ctx, appDir, cfg); err != nil {
+		return 0, false, err
+	}
+	ctx.Log.Info("Python binary built: %s", cfg.BinaryName)
+	return 1, true, nil
 }
 
 func (p *PythonBuilder) installDependencies(ctx *BuilderContext, appDir string, cfg config.PythonBuildConfig) error {
@@ -168,103 +164,74 @@ func (p *PythonBuilder) buildBinary(ctx *BuilderContext, appDir string, cfg conf
 
 	os.RemoveAll(filepath.Join(appDir, "build"))
 	os.Remove(filepath.Join(appDir, cfg.BinaryName+".spec"))
-
-	ctx.Log.Info("Python binary built: %s", cfg.BinaryName)
 	return nil
 }
 
 func (p *PythonBuilder) setupWebServer(ctx *BuilderContext, appDir string, cfg config.PythonBuildConfig) error {
-	ctx.Log.Info("Setting up Python web server...")
-
-	var runCmd string
-	if cfg.RunCommand != "" {
-		runCmd = cfg.RunCommand
-	} else {
-		switch cfg.WebFramework {
-		case "django":
-			runCmd = fmt.Sprintf("%s manage.py migrate --no-input && %s manage.py collectstatic --no-input && %s manage.py runserver %s:%d",
-				cfg.PythonCommand, cfg.PythonCommand, cfg.PythonCommand, cfg.WebHost, cfg.WebPort)
-		case "flask":
-			host := cfg.WebHost
-			if host == "0.0.0.0" {
-				host = "127.0.0.1"
-			}
-			runCmd = fmt.Sprintf("FLASK_APP=%s %s -m flask run --host=%s --port=%d",
-				cfg.EntryPoint, cfg.PythonCommand, host, cfg.WebPort)
-		case "fastapi", "uvicorn":
-			entry := strings.ReplaceAll(cfg.EntryPoint, ".py", "")
-			if cfg.WebThreads > 0 {
-				runCmd = fmt.Sprintf("%s -m uvicorn %s:app --host %s --port %d --workers %d --threads %d",
-					cfg.PythonCommand, entry, cfg.WebHost, cfg.WebPort, cfg.WebWorkers, cfg.WebThreads)
-			} else if cfg.WebWorkers > 0 {
-				runCmd = fmt.Sprintf("%s -m uvicorn %s:app --host %s --port %d --workers %d",
-					cfg.PythonCommand, entry, cfg.WebHost, cfg.WebPort, cfg.WebWorkers)
-			} else {
-				runCmd = fmt.Sprintf("%s -m uvicorn %s:app --host %s --port %d",
-					cfg.PythonCommand, entry, cfg.WebHost, cfg.WebPort)
-			}
-		case "gunicorn":
-			workers := cfg.WebWorkers
-			if workers == 0 {
-				workers = 4
-			}
-			entry := strings.ReplaceAll(cfg.EntryPoint, ".py", "")
-			runCmd = fmt.Sprintf("%s -m gunicorn %s:app -w %d -b %s:%d",
-				cfg.PythonCommand, entry, workers, cfg.WebHost, cfg.WebPort)
-		default:
-			if cfg.EntryPoint != "" {
-				runCmd = fmt.Sprintf("%s %s", cfg.PythonCommand, cfg.EntryPoint)
-			} else {
-				runCmd = fmt.Sprintf("%s -m http.server %d", cfg.PythonCommand, cfg.WebPort)
-			}
+	wsgi := ""
+	if cfg.WebFramework == "django" && cfg.RunCommand == "" {
+		if wsgi = findDjangoWSGI(appDir); wsgi == "" {
+			ctx.Log.Warn("Django: no <project>/wsgi.py found, falling back to manage.py runserver (development server). Set python.run_command for production.")
 		}
 	}
-
-	runScript := "#!/bin/bash\n" + runCmd + "\n"
 	scriptPath := filepath.Join(appDir, "run_server.sh")
-
-	if err := os.WriteFile(scriptPath, []byte(runScript), 0755); err != nil {
+	if err := os.WriteFile(scriptPath, []byte(runServerScript(cfg, wsgi)), 0755); err != nil {
 		return fmt.Errorf("failed to write run script: %w", err)
 	}
-
-	if cfg.ServiceName == "" {
-		return nil
-	}
-
-	// Generate systemd service file
-	remoteAppDir := filepath.ToSlash(filepath.Join(ctx.Config.RemotePath, "current", "app", cfg.ProjectRoot))
-	if cfg.ProjectRoot == "" {
-		remoteAppDir = filepath.ToSlash(filepath.Join(ctx.Config.RemotePath, "current", "app"))
-	}
-
-	remoteScriptPath := filepath.ToSlash(filepath.Join(remoteAppDir, filepath.Base(scriptPath)))
-	user := ctx.Config.SSH.User
-	if user == "" {
-		user = "root"
-	}
-
-	systemdContent := fmt.Sprintf(`[Unit]
-Description=VersaDeploy Python Web Server (%s)
-After=network.target
-
-[Service]
-Type=simple
-User=%s
-WorkingDirectory=%s
-ExecStart=/bin/bash %s
-Restart=always
-RestartSec=3
-Environment="PYTHONUNBUFFERED=1"
-
-[Install]
-WantedBy=multi-user.target
-`, cfg.ServiceName, user, remoteAppDir, remoteScriptPath)
-
-	servicePath := filepath.Join(appDir, cfg.ServiceName+".service")
-	if err := os.WriteFile(servicePath, []byte(systemdContent), 0644); err != nil {
-		return fmt.Errorf("failed to write systemd service file: %w", err)
-	}
-
-	ctx.Log.Info("Generated systemd file: %s", cfg.ServiceName+".service")
+	ctx.Log.Debug("Generated run_server.sh")
 	return nil
+}
+
+// findDjangoWSGI returns the WSGI module of a Django project ("mysite.wsgi"), found as
+// <dir>/wsgi.py next to manage.py; "" if there isn't exactly one.
+func findDjangoWSGI(appDir string) string {
+	matches, _ := filepath.Glob(filepath.Join(appDir, "*", "wsgi.py"))
+	if len(matches) != 1 {
+		return ""
+	}
+	return filepath.Base(filepath.Dir(matches[0])) + ".wsgi"
+}
+
+// runServerScript returns run_server.sh: it runs from its own directory (the Python
+// root) with the release's virtualenv, and execs the server so the init system tracks
+// its PID. Migrations/collectstatic belong in post_deploy hooks, not here.
+func runServerScript(cfg config.PythonBuildConfig, djangoWSGI string) string {
+	py := filepath.ToSlash(cfg.VenvPath) + "/bin/python"
+	entry := strings.TrimSuffix(filepath.ToSlash(cfg.EntryPoint), ".py")
+	entry = strings.ReplaceAll(entry, "/", ".")
+	bind := fmt.Sprintf("%s:%d", cfg.WebHost, cfg.WebPort)
+	workers := cfg.WebWorkers
+
+	var run string
+	switch {
+	case cfg.RunCommand != "":
+		run = cfg.RunCommand
+	case cfg.WebFramework == "django" && djangoWSGI != "":
+		if workers == 0 {
+			workers = 2
+		}
+		run = fmt.Sprintf("%s -m gunicorn %s:application -w %d -b %s", py, djangoWSGI, workers, bind)
+	case cfg.WebFramework == "django":
+		run = fmt.Sprintf("%s manage.py runserver %s --noreload", py, bind)
+	case cfg.WebFramework == "flask":
+		run = fmt.Sprintf("FLASK_APP=%s %s -m flask run --host=%s --port=%d", cfg.EntryPoint, py, cfg.WebHost, cfg.WebPort)
+	case cfg.WebFramework == "fastapi" || cfg.WebFramework == "uvicorn":
+		run = fmt.Sprintf("%s -m uvicorn %s:app --host %s --port %d", py, entry, cfg.WebHost, cfg.WebPort)
+		if workers > 0 {
+			run += fmt.Sprintf(" --workers %d", workers)
+		}
+	case cfg.WebFramework == "gunicorn":
+		if workers == 0 {
+			workers = 4
+		}
+		run = fmt.Sprintf("%s -m gunicorn %s:app -w %d -b %s", py, entry, workers, bind)
+		if cfg.WebThreads > 0 {
+			run += fmt.Sprintf(" --threads %d", cfg.WebThreads)
+		}
+	case cfg.EntryPoint != "":
+		run = fmt.Sprintf("%s %s", py, cfg.EntryPoint)
+	default:
+		run = fmt.Sprintf("%s -m http.server %d", py, cfg.WebPort)
+	}
+	return "#!/bin/sh\n# Generated by versa. Runs with the release's virtualenv.\ncd \"$(dirname \"$0\")\" || exit 1\nexport PYTHONUNBUFFERED=1\nexec " + run + "\n"
 }

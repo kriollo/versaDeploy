@@ -49,6 +49,7 @@ func TestSymlinkSwap(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh")
 	}
+	requireRealSymlinks(t)
 	stub := func(dir, name, body string) {
 		os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0755)
 	}
@@ -85,5 +86,24 @@ func TestSymlinkSwap(t *testing.T) {
 				t.Error("tmp link was moved into the old release")
 			}
 		})
+	}
+}
+
+// requireRealSymlinks skips the test when this machine can't create real symlinks
+// from Go and from sh (Windows without Developer Mode, where Git Bash's ln -s copies
+// instead). The scripts under test only ever run on the Linux server.
+func requireRealSymlinks(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Symlink("d", filepath.Join(dir, "go-link")); err != nil {
+		t.Skipf("symlinks not supported here: %v", err)
+	}
+	cmd := exec.Command("sh", "-c", "mkdir d && ln -s d sh-link")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("sh can't create symlinks: %v: %s", err, out)
+	}
+	if _, err := os.Readlink(filepath.Join(dir, "sh-link")); err != nil {
+		t.Skip("sh's ln -s doesn't create real symlinks here (Git Bash without Developer Mode)")
 	}
 }

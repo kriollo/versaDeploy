@@ -89,7 +89,9 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 		HostKeyCallback: hostKeyCallback,
 		Timeout:         10 * time.Second,
 	}
-	hostKeyAlgos := ssh.SupportedAlgorithms().HostKeys
+	// The library's default host key list also accepts ssh-rsa (SHA1), which old
+	// servers (OpenSSH < 7.2) only offer; SupportedAlgorithms leaves it out.
+	hostKeyAlgos := append(ssh.SupportedAlgorithms().HostKeys, ssh.KeyAlgoRSA)
 	if cfg.LegacyAlgorithms {
 		sup, ins := ssh.SupportedAlgorithms(), ssh.InsecureAlgorithms()
 		sshConfig.KeyExchanges = append(sup.KeyExchanges, ins.KeyExchanges...)
