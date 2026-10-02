@@ -13,12 +13,16 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/schollz/progressbar/v3"
 	"github.com/user/versaDeploy/internal/builder"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // Manifest represents the manifest.json structure
@@ -323,6 +327,14 @@ const HashFileName = ".versa-files"
 // slash-separated relative path. Symlinks hash as "link:<target>".
 func HashTree(dir string) (map[string]string, error) {
 	hashes := map[string]string{}
+	var mu sync.Mutex
+	set := func(rel, h string) {
+		mu.Lock()
+		hashes[rel] = h
+		mu.Unlock()
+	}
+	var g errgroup.Group
+	g.SetLimit(runtime.NumCPU())
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -337,21 +349,27 @@ func HashTree(dir string) (map[string]string, error) {
 			if err != nil {
 				return err
 			}
-			hashes[rel] = "link:" + filepath.ToSlash(target)
+			set(rel, "link:"+filepath.ToSlash(target))
 			return nil
 		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		h := sha256.New()
-		if _, err := io.Copy(h, f); err != nil {
-			return err
-		}
-		hashes[rel] = hex.EncodeToString(h.Sum(nil))
+		g.Go(func() error {
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			h := sha256.New()
+			if _, err := io.Copy(h, f); err != nil {
+				return err
+			}
+			set(rel, hex.EncodeToString(h.Sum(nil)))
+			return nil
+		})
 		return nil
 	})
+	if werr := g.Wait(); err == nil {
+		err = werr
+	}
 	return hashes, err
 }
 

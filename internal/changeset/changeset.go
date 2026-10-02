@@ -3,8 +3,10 @@ package changeset
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -94,10 +96,9 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 	}
 
 	filesToHash := make([]fileToHash, 0, 512)
-	var mu sync.Mutex
 
-	// Walk the repository and collect files
-	err := filepath.Walk(d.repoPath, func(path string, info os.FileInfo, err error) error {
+	// Walk the repository and collect files (WalkDir: no lstat per entry)
+	err := filepath.WalkDir(d.repoPath, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -110,10 +111,14 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 		relPath = filepath.ToSlash(relPath)
 
 		// 1. Hard-skip truly heavy/metadata directories that we NEVER want to walk
-		if info.IsDir() {
+		if entry.IsDir() {
 			if relPath == ".git" || relPath == "node_modules" || relPath == "vendor" {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		// FIFOs, sockets and devices would block or never end when read
+		if entry.Type()&(fs.ModeNamedPipe|fs.ModeSocket|fs.ModeDevice) != 0 {
 			return nil
 		}
 
@@ -144,13 +149,11 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 		}
 
 		// Add to list for concurrent hashing
-		mu.Lock()
 		filesToHash = append(filesToHash, fileToHash{
 			path:    path,
 			relPath: relPath,
 			ext:     ext,
 		})
-		mu.Unlock()
 
 		return nil
 	})
@@ -217,10 +220,16 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 		close(results)
 	}()
 
-	// Collect results
+	// Collect results. After an error keep draining so workers don't block forever on
+	// a full results channel.
+	var hashErr error
 	for result := range results {
+		if hashErr != nil {
+			continue
+		}
 		if result.err != nil {
-			return nil, fmt.Errorf("failed to hash %s: %w", result.relPath, result.err)
+			hashErr = fmt.Errorf("failed to hash %s: %w", result.relPath, result.err)
+			continue
 		}
 
 		cs.AllFileHashes[result.relPath] = result.hash
@@ -253,6 +262,9 @@ func (d *Detector) Detect() (*ChangeSet, error) {
 				}
 			}
 		}
+	}
+	if hashErr != nil {
+		return nil, hashErr
 	}
 
 	// Check dependency files
@@ -371,7 +383,7 @@ func hashFile(path string) (string, error) {
 		return "", err
 	}
 
-	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // HasChanges returns true if any changes were detected
