@@ -82,10 +82,16 @@ func TestPreserveScript(t *testing.T) {
 		os.WriteFile(filepath.Join(root, "prev/legacy.txt"), []byte("legacy"), 0644)
 		os.MkdirAll(filepath.Join(root, "final/app/config"), 0755)
 		os.WriteFile(filepath.Join(root, "final/app/config/x.php"), []byte("artifact"), 0644)
+		// Lives in a folder the new release doesn't have (e.g. only on the server)
+		os.MkdirAll(filepath.Join(root, "prev/app/public/uploads/cfg"), 0755)
+		os.WriteFile(filepath.Join(root, "prev/app/public/uploads/cfg/app.js"), []byte("srv"), 0644)
 	}, func(root string) string {
-		return preserveScript(root+"/prev", root+"/final", []string{"config", "legacy.txt", "gone"})
+		return preserveScript(root+"/prev", root+"/final", []string{"config", "legacy.txt", "gone", "public/uploads/cfg/app.js"})
 	}, func(root, out string) {
-		if want := "ok config\nok legacy.txt\nmissing gone"; strings.TrimSpace(out) != want {
+		if b, _ := os.ReadFile(filepath.Join(root, "final/app/public/uploads/cfg/app.js")); string(b) != "srv" {
+			t.Errorf("preserved file in a missing folder not restored: %q", b)
+		}
+		if want := "ok config\nok legacy.txt\nmissing gone\nok public/uploads/cfg/app.js"; strings.TrimSpace(out) != want {
 			t.Errorf("output %q, want %q", out, want)
 		}
 		if b, _ := os.ReadFile(filepath.Join(root, "final/app/config/x.php")); string(b) != "server" {

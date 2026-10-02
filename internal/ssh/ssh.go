@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -342,9 +343,9 @@ func (c *Client) uploadFile(localPath, remotePath string, progress io.Writer) er
 	}
 	defer localFile.Close()
 
-	remoteFile, err := c.sftpClient.Create(remotePath)
+	remoteFile, err := c.createRemote(remotePath)
 	if err != nil {
-		return fmt.Errorf("failed to create remote file: %w", err)
+		return err
 	}
 	defer remoteFile.Close()
 
@@ -366,14 +367,17 @@ func (c *Client) DownloadFile(remotePath, localPath string) error {
 	// Open remote file
 	remoteFile, err := c.sftpClient.Open(remotePath)
 	if err != nil {
-		return fmt.Errorf("failed to open remote file: %w", err)
+		return fmt.Errorf("cannot open remote file %s: %w", remotePath, err)
 	}
 	defer remoteFile.Close()
 
-	// Create local file
+	// Create local file (and its folder)
+	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+		return fmt.Errorf("cannot create local folder %s: %w", filepath.Dir(localPath), err)
+	}
 	localFile, err := os.Create(localPath)
 	if err != nil {
-		return fmt.Errorf("failed to create local file: %w", err)
+		return fmt.Errorf("cannot create local file %s: %w", localPath, err)
 	}
 	defer localFile.Close()
 
@@ -628,19 +632,62 @@ func (c *Client) DirSizesKB(paths []string) (map[string]int64, error) {
 
 // Rename renames a remote path via SFTP (fails if newPath exists; no `mv -T` needed).
 func (c *Client) Rename(oldPath, newPath string) error {
-	return c.sftpClient.Rename(oldPath, newPath)
+	if err := c.sftpClient.Rename(oldPath, newPath); err != nil {
+		if _, statErr := c.sftpClient.Stat(oldPath); statErr != nil {
+			return fmt.Errorf("cannot rename %s to %s: %s does not exist: %w", oldPath, newPath, oldPath, err)
+		}
+		if _, statErr := c.sftpClient.Stat(newPath); statErr == nil {
+			return fmt.Errorf("cannot rename %s to %s: %s already exists: %w", oldPath, newPath, newPath, err)
+		}
+		return fmt.Errorf("cannot rename %s to %s (check permissions on %s): %w", oldPath, newPath, path.Dir(newPath), err)
+	}
+	return nil
+}
+
+// createRemote creates (truncates) a remote file, creating its missing parent
+// directories; errors name the path and whether the directory or the permission failed.
+func (c *Client) createRemote(p string) (*sftp.File, error) {
+	f, err := c.sftpClient.Create(p)
+	if err == nil {
+		return f, nil
+	}
+	dir := path.Dir(p)
+	if _, statErr := c.sftpClient.Stat(dir); statErr == nil {
+		return nil, fmt.Errorf("cannot create remote file %s (check that %s can write to %s): %w", p, c.config.User, dir, err)
+	}
+	if mkErr := c.sftpClient.MkdirAll(dir); mkErr != nil {
+		return nil, fmt.Errorf("cannot create remote file %s: directory %s does not exist and can't be created (check permissions on its parent): %w", p, dir, mkErr)
+	}
+	if f, err = c.sftpClient.Create(p); err != nil {
+		return nil, fmt.Errorf("cannot create remote file %s: %w", p, err)
+	}
+	return f, nil
 }
 
 // AcquireLock attempts to acquire a deployment lock using atomic directory creation via SFTP
 func (c *Client) AcquireLock(lockPath string) error {
 	err := c.sftpClient.Mkdir(lockPath)
-	if err != nil {
+	if err == nil {
+		return nil
+	}
+	// mkdir fails for other reasons than an existing lock: tell them apart
+	if _, statErr := c.sftpClient.Stat(lockPath); statErr == nil {
 		return verserrors.New(verserrors.CodeConfigInvalid,
 			"Deployment lock already held",
 			"Another deployment is currently in progress. If you are sure no one else is deploying, manually remove the directory: "+lockPath,
 			err)
 	}
-	return nil
+	dir := path.Dir(lockPath)
+	if _, statErr := c.sftpClient.Stat(dir); statErr != nil {
+		return verserrors.New(verserrors.CodeConfigInvalid,
+			"remote_path "+dir+" does not exist on the server",
+			"On a first deploy use --initial-deploy (versa creates it), or create it on the server; otherwise check remote_path in your config.",
+			statErr)
+	}
+	return verserrors.New(verserrors.CodeConfigInvalid,
+		"Cannot create the deployment lock in "+dir,
+		"Check that the SSH user can write to remote_path ("+dir+").",
+		err)
 }
 
 // ReadDir lists the contents of a remote directory via SFTP.
@@ -667,9 +714,9 @@ func (c *Client) WriteRemoteBytes(path string, data []byte) error {
 		existingMode = info.Mode()
 	}
 
-	f, err := c.sftpClient.Create(path)
+	f, err := c.createRemote(path)
 	if err != nil {
-		return fmt.Errorf("failed to create remote file: %w", err)
+		return err
 	}
 	defer f.Close()
 

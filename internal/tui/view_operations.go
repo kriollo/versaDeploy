@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -208,10 +207,11 @@ func startDeploy(cfg *config.Config, envName, repoPath string, dryRun, force, in
 			defer close(confirmReqCh) // unblock waitForConfirmRequest when done
 			var w io.Writer = &logCapture{ch: ch}
 			if logFilePath != "" {
-				f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-				if err == nil {
+				if f, err := logger.OpenLogFile(logFilePath); err == nil {
 					w = io.MultiWriter(&logCapture{ch: ch}, f)
 					defer f.Close()
+				} else {
+					ch <- fmt.Sprintf("[WARN] %v (continuing without a log file)\n", err)
 				}
 			}
 			log := logger.NewTUILogger(w, true, debug)
@@ -261,10 +261,11 @@ func startMultiDeploy(
 		go func() {
 			var w io.Writer = &logCapture{ch: ch}
 			if logFilePath != "" {
-				f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-				if err == nil {
+				if f, err := logger.OpenLogFile(logFilePath); err == nil {
 					w = io.MultiWriter(&logCapture{ch: ch}, f)
 					defer f.Close()
+				} else {
+					ch <- fmt.Sprintf("[WARN] %v (continuing without a log file)\n", err)
 				}
 			}
 			log := logger.NewTUILogger(w, true, debug)

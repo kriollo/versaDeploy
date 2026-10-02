@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.1] - 2026-10-02
+
+### Fixed
+
+- **A missing `remote_path` was reported as "Deployment lock already held"**: any failure creating `.versa.lock` was taken for a running deploy. versa now says whether the lock is really held, `remote_path` doesn't exist, or the user can't write there, and `--initial-deploy` creates a missing `remote_path`.
+- **Files written into missing folders failed** with a bare "failed to create remote file": uploads and generated files now create missing parent folders on the server, and errors name the path and the cause (missing folder vs. permissions). Renames name both paths.
+- **`preserved_paths` in folders the new release doesn't have** (e.g. only on the server) failed the deploy: the folder is now created.
+- **`--log-file` (and the TUI's log file) in a folder that doesn't exist** failed; the folder is now created, and the TUI shows a warning instead of silently skipping the log. `versa init --config dir/deploy.yml` and TUI downloads create their folder too.
+
 ## [1.8.0] - 2026-10-02
 
 ### Added

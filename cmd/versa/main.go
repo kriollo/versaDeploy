@@ -581,6 +581,9 @@ var initCmd = &cobra.Command{
 			content = localConfigTemplate
 		}
 
+		if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+			return fmt.Errorf("cannot create folder %s: %w", filepath.Dir(configPath), err)
+		}
 		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("failed to create %s: %w", configPath, err)
 		}

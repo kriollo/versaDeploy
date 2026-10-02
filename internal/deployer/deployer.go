@@ -209,6 +209,15 @@ func (d *Deployer) connectAndLock() (*ssh.Client, func(), error) {
 		return nil, nil, verserrors.Wrap(err)
 	}
 
+	// On a first deploy remote_path may not exist yet; create it (needs write access to its parent)
+	if d.initialDeploy && !d.dryRun {
+		if err := c.MkdirAll(d.env.RemotePath); err != nil {
+			c.Close()
+			return nil, nil, verserrors.New(verserrors.CodeConfigInvalid, "Cannot create remote_path "+d.env.RemotePath,
+				"Create it on the server and give the SSH user write access to it (e.g. sudo mkdir -p "+d.env.RemotePath+" && sudo chown "+d.env.SSH.User+" "+d.env.RemotePath+").", err)
+		}
+	}
+
 	lockDir := d.remote(".versa.lock")
 	d.log.Debug("Acquiring deployment lock...")
 	if err := c.AcquireLock(lockDir); err != nil {
@@ -1405,9 +1414,10 @@ func preserveScript(prevRelease, finalDir string, paths []string) string {
 	for _, path := range paths {
 		cleanPath := filepath.ToSlash(filepath.Clean(path))
 		script = append(script, fmt.Sprintf(`f=; for s in %s %s; do if [ -e "$s" ]; then f=$s; break; fi; done
-if [ -n "$f" ]; then { rm -rf -- %[3]s && cp -rfp -- "$f" %[3]s; } || exit 1; echo ok %[4]s; else echo missing %[4]s; fi`,
+if [ -n "$f" ]; then { rm -rf -- %[3]s && mkdir -p %[5]s && cp -rfp -- "$f" %[3]s; } || exit 1; echo ok %[4]s; else echo missing %[4]s; fi`,
 			ssh.ShellQuote(prevRelease+"/app/"+cleanPath), ssh.ShellQuote(prevRelease+"/"+cleanPath),
-			ssh.ShellQuote(filepath.ToSlash(filepath.Join(finalDir, "app", cleanPath))), ssh.ShellQuote(cleanPath)))
+			ssh.ShellQuote(filepath.ToSlash(filepath.Join(finalDir, "app", cleanPath))), ssh.ShellQuote(cleanPath),
+			ssh.ShellQuote(filepath.ToSlash(filepath.Dir(filepath.Join(finalDir, "app", cleanPath))))))
 	}
 	return strings.Join(script, "\n")
 }

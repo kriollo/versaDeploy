@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -36,15 +37,26 @@ type Logger struct {
 	debug       bool
 }
 
+// OpenLogFile opens path for appending, creating the file and its folder if needed.
+func OpenLogFile(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return nil, fmt.Errorf("cannot create the folder of log file %s: %w", path, err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open log file %s: %w", path, err)
+	}
+	return f, nil
+}
+
 // NewLogger creates a new logger
 func NewLogger(logFilePath string, verbose, debug bool) (*Logger, error) {
 	var file *os.File
 	var err error
 
 	if logFilePath != "" {
-		file, err = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open log file: %w", err)
+		if file, err = OpenLogFile(logFilePath); err != nil {
+			return nil, err
 		}
 	}
 

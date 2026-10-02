@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -62,5 +63,19 @@ func TestLogger_Close(t *testing.T) {
 	l2, _ := NewLogger(tmpFile, false, false)
 	if err := l2.Close(); err != nil {
 		t.Errorf("Close() on valid file error = %v", err)
+	}
+}
+
+// --log-file may point into a folder that doesn't exist yet.
+func TestOpenLogFileCreatesFolder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs", "2026", "deploy.log")
+	l, err := NewLogger(path, false, false)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	l.Info("hello")
+	l.Close()
+	if b, _ := os.ReadFile(path); !strings.Contains(string(b), "hello") {
+		t.Errorf("log not written to %s: %q", path, b)
 	}
 }
