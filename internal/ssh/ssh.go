@@ -112,8 +112,9 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 		return nil, verserrors.Wrap(fmt.Errorf("failed to connect to SSH server after %d attempts: %w", maxRetries, err))
 	}
 
-	// Create SFTP client with optimized settings
-	sftpClient, err := sftp.NewClient(sshClient, sftp.MaxPacket(1<<15))
+	// 32 KB packets are the most every sftp-server guarantees (OpenSSH 4.3 included);
+	// concurrent writes keep up to 64 of them in flight instead of one per round-trip.
+	sftpClient, err := sftp.NewClient(sshClient, sftp.MaxPacket(1<<15), sftp.UseConcurrentWrites(true))
 	if err != nil {
 		sshClient.Close()
 		return nil, verserrors.New(verserrors.CodeSSHConnectFailed, "Failed to create SFTP client", "Ensure the SFTP subsystem is enabled on the remote server (check 'Subsystem sftp' in /etc/ssh/sshd_config).", err)
@@ -292,33 +293,31 @@ func (c *Client) UploadFilesParallel(localPaths []string, remoteDir string, conc
 }
 
 // uploadFile uploads a single file, optionally reporting progress to a writer.
-// Uses a 256 KB buffer to reduce syscall overhead for large files.
+// Writes are pipelined (ReadFromWithConcurrency) so throughput isn't capped at one
+// 32 KB packet per network round-trip.
 func (c *Client) uploadFile(localPath, remotePath string, progress io.Writer) error {
-	// Open local file
 	localFile, err := os.Open(localPath)
 	if err != nil {
 		return fmt.Errorf("failed to open local file: %w", err)
 	}
 	defer localFile.Close()
 
-	// Create remote file
 	remoteFile, err := c.sftpClient.Create(remotePath)
 	if err != nil {
 		return fmt.Errorf("failed to create remote file: %w", err)
 	}
 	defer remoteFile.Close()
 
-	// Copy contents with an explicit buffer to reduce syscall overhead
-	buf := make([]byte, 256*1024)
-	var writer io.Writer = remoteFile
+	var r io.Reader = localFile
 	if progress != nil {
-		writer = io.MultiWriter(remoteFile, progress)
+		r = io.TeeReader(localFile, progress)
 	}
-
-	if _, err := io.CopyBuffer(writer, localFile, buf); err != nil {
+	if _, err := remoteFile.ReadFromWithConcurrency(r, 0); err != nil {
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
-
+	if err := remoteFile.Close(); err != nil {
+		return fmt.Errorf("failed to close remote file: %w", err)
+	}
 	return nil
 }
 
@@ -360,34 +359,12 @@ func (c *Client) FileExists(remotePath string) (bool, error) {
 
 // UploadFileWithProgress uploads a single file with a progress bar
 func (c *Client) UploadFileWithProgress(localPath, remotePath string) error {
-	localFile, err := os.Open(localPath)
-	if err != nil {
-		return fmt.Errorf("failed to open local file: %w", err)
-	}
-	defer localFile.Close()
-
-	info, err := localFile.Stat()
+	info, err := os.Stat(localPath)
 	if err != nil {
 		return fmt.Errorf("failed to stat local file: %w", err)
 	}
-
-	remoteFile, err := c.sftpClient.Create(remotePath)
-	if err != nil {
-		return fmt.Errorf("failed to create remote file: %w", err)
-	}
-	defer remoteFile.Close()
-
-	bar := progressbar.DefaultBytes(
-		info.Size(),
-		fmt.Sprintf("Uploading %s", filepath.Base(localPath)),
-	)
-
-	_, err = io.Copy(io.MultiWriter(remoteFile, bar), localFile)
-	if err != nil {
-		return fmt.Errorf("failed to upload file: %w", err)
-	}
-
-	return nil
+	bar := progressbar.DefaultBytes(info.Size(), fmt.Sprintf("Uploading %s", filepath.Base(localPath)))
+	return c.uploadFile(localPath, remotePath, bar)
 }
 
 // ExtractArchive extracts a tar.gz archive on the remote server
@@ -567,15 +544,13 @@ func (c *Client) CleanupOldReleases(releasesDir string, keepCount int) error {
 	// Simple string sort works due to timestamp format YYYYMMDD-HHMMSS
 	sort.Sort(sort.Reverse(sort.StringSlice(releases)))
 
-	// Delete old releases
-	for i := keepCount; i < len(releases); i++ {
-		releaseDir := filepath.ToSlash(filepath.Join(releasesDir, releases[i]))
-		// Use %q for safe quoting and -- to prevent arguments injection
-		cmd := "rm -rf -- " + ShellQuote(releaseDir)
-		output, err := c.ExecuteCommand(cmd)
-		if err != nil {
-			return fmt.Errorf("failed to delete old release %s: %w (output: %s)", releases[i], err, output)
-		}
+	// Delete old releases in one round-trip
+	cmd := "rm -rf --"
+	for _, r := range releases[keepCount:] {
+		cmd += " " + ShellQuote(filepath.ToSlash(filepath.Join(releasesDir, r)))
+	}
+	if output, err := c.ExecuteCommand(cmd); err != nil {
+		return fmt.Errorf("failed to delete old releases %v: %w (output: %s)", releases[keepCount:], err, output)
 	}
 
 	return nil
