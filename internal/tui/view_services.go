@@ -322,6 +322,12 @@ func (s *servicesModel) askSteps(ids []string, title string) {
 		if len(e.Services) > 0 {
 			e.SSH.User = s.vars.DeployUser
 			v.ServicesSudoers = deployer.SudoersScript(&e, s.project)
+			inst, err := deployer.ServiceInstallScript(&e, s.project, s.envName)
+			if err != nil {
+				s.status = StyleError.Render("✕ " + err.Error())
+				return
+			}
+			v.ServicesInstall = inst
 		}
 	}
 	b, err := provision.Build(ids, v)

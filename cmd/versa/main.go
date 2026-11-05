@@ -361,8 +361,8 @@ var sshTestCmd = &cobra.Command{
 			case err != nil:
 				fmt.Printf("⚠️  Could not check sudo: %v\n", err)
 			case len(missing) > 0:
-				fmt.Printf("⚠️  %s can't restart %s with passwordless sudo: deploys will fail at the service step.\n", envCfg.SSH.User, strings.Join(missing, ", "))
-				fmt.Printf("   Run 'versa service %s sudoers' and add the printed line on the server.\n", env)
+				fmt.Printf("⚠️  %s isn't installed or %s can't restart it with passwordless sudo: deploys will fail at the service step.\n", strings.Join(missing, ", "), envCfg.SSH.User)
+				fmt.Printf("   Run once as root: versa service %s setup | ssh root@%s sh\n", env, envCfg.SSH.Host)
 			default:
 				fmt.Println("✅ Services can be managed with sudo.")
 			}
@@ -513,8 +513,8 @@ environments:
 
     # Long-running processes (Go binary, Python server). versa installs them in the
     # server's init system (systemd / OpenRC / SysV), starts them at boot and restarts
-    # them on every deploy and rollback. Run 'versa service production sudoers' to get
-    # the sudoers line the SSH user needs.
+    # them on every deploy and rollback. Install them once as root with
+    # 'versa service production setup | ssh root@SERVER sh'.
     # services:
     #   - name: "myapp"
     #     # exec: "./bin/go/app --port 8080"   # default: the go binary or python's run_server.sh
@@ -783,7 +783,7 @@ var servicesReloadCmd = &cobra.Command{
 
 var serviceCmd = &cobra.Command{
 	Use:   "service [environment] [action]",
-	Short: "Manage the environment's services (status, start, stop, restart, logs, install, uninstall, sudoers)",
+	Short: "Manage the environment's services (status, start, stop, restart, logs, install, uninstall, setup, sudoers)",
 	Long: `Manage the long-running processes listed under 'services' in the config. They run
 through the server's init system (systemd, OpenRC or SysV init), start at boot and are
 restarted on every deploy and rollback.
@@ -794,13 +794,17 @@ Actions:
   stop       stop
   restart    restart, then check it stays up
   logs       follow the log (journalctl on systemd, /var/log/<name>.log otherwise)
-  install    (re)install and enable at boot, without deploying
+  install    (re)install and enable at boot, without deploying (as a non-root
+             user only checks that root installed the current version)
   uninstall  stop, disable and remove from the init system
-  sudoers    print the sudoers line the deploy user needs on this server`,
+  setup      print the script root runs once on the server: installs the
+             services and the deploy user's sudoers file
+             (versa service production setup | ssh root@SERVER sh)
+  sudoers    print the sudoers lines the deploy user needs on this server`,
 	Example: `  versa service production
   versa service production restart
   versa service production logs --name api --lines 200
-  versa service production sudoers`,
+  versa service production setup | ssh root@203.0.113.10 sh`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		action := "status"

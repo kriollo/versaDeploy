@@ -106,8 +106,8 @@ environments:
     # SERVICES: long-running processes (Go binary, Python server). versa installs them
     # in the server's init system (systemd, OpenRC or SysV /etc/init.d), enables them at
     # boot, restarts them after post_deploy on every deploy and rollback, and rolls the
-    # deploy back if one doesn't stay up. The SSH user needs passwordless sudo for the
-    # init commands: `versa service production sudoers` prints the exact line.
+    # deploy back if one doesn't stay up. Root installs them once per server:
+    # `versa service production setup | ssh root@SERVER sh` (also writes the sudoers file).
     # services:
     #   - name: "my-service"
     #     exec: "./bin/go/my-service --port 8080" # "./" = <remote_path>/current. Default: the go

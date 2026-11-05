@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -145,29 +144,56 @@ func TestServiceInstallSystemd(t *testing.T) {
 	}
 	bin := systemdStubs(t, filepath.ToSlash(state))
 	script := serviceScript(env, "install", nil, 0, l, "I=systemd\n")
+	unit := filepath.Join(remote, "etc", "systemd", "system", "api.service")
 
+	// The deploy user never installs: .versa/ is its own, so sudo install would let it
+	// write any unit
 	out, err := runScript(t, script, bin)
+	if err == nil || !strings.Contains(out, "needs root setup: api") {
+		t.Fatalf("non-root install must ask for root setup: %v\n%s", err, out)
+	}
+	if log, _ := os.ReadFile(filepath.Join(state, "log")); strings.Contains(string(log), "install") {
+		t.Errorf("non-root install used sudo install:\n%s", log)
+	}
+
+	// root setup (id stubbed to 0) installs and enables
+	rootBin := stubBin(t, map[string]string{"id": "echo 0"})
+	inst, err := installScript(env, "shop", "prod", l, "I=systemd\n")
 	if err != nil {
-		t.Fatalf("install failed: %v\n%s", err, out)
+		t.Fatal(err)
 	}
-	log, _ := os.ReadFile(filepath.Join(state, "log"))
-	for _, want := range []string{"install -m 644", "systemctl daemon-reload", "systemctl enable api"} {
-		// sudo gets absolute paths (sudoers matches them): "sudo -n /usr/bin/install -m 644 ..."
-		if !regexp.MustCompile(`sudo -n /\S*` + regexp.QuoteMeta(want)).MatchString(string(log)) {
-			t.Errorf("first install didn't run %q; log:\n%s", want, log)
-		}
+	if out, err := runScript(t, inst, rootBin+string(os.PathListSeparator)+bin); err != nil {
+		t.Fatalf("root setup failed: %v\n%s", err, out)
 	}
-	if b, _ := os.ReadFile(filepath.Join(remote, "etc", "systemd", "system", "api.service")); string(b) != files["api.service"] {
-		t.Error("unit not copied to the systemd directory")
+	if b, _ := os.ReadFile(unit); string(b) != files["api.service"] {
+		t.Errorf("setup didn't install the rendered unit:\n%s", b)
+	}
+	if _, err := os.Stat(filepath.Join(state, "enabled")); err != nil {
+		t.Error("setup didn't enable the service")
 	}
 
 	// Unchanged unit, already enabled: no sudo at all, so a restricted sudoers works
 	os.Remove(filepath.Join(state, "log"))
 	if out, err := runScript(t, script, bin); err != nil {
-		t.Fatalf("second install failed: %v\n%s", err, out)
+		t.Fatalf("install after setup failed: %v\n%s", err, out)
 	}
 	if log, err := os.ReadFile(filepath.Join(state, "log")); err == nil {
-		t.Errorf("second install used sudo:\n%s", log)
+		t.Errorf("install after setup used sudo:\n%s", log)
+	}
+
+	// as root, deploys install by themselves
+	os.Remove(unit)
+	env.SSH.User = "root"
+	if out, err := runScript(t, serviceScript(env, "install", nil, 0, l, "I=systemd\n"), bin); err != nil {
+		t.Fatalf("root install failed: %v\n%s", err, out)
+	}
+	if b, _ := os.ReadFile(unit); string(b) != files["api.service"] {
+		t.Error("root deploy didn't install the unit")
+	}
+
+	// setup refuses to run as a normal user
+	if out, err := runScript(t, inst, bin); err == nil || !strings.Contains(out, "run it as root") {
+		t.Errorf("setup as non-root must refuse: %v\n%s", err, out)
 	}
 }
 
@@ -248,6 +274,11 @@ func TestSudoersScript(t *testing.T) {
 	if !strings.Contains(out, "deploy ALL=(root) NOPASSWD:") || !strings.Contains(out, " api") || !strings.Contains(out, "Defaults:deploy !requiretty") || !strings.Contains(out, "versa services for my shop") {
 		t.Errorf("unexpected sudoers output:\n%s", out)
 	}
+	// no rule may let the deploy user write a file root runs, or pass free arguments to
+	// journalctl
+	if strings.Contains(out, "install") || strings.Contains(out, "-u api *") {
+		t.Errorf("sudoers grants too much:\n%s", out)
+	}
 }
 
 func TestSudoPrefix(t *testing.T) {
@@ -317,5 +348,19 @@ func TestServiceActionValidation(t *testing.T) {
 		if err := d.ServiceAction(tc.action, tc.name, 10, io.Discard); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s/%s: want error containing %q, got %v", tc.action, tc.name, tc.want, err)
 		}
+	}
+}
+
+func TestSetupScriptSyntax(t *testing.T) {
+	requireSh(t)
+	script, err := setupScript(serviceEnv("/srv/app"), "my shop", "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("sh", "-n", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("setup script: %v\n%s\n%s", err, out, script)
+	}
+	if !strings.Contains(script, "/etc/sudoers.d/versa-my-shop") || !strings.Contains(script, "visudo -c") {
+		t.Errorf("setup must install the validated sudoers file:\n%s", script)
 	}
 }

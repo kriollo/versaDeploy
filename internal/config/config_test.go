@@ -781,6 +781,7 @@ func TestValidateServices(t *testing.T) {
 		{"duplicate", base(BuildsConfig{Go: goBuild}, ServiceConfig{Name: "a"}, ServiceConfig{Name: "a"}), "defined twice", nil},
 		{"bad env var", base(BuildsConfig{Go: goBuild}, ServiceConfig{Name: "a", Environment: map[string]string{"A-B": "x"}}), "invalid environment variable", nil},
 		{"absolute env_file", base(BuildsConfig{Go: goBuild}, ServiceConfig{Name: "a", EnvFile: "/etc/x"}), "relative paths", nil},
+		{"root service, non-root deploy", base(BuildsConfig{Go: goBuild}, ServiceConfig{Name: "a", User: "root"}), "runs as root", nil},
 		{"service_name migrated", base(BuildsConfig{Python: PythonBuildConfig{Enabled: true, WebServer: true, ServiceName: "legacy"}}), "", func(t *testing.T, e Environment) {
 			if len(e.Services) != 1 || e.Services[0].Name != "legacy" || e.Builds.Python.ServiceName != "" {
 				t.Errorf("service_name not migrated: %+v", e.Services)

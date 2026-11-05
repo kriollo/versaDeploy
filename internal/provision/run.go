@@ -43,6 +43,9 @@ type Vars struct {
 	// ServicesSudoers is the script printing the sudoers lines `services` need
 	// (deployer.SudoersScript); the sudoers step installs them.
 	ServicesSudoers string
+	// ServicesInstall is the script installing their init files as root
+	// (deployer.ServiceInstallScript): deploys only restart them.
+	ServicesInstall string
 	NodeMajor       string
 	// PythonVersion is installed next to the system Python ("" = system python3)
 	PythonVersion string
@@ -221,6 +224,9 @@ func Build(selected []string, v Vars) (Bundle, error) {
 	}
 	if v.ServicesSudoers != "" {
 		b["services-sudoers.sh"] = []byte(v.ServicesSudoers)
+	}
+	if v.ServicesInstall != "" {
+		b["services-install.sh"] = []byte(v.ServicesInstall)
 	}
 	return b, nil
 }

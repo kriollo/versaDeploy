@@ -82,7 +82,7 @@ One SSH round-trip (POSIX shell, works on old servers too) reports:
 | Go | `builds.go` / `go.mod` | reverse proxy + a `services` entry for the binary |
 | Node | `package.json` with a `start` script (not a static frontend) | Node.js + reverse proxy + a `services` entry running `npm start` |
 
-Python, Go and Node apps run as deploy.yml [`services`](DEPLOY.md#services-services): **each deploy** installs, enables and restarts them (systemd, OpenRC or SysV) and rolls back if they don't stay up. The view doesn't install them itself: when the environment has no `services`, it proposes one (name, `exec` for Node, `PORT` = `proxy_port`), `w` writes it to `deploy.yml`, and the *Sudoers* step adds the rules those deploys need (the same lines `versa service <env> sudoers` prints).
+Python, Go and Node apps run as deploy.yml [`services`](DEPLOY.md#services-services): **each deploy** restarts them (systemd, OpenRC or SysV) and rolls back if they don't stay up. When the environment has no `services`, the view proposes one (name, `exec` for Node, `PORT` = `proxy_port`), and `w` writes it to `deploy.yml`. The *Sudoers* step, run as root, installs and enables their init files and adds the rules deploys need. It does the same as `versa service <env> setup`. The deploy user can only start/stop/restart them: it never writes a file that root runs.
 
 Services that are already active are never preselected.
 

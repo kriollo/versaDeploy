@@ -525,6 +525,11 @@ func (e *Environment) validateServices(envName string) error {
 		if !unixUserRe.MatchString(s.User) {
 			return fmt.Errorf("environment %s: service %s: invalid user %q", envName, s.Name, s.User)
 		}
+		// the deploy user writes the code and wrapper the service runs: as root, that
+		// would let it run anything as root
+		if s.User == "root" && e.SSH.User != "root" {
+			return fmt.Errorf("environment %s: service %s runs as root but deploys as %s, which would let %s run anything as root: run it as %s (put the web server in front for ports below 1024)", envName, s.Name, e.SSH.User, e.SSH.User, e.SSH.User)
+		}
 		for k := range s.Environment {
 			if !envNameRe.MatchString(k) {
 				return fmt.Errorf("environment %s: service %s: invalid environment variable name %q", envName, s.Name, k)

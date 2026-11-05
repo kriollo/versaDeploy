@@ -239,8 +239,7 @@ environments:
 Then:
 
 ```bash
-versa service production sudoers    # prints the sudoers line the deploy user needs
-# on the server: sudo visudo -f /etc/sudoers.d/versa   (paste the line)
+versa service production setup | ssh root@203.0.113.10 sh   # once, as root: installs the services + sudoers
 versa info production               # confirms sudo is OK
 versa deploy production
 versa service production            # is it running?

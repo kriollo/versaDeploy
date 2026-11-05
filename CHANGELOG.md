@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Security
+
+- **The deploy user could become root through `services`**: its sudoers rule allowed `install` of `.versa/<name>.service` into `/etc`, and `.versa/` is the deploy user's, so it could install any unit, running anything as root. Now only root installs init files: once per server with the new **`versa service <env> setup | ssh root@SERVER sh`** (installs and enables the services and writes `/etc/sudoers.d/versa-<project>`), or the Services view's *Sudoers* step. Deploys only enable, start, stop and restart them. When a service's `name`, `user`, `env_file` or `stop_timeout` changes, they stop with *needs root setup*. `exec`, `environment` and `working_dir` changes still deploy normally. Servers set up before this: run `setup` once to replace the old rule (if you saved it in another file, delete it).
+- **`journalctl` under sudo has fixed arguments** (`-u <name> -n 200 -f --no-pager`). `-u <name> *` let the deploy user read every unit's logs or vacuum the journal. Users in `systemd-journal`/`adm` read logs without sudo, with any `--lines`.
+- **A service can't run as `root`** unless `ssh.user` is root: the deploy user writes the code it runs.
+
 ## [1.9.1] - 2026-11-05
 
 ### Security

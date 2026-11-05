@@ -19,9 +19,10 @@ import (
 // a wrapper script (<name>.sh) that loads the environment and execs the command, and
 // a systemd unit, an OpenRC script and a SysV init script that run the wrapper. All of
 // them point at <remote_path>/current, so they stay valid across deploys and
-// rollbacks. The scripts below run on the server, detect its init system, copy the
-// matching file into /etc only when it changed (so sudo is only needed then), enable
-// it at boot and start/restart it.
+// rollbacks. The init files are installed by root only (`versa service <env> setup`,
+// or the Services view): .versa/ belongs to the deploy user, and letting it copy a file
+// there into /etc with sudo would let it write any unit, i.e. run anything as root.
+// Deploys compare .versa/ with what's installed, enable and start/restart.
 
 // svcLayout holds the system directories the scripts touch; tests use a temp dir.
 type svcLayout struct {
@@ -44,7 +45,7 @@ const pathFnSh = `P() { c=$(command -v "$1" 2>/dev/null); case "$c" in /*) echo 
 `
 
 // serviceActions are the actions `versa service` accepts.
-var serviceActions = []string{"status", "start", "stop", "restart", "logs", "install", "uninstall", "sudoers"}
+var serviceActions = []string{"status", "start", "stop", "restart", "logs", "install", "uninstall", "sudoers", "setup"}
 
 func q(s string) string { return ssh.ShellQuote(s) }
 
@@ -85,6 +86,9 @@ func serviceWorkDir(env *config.Environment, svc config.ServiceConfig, current s
 func renderService(project, envName string, env *config.Environment, svc config.ServiceConfig, remotePath string, l svcLayout) (map[string]string, error) {
 	current := remotePath + "/current"
 	filesDir := remotePath + "/.versa"
+	if svc.User == "" {
+		svc.User = env.SSH.User // as config validation does; an empty User= would be root
+	}
 	execCmd, err := serviceExec(env, svc, current)
 	if err != nil {
 		return nil, fmt.Errorf("service %s: %w", svc.Name, err)
@@ -264,7 +268,8 @@ func serviceScript(env *config.Environment, action string, names []string, lines
 			b.WriteString(`case $I in
 systemd)
 	if ! cmp -s "$D/$N.service" "$ETC/systemd/system/$N.service"; then
-		$S $(P install) -m 644 "$D/$N.service" "$ETC/systemd/system/$N.service" && $S $(P systemctl) daemon-reload || exit 1
+		[ -z "$S" ] || { echo "needs root setup: $N"; exit 1; }
+		$(P install) -m 644 "$D/$N.service" "$ETC/systemd/system/$N.service" && $(P systemctl) daemon-reload || exit 1
 		echo "installed $ETC/systemd/system/$N.service"
 	fi
 	if ! systemctl is-enabled "$N" >/dev/null 2>&1; then
@@ -274,7 +279,8 @@ systemd)
 	;;
 openrc)
 	if ! cmp -s "$D/$N.openrc" "$ETC/init.d/$N"; then
-		$S $(P install) -m 755 "$D/$N.openrc" "$ETC/init.d/$N" || exit 1
+		[ -z "$S" ] || { echo "needs root setup: $N"; exit 1; }
+		$(P install) -m 755 "$D/$N.openrc" "$ETC/init.d/$N" || exit 1
 		echo "installed $ETC/init.d/$N"
 	fi
 	if ! rc-update show default 2>/dev/null | grep -q "^ *$N |"; then
@@ -285,7 +291,8 @@ openrc)
 sysv)
 	installed=
 	if ! cmp -s "$D/$N.initd" "$ETC/init.d/$N"; then
-		$S $(P install) -m 755 "$D/$N.initd" "$ETC/init.d/$N" || exit 1
+		[ -z "$S" ] || { echo "needs root setup: $N"; exit 1; }
+		$(P install) -m 755 "$D/$N.initd" "$ETC/init.d/$N" || exit 1
 		echo "installed $ETC/init.d/$N"
 		installed=1
 	fi
@@ -336,7 +343,11 @@ esac
 `)
 		case "logs":
 			fmt.Fprintf(&b, `case $I in
-systemd) $S $(P journalctl) -u "$N" -n %[1]d -f --no-pager ;;
+systemd)
+	# under sudo the arguments are fixed: sudoers allows exactly this command (a free
+	# argument list would let it read other units' logs or delete the journal)
+	if [ -z "$S" ] || id -nG | grep -qwE 'systemd-journal|adm'; then journalctl -u "$N" -n %[1]d -f --no-pager
+	else $S $(P journalctl) -u "$N" -n 200 -f --no-pager; fi ;;
 *) tail -n %[1]d -f %[2]s ;;
 esac
 `, lines, q(l.log+"/"+name+".log"))
@@ -389,7 +400,7 @@ func sudoersScript(env *config.Environment, project string) string {
 	var b strings.Builder
 	b.WriteString(initDetectSh)
 	b.WriteString(pathFnSh)
-	fmt.Fprintf(&b, "U=%s\nD=%s\n", q(env.SSH.User), q(env.RemotePath+"/.versa"))
+	fmt.Fprintf(&b, "U=%s\n", q(env.SSH.User))
 	// Old sudo (RHEL/CentOS 5) has no /etc/sudoers.d: the lines go in /etc/sudoers itself
 	fmt.Fprintf(&b, `if [ -d /etc/sudoers.d ]; then echo "# versa services for %[1]s. Save with: sudo visudo -f /etc/sudoers.d/versa-%[2]s"
 else echo "# versa services for %[1]s. This server has no /etc/sudoers.d: add these lines at the end of /etc/sudoers with: visudo (as root)"; fi
@@ -399,15 +410,15 @@ else echo "# versa services for %[1]s. This server has no /etc/sudoers.d: add th
 	b.WriteString("echo \"Defaults:$U !requiretty\"\n")
 	for _, s := range env.Services {
 		fmt.Fprintf(&b, "N=%s\n", q(s.Name))
-		b.WriteString(`IN=$(P install); RM=$(P rm)
+		b.WriteString(`RM=$(P rm)
 case $I in
 systemd) SC=$(P systemctl); JC=$(P journalctl)
-	echo "$U ALL=(root) NOPASSWD: $SC start $N, $SC stop $N, $SC restart $N, $SC enable $N, $SC disable $N, $SC daemon-reload, $JC -u $N *, $IN -m 644 $D/$N.service /etc/systemd/system/$N.service, $RM -f /etc/systemd/system/$N.service" ;;
+	echo "$U ALL=(root) NOPASSWD: $SC start $N, $SC stop $N, $SC restart $N, $SC enable $N, $SC disable $N, $SC daemon-reload, $JC -u $N -n 200 -f --no-pager, $RM -f /etc/systemd/system/$N.service" ;;
 openrc) RS=$(P rc-service); RU=$(P rc-update)
-	echo "$U ALL=(root) NOPASSWD: $RS $N *, $RU add $N default, $RU del $N default, $IN -m 755 $D/$N.openrc /etc/init.d/$N, $RM -f /etc/init.d/$N" ;;
+	echo "$U ALL=(root) NOPASSWD: $RS $N *, $RU add $N default, $RU del $N default, $RM -f /etc/init.d/$N" ;;
 sysv)
 	if [ -x /sbin/chkconfig ] || [ -x /usr/sbin/chkconfig ]; then CK=$(P chkconfig); EN="$CK --add $N, $CK --del $N"; else UR=$(P update-rc.d); EN="$UR $N defaults, $UR -f $N remove"; fi
-	echo "$U ALL=(root) NOPASSWD: /etc/init.d/$N *, $EN, $IN -m 755 $D/$N.initd /etc/init.d/$N, $RM -f /etc/init.d/$N" ;;
+	echo "$U ALL=(root) NOPASSWD: /etc/init.d/$N *, $EN, $RM -f /etc/init.d/$N" ;;
 esac
 `)
 	}
@@ -420,24 +431,89 @@ func SudoersScript(env *config.Environment, project string) string {
 	return sudoersScript(env, project)
 }
 
-// sudoCheckScript prints "ok <name>" or "missing <name>" per service, depending on
-// whether the deploy user may run with passwordless sudo what the next deploy needs:
-// installing the service when it isn't installed yet, else restarting it. (sudo -l
-// can't vouch for a command that doesn't exist, like a not yet installed init script.)
+// ServiceInstallScript is installScript for the Services view, which runs it as root.
+func ServiceInstallScript(env *config.Environment, project, envName string) (string, error) {
+	return installScript(env, project, envName, serverLayout, initDetectSh)
+}
+
+// installScript returns the script root runs to install the init file of every
+// service and enable it at boot. Needed once, and again when a service's user, env_file
+// or stop_timeout changes (deploys then stop with "needs root setup").
+func installScript(env *config.Environment, project, envName string, l svcLayout, detect string) (string, error) {
+	var b strings.Builder
+	b.WriteString(detect)
+	b.WriteString(pathFnSh)
+	fmt.Fprintf(&b, "[ \"$(id -u)\" = 0 ] || { echo 'run it as root: versa service %s setup | ssh root@SERVER sh'; exit 1; }\nETC=%s\n", envName, q(l.etc))
+	for _, svc := range env.Services {
+		files, err := renderService(project, envName, env, svc, env.RemotePath, l)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "N=%s\nchanged=\ntmp=$(mktemp) || exit 1\ncase $I in\n", q(svc.Name))
+		for _, f := range []struct{ init, file, target, mode string }{
+			{"systemd", svc.Name + ".service", "$ETC/systemd/system/$N.service", "644"},
+			{"openrc", svc.Name + ".openrc", "$ETC/init.d/$N", "755"},
+			{"sysv", svc.Name + ".initd", "$ETC/init.d/$N", "755"},
+		} {
+			// quoted delimiter: the content is written as is
+			fmt.Fprintf(&b, "%s) T=\"%s\"; M=%s; cat >\"$tmp\" <<'VERSA_INIT_EOF'\n%sVERSA_INIT_EOF\n;;\n", f.init, f.target, f.mode, files[f.file])
+		}
+		b.WriteString(`esac
+if cmp -s "$tmp" "$T"; then rm -f "$tmp"; else $(P install) -m "$M" "$tmp" "$T" && rm -f "$tmp" && echo "installed $T" && changed=1 || exit 1; fi
+case $I in
+systemd)
+	[ -z "$changed" ] || $(P systemctl) daemon-reload
+	systemctl is-enabled "$N" >/dev/null 2>&1 || { $(P systemctl) enable "$N" >/dev/null 2>&1 && echo "enabled $N at boot"; } ;;
+openrc) rc-update show default 2>/dev/null | grep -q "^ *$N |" || { $(P rc-update) add "$N" default >/dev/null && echo "enabled $N at boot"; } ;;
+sysv)
+	if [ -x /sbin/chkconfig ] || [ -x /usr/sbin/chkconfig ]; then $(P chkconfig) --add "$N"
+	elif [ -x /usr/sbin/update-rc.d ] || [ -x /sbin/update-rc.d ]; then $(P update-rc.d) "$N" defaults >/dev/null; fi ;;
+esac
+`)
+	}
+	return b.String(), nil
+}
+
+// setupScript is what `versa service <env> setup` prints, to run once as root on the
+// server: it installs the services (installScript) and the deploy user's sudoers file.
+func setupScript(env *config.Environment, project, envName string) (string, error) {
+	inst, err := installScript(env, project, envName, serverLayout, initDetectSh)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "#!/bin/sh\n# versa services of %s/%s: run as root (versa service %s setup | ssh root@SERVER sh)\n", strings.ReplaceAll(project, "\n", " "), envName, envName)
+	b.WriteString("(\n" + inst + ") || exit 1\n")
+	if env.SSH.User != "root" {
+		fmt.Fprintf(&b, `F=/etc/sudoers.d/versa-%s
+if [ ! -d /etc/sudoers.d ]; then
+	echo "This server has no /etc/sudoers.d: add these lines at the end of /etc/sudoers with visudo:"
+	( %s )
+	exit 0
+fi
+t=$(mktemp) || exit 1
+( %s ) | grep -v '^#' >"$t"
+if visudo -c -f "$t" >/dev/null; then install -m 440 "$t" "$F" && echo "sudoers installed: $F"; else echo "sudoers syntax error: not applied"; rm -f "$t"; exit 1; fi
+rm -f "$t"
+`, sanitizeFileName(project), sudoersScript(env, project), sudoersScript(env, project))
+	}
+	return b.String(), nil
+}
+
+// sudoCheckScript prints "ok <name>" or "missing <name>" per service: ok when root
+// installed it (setup) and the deploy user may restart it with passwordless sudo.
 func sudoCheckScript(env *config.Environment) string {
 	var b strings.Builder
 	b.WriteString(initDetectSh)
 	b.WriteString(pathFnSh)
-	fmt.Fprintf(&b, "D=%s\n", q(env.RemotePath+"/.versa"))
 	for _, s := range env.Services {
 		fmt.Fprintf(&b, "N=%s\n", q(s.Name))
 		b.WriteString(`case $I in
-systemd) T="/etc/systemd/system/$N.service"; R="$(P systemctl) restart $N"; C="$(P install) -m 644 $D/$N.service $T" ;;
-openrc) T="/etc/init.d/$N"; R="$(P rc-service) $N restart"; C="$(P install) -m 755 $D/$N.openrc $T" ;;
-sysv) T="/etc/init.d/$N"; R="$T restart"; C="$(P install) -m 755 $D/$N.initd $T" ;;
+systemd) T="/etc/systemd/system/$N.service"; R="$(P systemctl) restart $N" ;;
+openrc) T="/etc/init.d/$N"; R="$(P rc-service) $N restart" ;;
+sysv) T="/etc/init.d/$N"; R="$T restart" ;;
 esac
-[ -e "$T" ] && C=$R
-if sudo -n -l $C >/dev/null 2>&1; then echo "ok $N"; else echo "missing $N"; fi
+if [ -e "$T" ] && sudo -n -l $R >/dev/null 2>&1; then echo "ok $N"; else echo "missing $N"; fi
 `)
 	}
 	return b.String()
@@ -517,10 +593,13 @@ func (d *Deployer) runServiceAction(c *ssh.Client, action string, names []string
 		if action == "status" {
 			return fmt.Errorf("not every service is running")
 		}
+		setupHint := fmt.Sprintf("Run once as root: versa service %s setup | ssh root@%s sh (or the Services view → Sudoers).", d.envName, d.env.SSH.Host)
+		if strings.Contains(out, "needs root setup:") {
+			return verserrors.New(verserrors.CodeDeploymentFailed, "a service isn't installed, or its user, env_file or stop_timeout changed: root must install it", setupHint, err)
+		}
 		// sudo's complaint arrives on stderr, which the ssh client puts in err
 		if strings.Contains(out+err.Error(), "sudo:") {
-			return verserrors.New(verserrors.CodeDeploymentFailed, fmt.Sprintf("service %s failed: the deploy user needs passwordless sudo", action),
-				fmt.Sprintf("Run 'versa service %s sudoers' and add the printed lines on the server (the output says where).", d.envName), err)
+			return verserrors.New(verserrors.CodeDeploymentFailed, fmt.Sprintf("service %s failed: the deploy user needs passwordless sudo", action), setupHint, err)
 		}
 		return fmt.Errorf("service %s failed: %w", action, err)
 	}
@@ -593,6 +672,13 @@ func (d *Deployer) ServiceAction(action, name string, lines int, out io.Writer) 
 			return fmt.Errorf("environment %s has several services: choose one with --name", d.envName)
 		}
 		names = []string{d.env.Services[0].Name}
+	}
+
+	if action == "setup" {
+		// printed, not run: it needs root, which the deploy connection isn't
+		text, err := setupScript(d.env, d.cfg.Project, d.envName)
+		fmt.Fprint(out, text)
+		return err
 	}
 
 	c, err := ssh.NewClient(&d.env.SSH, d.log)

@@ -286,6 +286,11 @@ func TestProvisionAndDeploy(t *testing.T) {
 		v := a.vars(pub)
 		if env, err := cfg.GetEnvironment(a.name); err == nil && len(env.Services) > 0 {
 			v.ServicesSudoers = deployer.SudoersScript(env, cfg.Project)
+			inst, err := deployer.ServiceInstallScript(env, cfg.Project, a.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v.ServicesInstall = inst
 		}
 		return v
 	}

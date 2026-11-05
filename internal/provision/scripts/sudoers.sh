@@ -30,3 +30,8 @@ else
     rm -f "$tmp"
     die "sudoers syntax error — not applied"
 fi
+# their init files, installed by root: the deploy user only restarts them
+if [ -f services-install.sh ]; then
+    sh services-install.sh || die "installing the services failed"
+    ok "deploy.yml services installed and enabled"
+fi

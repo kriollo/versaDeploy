@@ -303,7 +303,7 @@ Manages the processes listed under [`services`](DEPLOY.md#services-services) (a 
 versa service production                     # status of every service (default action)
 versa service production restart
 versa service production logs --name api     # follow the log; Ctrl+C to stop
-versa service production sudoers             # sudoers line the SSH user needs on this server
+versa service production setup | ssh root@SERVER sh   # once, as root: install the services + sudoers
 ```
 
 | Action      | What it does                                                                                       |
@@ -313,9 +313,10 @@ versa service production sudoers             # sudoers line the SSH user needs o
 | `stop`      | Stop.                                                                                              |
 | `restart`   | Restart and check it stays up.                                                                     |
 | `logs`      | Follow the log: `journalctl -u <name>` on systemd, `/var/log/<name>.log` otherwise.                 |
-| `install`   | Rewrite the service files and (re)install + enable them at boot, without deploying. Use it after changing `services` in the config. |
+| `install`   | Rewrite the service files and enable them at boot, without deploying. As a non-root SSH user it only checks that root installed the current version (else: *needs root setup*). |
 | `uninstall` | Stop, disable at boot and remove from the init system.                                             |
-| `sudoers`   | Print the sudoers line the SSH user needs, with this server's binary paths.                        |
+| `setup`     | Print the script **root** runs once on the server (`versa service <env> setup \| ssh root@SERVER sh`): installs and enables the services and writes `/etc/sudoers.d/versa-<project>`. Run it again after changing a service's `name`, `user`, `env_file` or `stop_timeout`. |
+| `sudoers`   | Print the sudoers lines the SSH user needs, with this server's binary paths.                       |
 
 | Flag          | Default | Description                                                                 |
 | :------------ | :------ | :-------------------------------------------------------------------------- |

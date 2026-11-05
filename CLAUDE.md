@@ -89,7 +89,7 @@ Locally it only writes `run_server.sh` (web servers: Django via gunicorn, Flask,
 
 ### Services
 
-`services` (`internal/deployer/service.go`) run Go/Python processes through the server's init system. `renderService` generates a wrapper + systemd unit + OpenRC + SysV script into `<remote_path>/.versa/`; `serviceScript` builds the POSIX scripts that detect the init system on the server, install/enable (sudo only when the file changed), start/stop/restart and verify. Activation: switch → services_reload → post_deploy → services restart → health check; `afterRollback` reloads + restarts after any rollback. Tests run the generated scripts in `sh` with stubbed `sudo`/`systemctl`.
+`services` (`internal/deployer/service.go`) run Go/Python processes through the server's init system. `renderService` generates a wrapper + systemd unit + OpenRC + SysV script into `<remote_path>/.versa/`; `serviceScript` builds the POSIX scripts that detect the init system on the server, enable, start/stop/restart and verify. Init files are installed by root only (`installScript`, run by `versa service <env> setup | ssh root@… sh` or the Services view's sudoers step): a non-root deploy stops with "needs root setup" when `.versa/` differs from what's installed, and sudoers never grants `install` (the deploy user owns `.versa/`, so it would be root). Services can't run as root unless `ssh.user` is root. Activation: switch → services_reload → post_deploy → services restart → health check; `afterRollback` reloads + restarts after any rollback. Tests run the generated scripts in `sh` with stubbed `sudo`/`systemctl`.
 
 ### Services view / provisioning
 

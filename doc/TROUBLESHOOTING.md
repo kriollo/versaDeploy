@@ -172,17 +172,15 @@ Raise `hook_timeout` (seconds).
 
 ## Services
 
-### `service install failed: the deploy user needs passwordless sudo`
+### `needs root setup` / `the deploy user needs passwordless sudo`
 
-The SSH user can't run the init commands with `sudo -n`. Print the line it needs and add it on the server:
+The service isn't installed yet, or its `name`, `user`, `env_file` or `stop_timeout` changed. Another cause: the SSH user can't run the init commands with `sudo -n`. Root installs the services and the sudoers file:
 
 ```bash
-versa service production sudoers
-# on the server:
-sudo visudo -f /etc/sudoers.d/versa
+versa service production setup | ssh root@SERVER sh
 ```
 
-`versa info <env>` tells you whether it's fixed.
+`versa info <env>` tells you whether it's fixed. Servers set up before v1.9.1 have a sudoers rule that let the deploy user install unit files. Running `setup` replaces `/etc/sudoers.d/versa-<project>` and removes it. If you saved the lines in another file, delete that file.
 
 ### `sudo: sorry, you must have a tty to run sudo`
 
@@ -190,7 +188,7 @@ The server has `Defaults requiretty` (default on RHEL/CentOS up to 7). Add the `
 
 ### `sudo: sorry, a password is required` although the sudoers line is there
 
-The rule must match the exact command and path. Regenerate it on that server with `versa service <env> sudoers` (it uses the server's paths) and replace the old line. On RHEL/CentOS 5 there is no `/etc/sudoers.d`: the lines go in `/etc/sudoers`.
+The rule must match the exact command and path. Regenerate it on that server with `versa service <env> setup | ssh root@SERVER sh` (it uses the server's paths). On RHEL/CentOS 5 there is no `/etc/sudoers.d`: the lines go in `/etc/sudoers`.
 
 ### `services failed to start (rolled back to ...)` / `<name> is not running`
 

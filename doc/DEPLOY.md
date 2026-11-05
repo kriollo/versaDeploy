@@ -340,23 +340,25 @@ services:
 
 Your program should log to stdout/stderr. Logs go to the journal on systemd (`versa service <env> logs`) and to `/var/log/<name>.log` otherwise.
 
-### Permissions (sudo)
+### Permissions (root setup and sudo)
 
-Installing and restarting services needs root. Unless `ssh.user` is `root`, versa runs these commands with `sudo -n` (non-interactive), so the SSH user needs passwordless sudo for them. `versa info <env>` checks it, and this prints the exact sudoers line for the server, with its real binary paths:
+The init files (systemd unit, OpenRC or SysV script) are installed by **root only**. `.versa/` belongs to the deploy user. If the deploy user could copy a file from there into `/etc` with sudo, it could write any unit, and units can run as any user: in practice, that is root. Run this once per server, as root:
 
 ```bash
-versa service production sudoers
-# deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start api, /usr/bin/systemctl stop api, /usr/bin/systemctl restart api, ...
+versa service production setup | ssh root@203.0.113.10 sh
 ```
 
-Save it on the server with `sudo visudo -f /etc/sudoers.d/versa`. The output adapts to the server:
+It installs and enables every service, and writes `/etc/sudoers.d/versa-<project>` (validated with `visudo -c`). That file only lets the deploy user `start` / `stop` / `restart` / `enable` / `disable` the services, `daemon-reload`, and read their journal with fixed arguments. The Services view does the same in its **Sudoers** step. `versa info <env>` checks it.
+
+Run it again when a service's `name`, `user`, `env_file` or `stop_timeout` changes: those settings live in the installed file. Until you do, deploys stop with *"needs root setup"*. `exec`, `environment` and `working_dir` live in the wrapper in `.versa/`, so changes to them deploy normally. When `ssh.user` is `root`, deploys install the files themselves.
+
+A service can't run as `root` unless `ssh.user` is `root`: the deploy user writes the code it runs. Put the web server in front for ports below 1024.
+
+`versa service <env> sudoers` still prints just the sudoers lines, with the server's real binary paths:
 
 - It always includes `Defaults:<user> !requiretty`: RHEL/CentOS up to 7 ship `Defaults requiretty`, which makes sudo refuse to run over SSH without a terminal (how versa runs commands).
-- On servers without `/etc/sudoers.d` (RHEL/CentOS 5's sudo 1.7), it tells you to add the lines at the end of `/etc/sudoers` with `visudo` as root.
+- On servers without `/etc/sudoers.d` (RHEL/CentOS 5's sudo 1.7), the lines go at the end of `/etc/sudoers` (`setup` prints them for you to add with `visudo`).
 - Commands use this server's absolute paths (e.g. `/sbin/chkconfig`), and versa runs them with those same paths: old sudo has no `secure_path`, so `sudo chkconfig` wouldn't match a `/sbin/chkconfig` rule.
-
-> [!WARNING]
-> The sudoers line lets the deploy user install a unit / init script **that it wrote itself** (`.versa/` is owned by that user), and units can run as any user. That's equivalent to giving the deploy user root. If that's not acceptable, keep only the `start`/`stop`/`restart` (and `journalctl`) rules, and install the files once as an admin: copy them from `<remote_path>/.versa/` to `/etc/systemd/system/` (or `/etc/init.d/`) and enable them. versa only uses sudo to install when the file changed, so deploys keep working as long as you don't change the service's settings.
 
 ### Init systems
 
