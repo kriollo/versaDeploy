@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.0] - 2026-11-05
+
+### Added
+
+- **TUI Services view** — an agentless server panel over SSH ([doc/SERVICES.md](doc/SERVICES.md)):
+  - **Detection** in one POSIX round-trip: state and version of nginx, Apache, PHP-FPM, PostgreSQL, MariaDB/MySQL, Redis, Certbot, Python, Node.js, UFW, the app's service, the deploy user, sudoers, the project directory and the backup timer; every enabled site on the server; the domain's SSL expiry (checked from your machine).
+  - **Installs** (Debian/Ubuntu) as root over the new `provision.ssh`, with a live log: a non-interactive port of `setup-vps.sh` plus the versaWYS vhost templates (FastCGI for PHP, reverse proxy for Python/Go/Node, SSL via `certbot certonly`, domain `aliases`).
+  - **Backend detection** (PHP, Python, Go, Node) from `builds` or the repo files, preselecting what the app needs. Python/Go/Node apps run as `services`: the view proposes the entry (`w` writes it) and installs the sudoers rules deploys need.
+  - **Version pickers** with the supported releases, newest first, at least three: PHP, Node.js LTS, Python (next to the system one via deadsnakes on Ubuntu). From endoflife.date, with an offline fallback.
+  - **Updates and security**: pending updates per service (`U`), security updates (`S`), `apt-get update` (`Ctrl+R`); a security banner on Services and the Dashboard (security updates, reboot required, unattended-upgrades off, stale package index).
+  - **Logs** of any service (`L`), **daily DB backups** with retention and backup-now (`B`), **prepare a fresh server for deploy** (`P`: deploy user with your public key, sudoers, directory), explicit **DB password reset** (`X`).
+  - `w` saves the `provision` block (and the proposed `services`) to `deploy.yml` keeping comments, never `db_password`; `a` adds the suggested `services_reload`.
+- **`provision`** block in `deploy.yml` ([doc/DEPLOY.md](doc/DEPLOY.md#server-provisioning-provision)).
+- **Several apps per server**: per-project vhost, sudoers file and backup timer.
+- **End-to-end test** (`go test -tags e2e ./test/e2e/`): Docker Ubuntu 24.04 and Debian 12 with systemd; four sample apps (PHP, Python, Go, Node) on one server plus versaTodo; checks HTTP, aliases, services, backups, logs, re-runs and refused alternatives.
+
+### Safety on servers already in use
+
+- Never installs an alternative to what the server runs (nginx vs Apache, MariaDB over MySQL, a second PHP-FPM or Node.js major): the TUI blocks it and the scripts abort before `apt-get`.
+- Installed packages are never upgraded implicitly (only with `U`/`S`); installed services keep their config and aren't restarted (graceful reload only when needed); existing DB users keep their password; an active UFW keeps its policy; one vhost per domain, with backup and restore when the new config fails.
+
+### Fixed
+
+- **The PHP vendor check ignored `config.vendor-dir`**: projects with `"vendor-dir": "versaWYS/vendor"` failed with "release is missing required PHP dependencies".
+
 ## [1.8.1] - 2026-10-02
 
 ### Fixed
