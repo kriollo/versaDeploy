@@ -414,6 +414,12 @@ esac
 	return b.String()
 }
 
+// SudoersScript is sudoersScript for the Services view, which installs the lines on
+// the server instead of printing them.
+func SudoersScript(env *config.Environment, project string) string {
+	return sudoersScript(env, project)
+}
+
 // sudoCheckScript prints "ok <name>" or "missing <name>" per service, depending on
 // whether the deploy user may run with passwordless sudo what the next deploy needs:
 // installing the service when it isn't installed yet, else restarting it. (sudo -l

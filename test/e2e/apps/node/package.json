@@ -1,0 +1,9 @@
+{
+    "name": "versa-e2e-node",
+    "private": true,
+    "engines": { "node": ">=22" },
+    "scripts": {
+        "start": "node server.js",
+        "build": "node -e \"console.log('nothing to build')\""
+    }
+}

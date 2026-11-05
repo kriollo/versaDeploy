@@ -40,6 +40,9 @@ environments:
 
 Point your web server at `/var/www/app/current/app/public`.
 
+> [!TIP]
+> Fresh server? Add `provision: { ssh: { user: root }, domain: example.com }` to the environment, run `versa`, open **Services** and press `I` to install the stack (or `P` to create just the deploy user, sudoers and directory). See **[SERVICES.md](SERVICES.md)**.
+
 ## What a deploy does
 
 1. Checks the working tree is committed and clones `HEAD` to a temp directory.

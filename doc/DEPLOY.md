@@ -370,6 +370,28 @@ Manage services by hand with [`versa service`](CLI_REFERENCE.md#versa-service).
 
 ---
 
+## Server provisioning (`provision`)
+
+Optional block read only by the TUI **Services** view, which installs and maintains the server stack. Deploys ignore it. It holds the admin (root) connection and the desired stack:
+
+```yaml
+provision:
+  ssh: { user: root }        # inherits host, port and key from ssh
+  domain: myapp.com
+  aliases: [www.myapp.com]
+  web_server: nginx          # nginx | apache
+  php_version: "8.4"
+  database: postgres         # postgres | mariadb | none
+  db_name: myapp
+  db_user: myapp_user
+  db_password: ${DB_PASS}    # only used to create a new user; the TUI never writes it
+  redis: true
+  ssl: true
+  backup: true
+```
+
+For Python, Go and Node apps the view proposes the [`services`](#services-services) entry and installs its sudoers rules, so each deploy installs and restarts the service. Every field and the safety rules are in **[SERVICES.md](SERVICES.md#9-provision-reference)**.
+
 ## Health check (`health_check`)
 
 Verifies the new release after `post_deploy` and the service restart. If every attempt fails, `current` is switched back to the previous release, services are reloaded, and the deploy fails.

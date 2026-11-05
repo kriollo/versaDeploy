@@ -1,0 +1,4 @@
+{
+    "name": "versa/e2e-php",
+    "require": { "php": ">=8.1" }
+}

@@ -120,6 +120,32 @@ environments:
     #     # start_wait: 3                         # seconds before checking it's still running
     #     # stop_timeout: 30                      # seconds to shut down cleanly before SIGKILL
 
+    # PROVISION (optional): server stack for the TUI "Services" view, which detects what is
+    # installed, installs the selection (Debian/Ubuntu), applies updates, shows security
+    # alerts, logs and runs daily DB backups. Installing needs root: provision.ssh
+    # overrides ssh (host/port/key are inherited). The view writes this block with "w";
+    # db_password is never written, keep it as ${VAR}. See doc/SERVICES.md.
+    # provision:
+    #   ssh: { user: root }
+    #   domain: "myapp.com"
+    #   aliases: ["www.myapp.com"]   # extra domains (vhost + certificate when they resolve here)
+    #   web_server: nginx            # nginx | apache (never both: an installed one wins)
+    #   php_version: "8.4"
+    #   # python_version: "3.13"     # next to the system python3 (Ubuntu: deadsnakes)
+    #   # node_major: "24"
+    #   doc_root: current/app        # relative to remote_path, e.g. current/app/public
+    #   database: postgres           # postgres | mariadb | none
+    #   db_name: myapp
+    #   db_user: myapp_user
+    #   db_password: ${DB_PASS}      # only for a new user: existing ones keep their password
+    #   redis: true
+    #   ssl: true                    # certbot certonly + SSL vhost (needs DNS pointing here)
+    #   ufw: true
+    #   backup: true                 # daily dump to remote_path/backups; B = backup now
+    #   backup_keep: 7
+    #   deploy_user: deploy          # default: ssh.user
+    #   # proxy_port: 8000           # Python/Go/Node app behind the web server
+
     # HEALTH CHECK: Verify the application is responding after deployment.
     # If the check fails after retries, automatic rollback is triggered.
     # health_check:

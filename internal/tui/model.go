@@ -28,6 +28,7 @@ const (
 	viewShared
 	viewOperations
 	viewTerminal
+	viewServices
 	viewConfig
 	viewConfigSelector
 )
@@ -51,6 +52,7 @@ var viewLabels = []struct {
 	{"", "Shared"},
 	{"", "Operations"},
 	{"", "Terminal"},
+	{"", "Services"},
 	{"", "Config"},
 	{"", "Switch Config"},
 }
@@ -87,6 +89,7 @@ type appModel struct {
 	shared     sharedModel
 	operations operationsModel
 	terminal   terminalModel
+	services   servicesModel
 	config     configModel
 
 	spinner   spinner.Model
@@ -126,6 +129,7 @@ func newAppModel(cfg *config.Config, repoPath string) appModel {
 		spinner:     sp,
 		operations:  newOperationsModel(),
 		terminal:    newTerminalModel(),
+		services:    newServicesModel(0, 0),
 		config:      newConfigModel(repoPath),
 		currentView: viewDashboard,
 	}
@@ -135,6 +139,9 @@ func (m *appModel) discoverConfigs() {
 	cwd, _ := os.Getwd()
 	m.availableConfigs, _ = config.FindConfigFiles(cwd)
 
+	if len(m.availableConfigs) == 1 {
+		m.config.configPath = m.availableConfigs[0]
+	}
 	// If we have multiple configs, or no config loaded, show selector
 	if len(m.availableConfigs) > 1 || m.cfg == nil {
 		m.currentView = viewConfigSelector
@@ -243,6 +250,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.operations.initViewport(contentW, contentH)
 		m.terminal.initViewport(contentW, contentH)
+		m.services.setSize(contentW, contentH)
 		m.config.contentH = contentH
 
 	case spinner.TickMsg:
@@ -273,12 +281,19 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			cmds = append(cmds, m.loadCurrentViewCmds()...)
+			if m.currentView != viewServices {
+				// background probe so the Dashboard can show security alerts
+				cmds = append(cmds, m.servicesDetectCmds()...)
+			}
 		}
 
 	case msgConnError:
 		m.connStates[msg.envName] = connError
 		m.connErrors[msg.envName] = msg.err
 		m.statusMsg = "Connection failed: " + errDisplay(msg.err)
+		if env, err := m.cfg.GetEnvironment(msg.envName); err == nil && env.Provision.SSH.User != "" {
+			m.statusMsg += " — fresh server? Services → P prepares it for deploy"
+		}
 
 	case msgDashboardData:
 		if msg.envName == m.activeEnvName() { // drop results for an env switched away from
@@ -378,6 +393,34 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case msgServicesDetected:
+		if msg.envName == m.activeEnvName() {
+			if env := m.activeEnvCfg(); env != nil {
+				m.services.applyDetected(msg, env, m.cfg.Project, m.repoPath)
+				m.dashboard.alerts = securityAlerts(m.services.report)
+			}
+		}
+
+	case msgProvisionLine:
+		m.services.appendLog(msg.line)
+		cmds = append(cmds, waitProvision(m.services.logCh, m.services.errCh))
+
+	case msgProvisionDone:
+		m.services.running = false
+		m.services.done = true
+		m.services.runErr = msg.err
+		if msg.err == nil {
+			m.services.status = StyleSuccess.Render("✓ Finished — services re-detected")
+		} else {
+			m.services.status = StyleError.Render("✕ " + errDisplay(msg.err))
+		}
+		cmds = append(cmds, m.servicesDetectCmds()...)
+		// a deploy user created just now makes the regular connection possible
+		if name := m.activeEnvName(); m.connStates[name] != connConnected && m.cfg != nil {
+			m.connStates[name] = connConnecting
+			cmds = append(cmds, connectEnvCmd(m.cfg, name))
+		}
+
 	case msgConfigLoaded:
 		m.config.applyLoaded(msg)
 
@@ -423,6 +466,13 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.terminal.vp.LineUp(3)
 			case tea.MouseButtonWheelDown:
 				m.terminal.vp.LineDown(3)
+			}
+		} else if m.currentView == viewServices {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.services.vp.LineUp(3)
+			case tea.MouseButtonWheelDown:
+				m.services.vp.LineDown(3)
 			}
 		} else if m.currentView == viewOperations {
 			switch msg.Button {
@@ -486,6 +536,12 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		return m, tea.Batch(cmds...)
 	}
 
+	// Services: text input and confirm modal take every key
+	if m.currentView == viewServices && (m.services.editing || m.services.confirmTitle != "") {
+		cmds = append(cmds, m.handleServicesKey(msg)...)
+		return m, tea.Batch(cmds...)
+	}
+
 	if key.Matches(msg, Keys.Quit) {
 		return m, tea.Quit
 	}
@@ -539,7 +595,7 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 	// Left/Right arrow: cycle through views (skip viewConfigSelector=6)
 	// Allow from config view when not editing. Block while a deploy is running.
 	configBlocked := m.currentView == viewConfig && m.config.isEditing
-	deployRunning := m.currentView == viewOperations && m.operations.running
+	deployRunning := (m.currentView == viewOperations && m.operations.running) || (m.currentView == viewServices && m.services.running)
 	if key.Matches(msg, Keys.Left) && !m.sidebarFocused && m.currentView != viewConfigSelector && !configBlocked && !deployRunning {
 		next := int(m.currentView) - 1
 		if next < 0 {
@@ -803,6 +859,9 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 
 	case viewTerminal:
 		cmds = append(cmds, m.handleTerminalKey(msg)...)
+
+	case viewServices:
+		cmds = append(cmds, m.handleServicesKey(msg)...)
 
 	case viewConfig:
 		// Esc in read-only mode navigates back to dashboard
@@ -1155,6 +1214,7 @@ func (m appModel) resetViewState() appModel {
 	m.releases = releasesModel{}
 	m.browser = browserModel{}
 	m.shared = sharedModel{}
+	m.services = newServicesModel(m.services.w, m.services.h)
 	return m
 }
 
@@ -1173,6 +1233,9 @@ func (m appModel) autoConnectCmds() []tea.Cmd {
 // loadCurrentViewCmds returns the tea.Cmds to load data for the current view.
 // Does NOT call browser.init — that must be done on the real model before calling this.
 func (m appModel) loadCurrentViewCmds() []tea.Cmd {
+	if m.currentView == viewServices {
+		return m.servicesDetectCmds() // works without the deploy connection
+	}
 	client := m.activeClient()
 	if client == nil {
 		return nil
@@ -1275,6 +1338,10 @@ func (m appModel) View() string {
 		content = m.operations.view(contentW, contentH, m.releases.current)
 	case viewTerminal:
 		content = m.terminal.view(contentW, contentH)
+	case viewServices:
+		if env := m.activeEnvCfg(); env != nil {
+			content = m.services.view(contentW, contentH, env)
+		}
 	case viewConfig:
 		content = m.config.view(contentW)
 	case viewConfigSelector:

@@ -60,7 +60,7 @@ Entry point: `cmd/versa/main.go` (Cobra CLI). All core logic lives under `intern
 
 TUI launches by default when running `versa` with no arguments. Use `--no-gui` to get help output instead. Uses BubbleTea (Elm architecture). State machine in `internal/tui/model.go`. Views accessible via ←/→ arrows or the sidebar (Tab). SSH connections are lazy per environment; reconnect with `c`. Styled with Lip Gloss (Tokyo Night palette). Logger switches to TUI mode when GUI is active.
 
-**TUI views:** Dashboard (F5 refresh), Releases (Enter=browse files, R=rollback), Files (browser with symlinks; d=download, u=upload, Delete), Shared (Enter=navigate dirs), Operations (D=deploy, R=rollback, s=ssh-test, u=self-update, t=status, h=re-run hooks, l=services reload), Terminal (remote shell), Config (e=edit, Ctrl+S=save), Switch Config (Space=select, m=multi-deploy with one build).
+**TUI views:** Dashboard (F5 refresh), Releases (Enter=browse files, R=rollback), Files (browser with symlinks; d=download, u=upload, Delete), Shared (Enter=navigate dirs), Operations (D=deploy, R=rollback, s=ssh-test, u=self-update, t=status, h=re-run hooks, l=services reload), Terminal (remote shell), Services (Space=select, I=install, P=prepare server for deploy, U=upgrade service, S=security updates, Ctrl+R=apt update, L=logs, B=DB backup now, X=reset DB password, w=save `provision:`, a=add services_reload), Config (e=edit, Ctrl+S=save), Switch Config (Space=select, m=multi-deploy with one build).
 
 User-facing docs live in `doc/` (CLI_REFERENCE.md, DEPLOY.md for config options) and `deploy.example.yml`; update them when adding commands, flags or config fields.
 
@@ -90,6 +90,14 @@ Locally it only writes `run_server.sh` (web servers: Django via gunicorn, Flask,
 ### Services
 
 `services` (`internal/deployer/service.go`) run Go/Python processes through the server's init system. `renderService` generates a wrapper + systemd unit + OpenRC + SysV script into `<remote_path>/.versa/`; `serviceScript` builds the POSIX scripts that detect the init system on the server, install/enable (sudo only when the file changed), start/stop/restart and verify. Activation: switch → services_reload → post_deploy → services restart → health check; `afterRollback` reloads + restarts after any rollback. Tests run the generated scripts in `sh` with stubbed `sudo`/`systemctl`.
+
+### Services view / provisioning
+
+`internal/provision` + `internal/tui/view_services.go` (user docs: `doc/SERVICES.md`). Detection is one POSIX round-trip over the deploy connection (or the admin one when it can't connect yet), like `serverinfo.go`. Installs and upgrades run as root over `provision.ssh` (merged onto `ssh` by `Environment.ProvisionSSH()`), only on apt servers: the bundle (`run.sh` + `env` with secrets + rendered vhosts) is uploaded to a 0700 temp dir; each step (`scripts/<id>.sh`) runs as a function. Vhosts come from `templates/*.tmpl` (versaWYS configs). Python/Go/Node apps are NOT installed by provisioning: the view proposes their `services` entry (`provision.ProposedServices`, written by `w` via `config.SetServices`) and the sudoers step appends `deployer.SudoersScript`'s rules, so deploys install/restart them.
+
+Scripts must be idempotent and safe on servers in use: `apt_install` skips installed packages (upgrades only via U/S); an already installed service keeps its config and is never restarted (reload only when needed); never install an alternative (nginx vs Apache, MariaDB over MySQL, a second PHP-FPM or Node major — `provision.Conflicts` + script guards); existing DB users keep their password unless `ResetDBPassword` (`X`); one vhost per domain. Several apps per server: per-project vhost, sudoers file (`<user>-<project>`) and backup timer. `config.SaveProvision`/`AddServicesReload`/`SetServices` edit deploy.yml through `yaml.Node` to keep comments.
+
+E2E (Docker with systemd, not in CI): `go test -tags e2e -v -timeout 60m ./test/e2e/` — Ubuntu 24.04 (nginx+PostgreSQL) hosting fixture apps `test/e2e/apps/{php,python,go,node}` and Debian 12 (Apache+MariaDB) with `../versaTodo`; checks HTTP, aliases, backups, logs, sites, re-runs that change nothing, and refused alternatives.
 
 ### Go Builder
 

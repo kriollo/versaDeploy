@@ -364,12 +364,13 @@ Running `versa` with no command opens a full-screen interface (`versa --no-gui` 
 
 | View              | What it shows                                    | Keys                                                                                                                         |
 | :---------------- | :----------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------- |
-| **Dashboard**     | Server info (same as `versa info`), active release, runtimes and tools | `F5` refresh                                                                                       |
+| **Dashboard**     | Server info (same as `versa info`), active release, runtimes and tools, security alerts | `F5` refresh                                                                      |
 | **Releases**      | Releases on the server, active one marked        | `Enter` browse its files · `R` roll back to it (asks `y`/`n`; runs `services_reload` and restarts `services`)                                                                |
 | **Files**         | Remote file browser (follows symlinks)           | `Enter` open dir / view file · `Backspace` up · `d` download · `u` upload (`Space` select files, `Enter` open dir) · `Delete` delete · `Esc` close |
 | **Shared**        | Contents of `<remote_path>/shared`               | `Enter` open dir                                                                                                             |
 | **Operations**    | Deploy options and live log                      | `↑`/`↓` + `Enter` toggle Dry run, Force, Initial deploy, Skip dirty check, Debug, log file · `D` deploy · `R` rollback · `s` SSH test · `t` status · `h` re-run hooks · `l` services reload · `u` self-update · `Esc` close log |
 | **Terminal**      | Remote shell on the server                       | `Tab` completion · `Esc` leave                                                                                               |
+| **Services**      | Server stack: installed services, versions, updates, security, sites, SSL ([SERVICES.md](SERVICES.md)) | `Space` select · `Enter` edit / next version · `I` install · `P` prepare for deploy · `U` upgrade · `S` security updates · `Ctrl+R` apt update · `L` logs · `B` backup now · `X` reset DB password · `w` save `provision` · `a` add `services_reload` |
 | **Config**        | The loaded config file                           | `e` edit · `Ctrl+S` save · `Esc` cancel                                                                                      |
 | **Switch Config** | Config files found in the directory              | `Enter` load · `Space` select several · `m` multi-deploy the selected configs with a single build · `Esc` back               |
 

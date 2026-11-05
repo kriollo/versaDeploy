@@ -1366,7 +1366,8 @@ func (d *Deployer) validateRuntimeArtifacts(sshClient *ssh.Client, finalDir stri
 	}
 
 	if d.env.Builds.PHP.Enabled {
-		phpVendorPath := filepath.ToSlash(filepath.Join(finalDir, "app", d.env.Builds.PHP.ProjectRoot, "vendor"))
+		phpRoot := d.env.Builds.PHP.ProjectRoot
+		phpVendorPath := filepath.ToSlash(filepath.Join(finalDir, "app", phpRoot, composerVendorDir(filepath.Join(d.repoPath, phpRoot))))
 		exists, err := sshClient.FileExists(phpVendorPath)
 		if err != nil {
 			return fmt.Errorf("failed to verify PHP vendor path on release: %w", err)
@@ -1778,4 +1779,19 @@ func (d *Deployer) ExecRemoteCommand(command string) (string, error) {
 		return output, err
 	}
 	return output, nil
+}
+
+// composerVendorDir returns composer.json's config.vendor-dir relative to dir ("vendor"
+// when unset or unreadable).
+func composerVendorDir(dir string) string {
+	var c struct {
+		Config struct {
+			VendorDir string `json:"vendor-dir"`
+		} `json:"config"`
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "composer.json"))
+	if err != nil || json.Unmarshal(data, &c) != nil || c.Config.VendorDir == "" {
+		return "vendor"
+	}
+	return filepath.Clean(c.Config.VendorDir)
 }

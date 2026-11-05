@@ -42,3 +42,5 @@ deploy.lock
 /services/
 
 versatest
+.claude
+.agents

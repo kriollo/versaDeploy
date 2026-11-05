@@ -220,6 +220,36 @@ Check it's enabled: `chkconfig --list <name>` (RHEL/CentOS) or `rc-update show` 
 
 ---
 
+## Services view (server setup)
+
+### `Apache is already installed — nginx not installed` (or the opposite)
+
+versa never installs an alternative to what the server runs: pick the web server it already has. The same applies to a second PHP-FPM or Node.js version, and MariaDB over MySQL (the MySQL server is reused). See **[SERVICES.md](SERVICES.md#6-safety-rules-on-servers-already-in-use)**.
+
+### `<domain> is already served by: …`
+
+Another vhost (made by hand or by certbot, e.g. `myapp-le-ssl.conf`) answers for that domain, so a second one isn't added. Use it, or disable it before installing the web server step.
+
+### `no public key: the deploy user is created with <ssh.key_path>.pub`
+
+`P` and the *Deploy user* step install your public key on the server. Create it next to the private key: `ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub`.
+
+### The deploy user can't connect to a fresh server
+
+It doesn't exist yet. Set `provision.ssh.user: root`, open **Services** and press `P`.
+
+### An app lost database access after a re-run
+
+A re-run never changes an existing DB user's password. Only `X` (explicit reset) does: update the `.env` of every app that uses that user.
+
+### `SSL skipped: Let's Encrypt would fail`
+
+The domain doesn't resolve to the server yet. Fix DNS and run the SSL step again.
+
+### `release is missing required PHP dependencies`
+
+versa checks that composer's vendor folder reached the release, following `config.vendor-dir` from `composer.json` (e.g. `versaWYS/vendor`). Make sure that folder isn't in `ignored_paths`.
+
 ## After the deploy
 
 ### The site still shows the old version

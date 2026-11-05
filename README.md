@@ -24,6 +24,7 @@ versa deploy production
 - **Works with old servers**: POSIX-only remote commands, legacy SSH algorithms for OpenSSH < 7 (CentOS 5/6).
 - **Local mode** for hosting without SSH: builds a complete release folder to upload by FTP.
 - **Interactive TUI**: run `versa` to browse releases and server files, deploy, roll back and open a remote terminal.
+- **Server setup included**: the TUI *Services* view detects and installs the stack (nginx/Apache, PHP, PostgreSQL/MySQL, Redis, Python, Node, SSL, firewall, deploy user), applies security updates, shows logs and schedules DB backups — agentless, over SSH, and safe on servers already in use.
 
 ## 🛠 Install
 
@@ -52,6 +53,7 @@ versa deploy production                     # every deploy after that
 - [**Quick Start**](doc/QUICKSTART.md): the five-minute version and a command cheat sheet.
 - [**CLI Reference**](doc/CLI_REFERENCE.md): every command, flag and TUI shortcut.
 - [**Configuration Reference**](doc/DEPLOY.md): every `deploy.yml` option.
+- [**Services view**](doc/SERVICES.md): set up and maintain the server from the TUI.
 - [**Troubleshooting**](doc/TROUBLESHOOTING.md): common errors and fixes.
 - [**Changelog**](CHANGELOG.md)
 

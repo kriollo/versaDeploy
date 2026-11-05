@@ -12,7 +12,8 @@ import (
 type dashboardModel struct {
 	msgDashboardData
 	loaded bool
-	offset int // first visible line when the dashboard is taller than the pane
+	offset int      // first visible line when the dashboard is taller than the pane
+	alerts []string // security warnings from the Services probe (may be empty)
 }
 
 type msgDashboardData struct {
@@ -77,6 +78,7 @@ func (d dashboardModel) view(width, height int) string {
 }
 
 func (d dashboardModel) lines(width int) []string {
+	alerts := d.alerts
 	if !d.loaded {
 		return []string{"", StyleMuted.Render("  Loading dashboard…")}
 	}
@@ -97,6 +99,13 @@ func (d dashboardModel) lines(width int) []string {
 	lines := []string{
 		"",
 		title,
+	}
+	if len(alerts) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, alerts...)
+		lines = append(lines, StyleMuted.Render("  → Services view: S applies security updates"))
+	}
+	lines = append(lines,
 		"",
 		sep,
 		"",
@@ -109,7 +118,7 @@ func (d dashboardModel) lines(width int) []string {
 		"",
 		StyleSection.Render("  Server Resources"),
 		"",
-	}
+	)
 
 	srv := d.server
 	cpu := srv.CPUModel

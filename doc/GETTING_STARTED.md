@@ -30,6 +30,9 @@ From zero to your first deploy, step by step. The example deploys a PHP (Laravel
 
 ## 2. Prepare the server
 
+> [!TIP]
+> **Let versa do it.** With root SSH access, the TUI **Services** view does this whole section for you: deploy user with your key, directory, sudoers, web server vhost, PHP, database, SSL and firewall. `P` alone prepares a fresh server for deploy. See **[SERVICES.md](SERVICES.md)**. The steps below are for preparing it by hand.
+
 ### 2.1 Deploy user and SSH key
 
 From your machine, copy your public key to the server and accept its host key once:

@@ -48,6 +48,8 @@ type Environment struct {
 	// Services are long-running processes (Go binaries, Python servers) that versa
 	// installs in the server's init system, enables at boot and restarts on deploy.
 	Services []ServiceConfig `yaml:"services"`
+	// Provision describes the server stack the Services view installs (see internal/provision).
+	Provision ProvisionConfig `yaml:"provision"`
 }
 
 // ServiceConfig describes a process run by the server's init system (systemd, OpenRC
@@ -61,6 +63,55 @@ type ServiceConfig struct {
 	Environment map[string]string `yaml:"environment"`  // Extra environment variables
 	StartWait   int               `yaml:"start_wait"`   // Seconds to wait before checking it's running (default: 3)
 	StopTimeout int               `yaml:"stop_timeout"` // Seconds to wait for a graceful stop before SIGKILL (default: 30)
+}
+
+// ProvisionConfig is the desired server stack for an environment. Only the Services
+// view reads it; deploys ignore it.
+type ProvisionConfig struct {
+	SSH           ProvisionSSHConfig `yaml:"ssh,omitempty"`
+	Domain        string             `yaml:"domain,omitempty"`
+	WebServer     string             `yaml:"web_server,omitempty"` // apache | nginx
+	PHPVersion    string             `yaml:"php_version,omitempty"`
+	DocRoot       string             `yaml:"doc_root,omitempty"` // relative to remote_path, default "current/app"
+	Database      string             `yaml:"database,omitempty"` // postgres | mariadb | none
+	DBName        string             `yaml:"db_name,omitempty"`
+	DBUser        string             `yaml:"db_user,omitempty"`
+	DBPassword    string             `yaml:"db_password,omitempty"` // use ${VAR}; the TUI never writes it
+	Redis         bool               `yaml:"redis,omitempty"`
+	SSL           bool               `yaml:"ssl,omitempty"`
+	AdminEmail    string             `yaml:"admin_email,omitempty"`
+	UFW           bool               `yaml:"ufw,omitempty"`
+	DeployUser    string             `yaml:"deploy_user,omitempty"` // default: ssh.user
+	Backends      []string           `yaml:"backends,omitempty"`    // php | python | go | node
+	ProxyPort     int                `yaml:"proxy_port,omitempty"`  // app port for reverse proxy (python/go/node)
+	NodeMajor     string             `yaml:"node_major,omitempty"`
+	PythonVersion string             `yaml:"python_version,omitempty"` // installed next to the system python3 (Ubuntu: deadsnakes)
+	Aliases       []string           `yaml:"aliases,omitempty"`        // extra domains served by the vhost
+	Backup        bool               `yaml:"backup,omitempty"`         // daily DB dump timer
+	BackupKeep    int                `yaml:"backup_keep,omitempty"`    // dumps kept (default 7)
+}
+
+// ProvisionSSHConfig overrides the environment's SSH settings for the admin (root)
+// connection used to install services. Empty fields inherit from ssh.
+type ProvisionSSHConfig struct {
+	User    string `yaml:"user,omitempty"`
+	KeyPath string `yaml:"key_path,omitempty"`
+	Port    int    `yaml:"port,omitempty"`
+}
+
+// ProvisionSSH returns the SSH config of the admin connection: ssh with provision.ssh on top.
+func (e *Environment) ProvisionSSH() SSHConfig {
+	c := e.SSH
+	if p := e.Provision.SSH; p.User != "" {
+		c.User = p.User
+	}
+	if p := e.Provision.SSH; p.KeyPath != "" {
+		c.KeyPath = p.KeyPath
+	}
+	if p := e.Provision.SSH; p.Port != 0 {
+		c.Port = p.Port
+	}
+	return c
 }
 
 // SSHConfig holds SSH connection details
@@ -393,6 +444,22 @@ func (e *Environment) Validate(envName string) error {
 
 	if err := e.validateServices(envName); err != nil {
 		return err
+	}
+
+	switch e.Provision.WebServer {
+	case "", "apache", "nginx":
+	default:
+		return fmt.Errorf("environment %s: provision.web_server must be 'apache' or 'nginx'", envName)
+	}
+	switch e.Provision.Database {
+	case "", "none", "postgres", "mariadb":
+	default:
+		return fmt.Errorf("environment %s: provision.database must be 'postgres', 'mariadb' or 'none'", envName)
+	}
+	if strings.HasPrefix(e.Provision.SSH.KeyPath, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			e.Provision.SSH.KeyPath = filepath.Join(home, e.Provision.SSH.KeyPath[2:])
+		}
 	}
 
 	if e.ReleasesToKeep <= 0 {

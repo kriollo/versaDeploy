@@ -1,0 +1,238 @@
+# ============================================================================
+# Nginx — {{.Project}} / {{.Domain}}
+# Generado por versaDeploy (plantilla versaWYS/configs/nginx.conf.example)
+#
+# SYMLINKS ZERO-DOWNTIME: $realpath_root en fastcgi_param hace que PHP-FPM reciba la
+# ruta real del release (OPCache con revalidate_path=1 no reutiliza el release anterior).
+# Las zonas de rate limiting están en /etc/nginx/conf.d/rate-limiting.conf.
+# ============================================================================
+
+server {
+    server_name {{.Domain}}{{range .Aliases}} {{.}}{{end}};
+    client_max_body_size 200M;
+
+    root {{.DocRootPath}};
+    index index.php index.html;
+
+    # Seguridad básica
+    server_tokens off;
+    more_clear_headers 'Server';
+
+    # Rate limiting
+    limit_req zone=general burst=50 nodelay;
+    limit_req_status 429;
+
+    # Optimizaciones de red
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    keepalive_requests 100;
+
+    # Compresión gzip
+    gzip on;
+    gzip_comp_level 5;
+    gzip_static on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_min_length 256;
+    gzip_disable "msie6";
+    gzip_types
+        text/plain
+        text/css
+        text/xml
+        text/javascript
+        application/json
+        application/javascript
+        application/xml+rss
+        application/rss+xml
+        application/atom+xml
+        application/x-javascript
+        image/svg+xml;
+
+    # Headers de seguridad
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "no-referrer" always;
+{{- if .SSL}}
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+{{- end}}
+    add_header Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self), payment=(self), usb=(), interest-cohort=()" always;
+
+    # Bloqueo de métodos HTTP peligrosos
+    if ($request_method !~ ^(GET|POST|PUT|DELETE|OPTIONS|HEAD|PATCH)$) {
+        return 405;
+    }
+
+    # Denegar archivos ocultos y backups (salvo ACME)
+    location ^~ /.well-known/acme-challenge/ {
+        allow all;
+    }
+    location ~ /\. {
+        deny all;
+        return 404;
+    }
+    location ~ ~$ {
+        deny all;
+        return 404;
+    }
+{{if .ProxyPort}}
+    # Aplicación ({{.Backend}}) detrás de reverse proxy
+    location / {
+        proxy_pass http://127.0.0.1:{{.ProxyPort}};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+{{else}}
+    # Cache para imágenes
+    location ~* \.(jpg|jpeg|png|gif|ico|webp|avif|bmp|tiff)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable, no-transform" always;
+        add_header Vary "Accept-Encoding" always;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Cache para fonts
+    location ~* \.(woff|woff2|ttf|otf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable" always;
+        add_header Access-Control-Allow-Origin "*" always;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Cache para CSS/JS
+    location ~* \.(css|js)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable, no-transform" always;
+        add_header Vary "Accept-Encoding" always;
+        access_log off;
+    }
+
+    # Cache para PDF/SVG
+    location ~* \.(pdf|svg)$ {
+        expires 1y;
+        add_header Cache-Control "public, no-transform" always;
+        access_log off;
+    }
+
+    # Cache para videos
+    location ~* \.(mp4|webm|ogg|avi|mov|flv|wmv)$ {
+        expires 30d;
+        add_header Cache-Control "public, no-transform" always;
+        access_log off;
+    }
+
+    # Cache para audio
+    location ~* \.(mp3|wav|ogg|m4a|aac|flac)$ {
+        expires 30d;
+        add_header Cache-Control "public, no-transform" always;
+        access_log off;
+    }
+
+    # Denegar archivos sensibles (404 para no revelar existencia)
+    location ~ ^/(composer\.(json|lock)|package(-lock)?\.json|vhost\.conf|\.env)$ {
+        deny all;
+        return 404;
+    }
+
+    # De node_modules solo se sirven los módulos JS y CSS que importa el frontend
+    location ~* ^/node_modules/.+\.(js|mjs|css)$ {
+        expires 30d;
+        try_files $uri =404;
+    }
+    location ~ ^/(vendor|node_modules)/ {
+        deny all;
+        return 404;
+    }
+
+    # Forzar router PHP para carpetas sensibles (^~ gana sobre las location con regex)
+    location ~ ^/(app|versaWYS|vendor|logs|src|configs|documentacion)$ {
+        try_files /nonexistent /index.php?$query_string;
+    }
+    location ^~ /app/ {
+        try_files /nonexistent /index.php?$query_string;
+    }
+    location ^~ /versaWYS/ {
+        try_files /nonexistent /index.php?$query_string;
+    }
+    location ^~ /vendor/ {
+        try_files /nonexistent /index.php?$query_string;
+    }
+    location ^~ /logs/ {
+        try_files /nonexistent /index.php?$query_string;
+    }
+    location ^~ /src/ {
+        try_files /nonexistent /index.php?$query_string;
+    }
+    location ^~ /configs/ {
+        try_files /nonexistent /index.php?$query_string;
+    }
+    location ^~ /documentacion/ {
+        try_files /nonexistent /index.php?$query_string;
+    }
+
+    # Evitar indexación de carpeta store
+    location /dashboard/store/ {
+        add_header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet" always;
+    }
+
+    # Ruta principal
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # Solo index.php se ejecuta: cualquier otro .php responde 404
+    location ~* \.(php\d?|phtml|phar)$ {
+        return 404;
+    }
+
+    location = /index.php {
+        include snippets/fastcgi-php.conf;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT $realpath_root;
+        fastcgi_buffer_size 128k;
+        fastcgi_buffers 4 256k;
+        fastcgi_busy_buffers_size 256k;
+        fastcgi_read_timeout 300s;
+        fastcgi_send_timeout 300s;
+        fastcgi_hide_header X-Powered-By;
+        fastcgi_pass unix:/run/php/php{{.PHPVersion}}-fpm.sock;
+    }
+{{end}}
+{{- if .SSL}}
+    # SSL/TLS
+    listen 443 ssl;
+    http2 on;
+
+    ssl_certificate /etc/letsencrypt/live/{{.Domain}}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{.Domain}}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+
+# Redirección HTTP → HTTPS
+server {
+    listen 80;
+    server_name {{.Domain}}{{range .Aliases}} {{.}}{{end}};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root {{.DocRootPath}};
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+{{- else}}
+    listen 80;
+}
+{{- end}}

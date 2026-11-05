@@ -1,0 +1,166 @@
+# ============================================================================
+# Apache2 VirtualHost — {{.Project}} / {{.Domain}}
+# Generado por versaDeploy (plantilla versaWYS/configs/apache-vhost.conf.example)
+# Requiere módulos: ssl rewrite headers expires deflate proxy proxy_fcgi proxy_http http2 setenvif
+# ============================================================================
+
+# Directivas de contexto global (server config), no dentro de VirtualHost
+ServerTokens Prod
+ServerSignature Off
+TraceEnable Off
+{{define "site"}}
+    ServerName {{.Domain}}
+{{- if .Aliases}}
+    ServerAlias{{range .Aliases}} {{.}}{{end}}
+{{- end}}
+    ServerAdmin {{.AdminEmail}}
+
+    DocumentRoot {{.DocRootPath}}
+    DirectoryIndex index.php index.html
+
+    Protocols h2 http/1.1
+
+    # Body size máximo: 200 MB
+    LimitRequestBody 209715200
+
+    # Métodos HTTP permitidos
+    RewriteEngine On
+    RewriteCond %{REQUEST_METHOD} !^(GET|POST|PUT|DELETE|OPTIONS|HEAD|PATCH|QUERY)$ [NC]
+    RewriteRule ^ - [R=405,L]
+
+    # Bloquear archivos sensibles (404 para no revelar existencia)
+    RewriteRule ^/?(composer\.(json|lock)|package(-lock)?\.json|vhost\.conf|\.env)$ - [R=404,L,NC]
+    RewriteRule (^|/)\.(?!well-known/) - [R=404,L]
+    RewriteRule .+~$ - [R=404,L]
+
+    # Headers de seguridad
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "no-referrer"
+{{- if .SSL}}
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+{{- end}}
+    Header always set Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self), payment=(self), usb=(), interest-cohort=()"
+    Header always unset X-Powered-By
+{{if .ProxyPort}}
+    # Aplicación ({{.Backend}}) detrás de reverse proxy
+    ProxyPreserveHost On
+    ProxyPass /.well-known/ !
+    ProxyPass / http://127.0.0.1:{{.ProxyPort}}/ upgrade=websocket
+    ProxyPassReverse / http://127.0.0.1:{{.ProxyPort}}/
+    RequestHeader set X-Forwarded-Proto "{{if .SSL}}https{{else}}http{{end}}"
+    ProxyTimeout 300
+{{else}}
+    # Bloquear directorios sensibles
+    RewriteRule ^/?vendor(/|$) - [R=404,L,NC]
+    # De node_modules solo se sirven los módulos JS y CSS que importa el frontend
+    RewriteCond %{REQUEST_URI} !\.(js|mjs|css)$ [NC]
+    RewriteRule ^/?node_modules(/|$) - [R=404,L,NC]
+
+    # Solo index.php se ejecuta: cualquier otro .php responde 404
+    RewriteCond %{REQUEST_URI} !^/index\.php$
+    RewriteRule \.(php\d?|phtml|phar)$ - [R=404,L,NC]
+
+    # Forzar router para carpetas sensibles
+    RewriteRule ^/?(app|versaWYS|vendor|logs|src|configs|documentacion)(/|$) /index.php [QSA,L]
+
+    # Evitar indexación de store
+    <Location "/dashboard/store/">
+        Header always set X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
+    </Location>
+
+    <Directory {{.DocRootPath}}>
+        Options -Indexes +FollowSymLinks
+        AllowOverride None
+        Require all granted
+
+        RewriteEngine On
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule ^ index.php [QSA,L]
+    </Directory>
+
+    # PHP-FPM
+    <Files "index.php">
+        SetHandler "proxy:unix:/run/php/php{{.PHPVersion}}-fpm.sock|fcgi://localhost/"
+    </Files>
+
+    ProxyTimeout 300
+
+    # Compresión gzip/deflate
+    <IfModule mod_deflate.c>
+        AddOutputFilterByType DEFLATE text/plain text/css text/xml text/javascript application/json application/javascript application/xml+rss application/rss+xml application/atom+xml image/svg+xml
+    </IfModule>
+
+    # Políticas de cache para estáticos
+    <IfModule mod_expires.c>
+        ExpiresActive On
+        ExpiresByType image/jpeg "access plus 1 year"
+        ExpiresByType image/png "access plus 1 year"
+        ExpiresByType image/gif "access plus 1 year"
+        ExpiresByType image/webp "access plus 1 year"
+        ExpiresByType image/avif "access plus 1 year"
+        ExpiresByType image/x-icon "access plus 1 year"
+        ExpiresByType font/woff "access plus 1 year"
+        ExpiresByType font/woff2 "access plus 1 year"
+        ExpiresByType application/font-woff "access plus 1 year"
+        ExpiresByType text/css "access plus 1 year"
+        ExpiresByType application/javascript "access plus 1 year"
+        ExpiresByType application/pdf "access plus 1 year"
+        ExpiresByType image/svg+xml "access plus 1 year"
+        ExpiresByType video/mp4 "access plus 30 days"
+        ExpiresByType video/webm "access plus 30 days"
+        ExpiresByType audio/mpeg "access plus 30 days"
+        ExpiresByType audio/wav "access plus 30 days"
+    </IfModule>
+
+    <FilesMatch "\.(jpg|jpeg|png|gif|ico|webp|avif|bmp|tiff)$">
+        Header always set Cache-Control "public, immutable, no-transform"
+    </FilesMatch>
+
+    <FilesMatch "\.(woff|woff2|ttf|otf|eot)$">
+        Header always set Cache-Control "public, immutable"
+        Header always set Access-Control-Allow-Origin "*"
+    </FilesMatch>
+
+    <FilesMatch "\.(css|js)$">
+        Header always set Cache-Control "public, immutable, no-transform"
+    </FilesMatch>
+
+    <FilesMatch "\.(pdf|svg)$">
+        Header always set Cache-Control "public, no-transform"
+    </FilesMatch>
+
+    <FilesMatch "\.(mp4|webm|ogg|avi|mov|flv|wmv|mp3|wav|m4a|aac|flac)$">
+        Header always set Cache-Control "public, no-transform"
+    </FilesMatch>
+{{end}}
+    ErrorLog ${APACHE_LOG_DIR}/{{.Domain}}-error.log
+    CustomLog ${APACHE_LOG_DIR}/{{.Domain}}-access.log combined
+{{- end}}
+{{if .SSL}}
+<VirtualHost *:80>
+    ServerName {{.Domain}}
+{{- if .Aliases}}
+    ServerAlias{{range .Aliases}} {{.}}{{end}}
+{{- end}}
+
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+</VirtualHost>
+
+<VirtualHost *:443>
+{{- template "site" .}}
+
+    SSLEngine on
+    SSLCertificateFile /etc/letsencrypt/live/{{.Domain}}/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/{{.Domain}}/privkey.pem
+    Include /etc/letsencrypt/options-ssl-apache.conf
+</VirtualHost>
+{{- else}}
+<VirtualHost *:80>
+{{- template "site" .}}
+</VirtualHost>
+{{- end}}
