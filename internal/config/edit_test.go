@@ -72,6 +72,7 @@ func TestProvisionSSHInherits(t *testing.T) {
 func TestValidateExpandsKnownHosts(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	os.MkdirAll(filepath.Join(home, ".ssh"), 0700)
 	os.WriteFile(filepath.Join(home, ".ssh", "id"), []byte("k"), 0600)
 	e := Environment{SSH: SSHConfig{Host: "h", User: "u", KeyPath: "~/.ssh/id", KnownHostsFile: "~/.ssh/known_hosts"}, RemotePath: "/srv"}

@@ -1161,7 +1161,9 @@ func sharedLinkScript(releaseDir, sharedBase string, paths []string) string {
 // SIGKILL sent when the local timer fires, which would leave the hook running.
 func (d *Deployer) hookCmd(appPath, hook string, limit time.Duration) string {
 	if d.server != nil && d.server.Has("timeout") {
-		hook = fmt.Sprintf(`timeout -s KILL %d "$SHELL" -c %s`, int(limit.Seconds()), ssh.ShellQuote(hook))
+		// gnutimeout first: uutils' timeout (Ubuntu 25.10+) kills only the shell, leaving
+		// the hook's children running; GNU timeout kills the whole process group
+		hook = fmt.Sprintf(`"$(command -v gnutimeout || echo timeout)" -s KILL %d "$SHELL" -c %s`, int(limit.Seconds()), ssh.ShellQuote(hook))
 	}
 	return "cd " + ssh.ShellQuote(appPath) + " && " + hook
 }

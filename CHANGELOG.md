@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **Hook timeouts didn't stop the hook on Ubuntu 25.10+**: these servers ship uutils' `timeout`, which kills only the shell and leaves the hook's processes running until they finish. versa now prefers GNU `gnutimeout` when the server has it, which kills the whole process group. (Found when GitHub's `ubuntu-latest` moved to 26.04.)
+
 ## [1.9.0] - 2026-11-05
 
 ### Added
