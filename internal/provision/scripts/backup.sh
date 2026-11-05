@@ -10,20 +10,19 @@ bin="/usr/local/sbin/${unit}"
     printf 'DATABASE=%q DB_NAME=%q DIR=%q OWNER=%q KEEP=%q\n' "$DATABASE" "$DB_NAME" "${REMOTE_PATH}/backups" "$DEPLOY_USER" "$BACKUP_KEEP"
     cat <<'DUMP'
 set -euo pipefail
-umask 027
-mkdir -p "$DIR"
-chown "$OWNER:$OWNER" "$DIR"
-chmod 750 "$DIR"
+# DIR lives in the deploy user's tree: every file operation runs as OWNER, so a symlink
+# planted there can't make root write, chown or delete another path
+as() { runuser -u "$OWNER" -- "$@"; }
+as sh -c 'umask 077; mkdir -p "$1" && chmod 700 "$1"' _ "$DIR"
 f="$DIR/${DB_NAME}-$(date +%Y%m%d-%H%M%S).sql.gz"
 if [ "$DATABASE" = postgres ]; then
-    sudo -u postgres pg_dump --no-owner "$DB_NAME" | gzip -6 > "$f.tmp"
+    sudo -u postgres pg_dump --no-owner "$DB_NAME"
 else
-    mysqldump --single-transaction --routines --triggers "$DB_NAME" | gzip -6 > "$f.tmp"
-fi
-mv "$f.tmp" "$f"
-chown "$OWNER:$OWNER" "$f"
+    mysqldump --single-transaction --routines --triggers "$DB_NAME"
+fi | gzip -6 | as sh -c 'umask 077; cat > "$1"' _ "$f.tmp"
+as mv "$f.tmp" "$f"
 # keep the newest $KEEP dumps
-ls -1t "$DIR/${DB_NAME}"-*.sql.gz | tail -n +"$((KEEP + 1))" | xargs -r rm -f
+as sh -c 'ls -1t "$1/$2"-*.sql.gz | tail -n +"$(($3 + 1))" | xargs -r rm -f' _ "$DIR" "$DB_NAME" "$KEEP"
 echo "backup ok: $f ($(du -h "$f" | cut -f1)), keeping $KEEP"
 DUMP
 } > "$bin"

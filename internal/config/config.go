@@ -111,6 +111,8 @@ func (e *Environment) ProvisionSSH() SSHConfig {
 	if p := e.Provision.SSH; p.Port != 0 {
 		c.Port = p.Port
 	}
+	// root sessions carry the DB password: never over an unverified host key
+	c.StrictHostKey = true
 	return c
 }
 

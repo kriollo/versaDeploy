@@ -257,9 +257,9 @@ func buildRsyncArgs(sshCfg *config.SSHConfig, srcs []string, dst string) []strin
 	}
 	sshArg := fmt.Sprintf("ssh -p %d", port)
 	if sshCfg.KeyPath != "" {
-		sshArg += " -i " + sshCfg.KeyPath
+		sshArg += " -i " + versassh.ShellQuote(sshCfg.KeyPath)
 	}
-	args := []string{"-avz", "--info=progress2", "-e", sshArg}
+	args := []string{"-avz", "--info=progress2", "-e", sshArg, "--"}
 	args = append(args, srcs...)
 	args = append(args, dst)
 	return args

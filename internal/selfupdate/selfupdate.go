@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/user/versaDeploy/internal/logger"
 	"github.com/user/versaDeploy/internal/version"
@@ -24,6 +25,9 @@ const (
 // githubAPIBase is overridden in tests to point at an httptest.Server instead
 // of the real GitHub API.
 var githubAPIBase = "https://api.github.com"
+
+// httpClient bounds every request: a stalled connection must not hang the update.
+var httpClient = &http.Client{Timeout: 5 * time.Minute}
 
 // Release represents a GitHub release
 type Release struct {
@@ -85,6 +89,10 @@ func (u *Updater) Update() error {
 	if targetAsset == "" {
 		return fmt.Errorf("no binary found for %s/%s in the latest release", runtime.GOOS, runtime.GOARCH)
 	}
+	// every release publishes <binary>.sha256: without it the download can't be verified
+	if checksumAsset == "" {
+		return fmt.Errorf("release %s has no %s.sha256: refusing an unverified binary", latest.TagName, expectedName)
+	}
 
 	u.log.Info("Downloading update from %s...", targetAsset)
 
@@ -101,7 +109,7 @@ func (u *Updater) Update() error {
 func (u *Updater) getLatestRelease() (*Release, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, githubOwner, githubRepo)
 
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -137,12 +145,16 @@ func (u *Updater) performUpdate(url, checksumURL string) error {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		tmpFile.Close()
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		tmpFile.Close()
+		return fmt.Errorf("download returned status %d", resp.StatusCode)
+	}
 
 	hasher := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(tmpFile, hasher), resp.Body); err != nil {
@@ -151,19 +163,15 @@ func (u *Updater) performUpdate(url, checksumURL string) error {
 	}
 	tmpFile.Close()
 
-	if checksumURL != "" {
-		expected, err := fetchChecksum(checksumURL)
-		if err != nil {
-			return fmt.Errorf("failed to fetch checksum: %w", err)
-		}
-		got := fmt.Sprintf("%x", hasher.Sum(nil))
-		if !strings.EqualFold(got, expected) {
-			return fmt.Errorf("checksum mismatch: expected %s, got %s (downloaded binary may be corrupted or tampered with)", expected, got)
-		}
-		u.log.Info("Checksum verified.")
-	} else {
-		u.log.Warn("No checksum published for this release; skipping verification.")
+	expected, err := fetchChecksum(checksumURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch checksum: %w", err)
 	}
+	got := fmt.Sprintf("%x", hasher.Sum(nil))
+	if !strings.EqualFold(got, expected) {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s (downloaded binary may be corrupted or tampered with)", expected, got)
+	}
+	u.log.Info("Checksum verified.")
 
 	// Set execution bits before replacing (Linux/Mac)
 	if runtime.GOOS != "windows" {
@@ -198,7 +206,7 @@ func (u *Updater) performUpdate(url, checksumURL string) error {
 // fetchChecksum downloads a sha256sum-format file ("<hex digest>  <filename>")
 // and returns the hex digest.
 func fetchChecksum(url string) (string, error) {
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return "", err
 	}

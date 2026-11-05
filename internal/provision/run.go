@@ -69,6 +69,25 @@ func (v Vars) DocRootPath() string {
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
+// pathRe: remote_path and doc_root end up in vhosts and root scripts
+var pathRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
+// systemDirs are never a remote_path: the dirs step chowns it to the deploy user.
+var systemDirs = map[string]bool{"bin": true, "boot": true, "dev": true, "etc": true, "lib": true,
+	"lib64": true, "proc": true, "root": true, "run": true, "sbin": true, "sys": true, "usr": true}
+
+func checkRemotePath(p string) error {
+	c := path.Clean(p)
+	parts := strings.Split(strings.Trim(c, "/"), "/")
+	switch {
+	case !strings.HasPrefix(p, "/") || !pathRe.MatchString(p):
+		return fmt.Errorf("remote_path must be an absolute path of letters, digits, . _ - /")
+	case len(parts) < 2 || systemDirs[parts[0]] || c == "/var/lib" || c == "/var/log":
+		return fmt.Errorf("remote_path %q is a system directory: use one for the project, e.g. /var/www/app", p)
+	}
+	return nil
+}
+
 // Validate checks the vars the selected steps need. Names end up in config files and
 // SQL, so they are restricted to safe characters.
 func (v Vars) Validate(steps []string) error {
@@ -82,11 +101,7 @@ func (v Vars) Validate(steps []string) error {
 		var err error
 		switch s {
 		case "php":
-			err = need(regexp.MustCompile(`^\d\.\d$`).MatchString(v.PHPVersion), "php_version must look like 8.4")
-		case "python":
-			err = need(v.PythonVersion == "" || regexp.MustCompile(`^3\.\d+$`).MatchString(v.PythonVersion), "python_version must look like 3.13")
-		case "node":
-			err = need(v.NodeMajor == "" || regexp.MustCompile(`^\d+$`).MatchString(v.NodeMajor), "node_major must be a number like 24")
+			err = need(v.PHPVersion != "", "php_version is required (e.g. 8.4)")
 		case "apache", "nginx", "ssl":
 			if err = need(nameRe.MatchString(v.Domain), "domain is required (e.g. app.example.com)"); err == nil && s != "ssl" && v.ProxyPort == 0 {
 				err = need(v.PHPVersion != "", "php_version is required for a PHP-FPM vhost (or set proxy_port)")
@@ -104,15 +119,44 @@ func (v Vars) Validate(steps []string) error {
 		case "sudoers":
 			err = need(nameRe.MatchString(v.DeployUser), "deploy_user is required")
 		case "dirs":
-			err = need(strings.HasPrefix(v.RemotePath, "/"), "remote_path must be absolute")
+			err = need(v.RemotePath != "", "remote_path is required")
 		case "backup":
 			if err = need(v.Database == "postgres" || v.Database == "mariadb", "select PostgreSQL or MariaDB for backups"); err == nil {
-				err = need(identRe.MatchString(v.DBName) && strings.HasPrefix(v.RemotePath, "/") && nameRe.MatchString(v.DeployUser), "db_name, remote_path and deploy_user are required")
+				err = need(identRe.MatchString(v.DBName) && v.RemotePath != "" && nameRe.MatchString(v.DeployUser), "db_name, remote_path and deploy_user are required")
 			}
 		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", s, err)
 		}
+	}
+	// checked for every step: they also reach sudoers, unit names and vhosts
+	format := []struct {
+		val string
+		re  string
+		msg string
+	}{
+		{v.PHPVersion, `^\d\.\d$`, "php_version must look like 8.4"},
+		{v.PythonVersion, `^3\.\d+$`, "python_version must look like 3.13"},
+		{v.NodeMajor, `^\d+$`, "node_major must be a number like 24"},
+		{v.Project, nameRe.String(), "project must be letters, digits, . _ -"},
+		{v.WebServer, `^(nginx|apache)$`, "web_server must be nginx or apache"},
+		{v.AppService, nameRe.String(), "invalid service name"},
+	}
+	for _, f := range format {
+		if f.val != "" && !regexp.MustCompile(f.re).MatchString(f.val) {
+			return fmt.Errorf("%s (got %q)", f.msg, f.val)
+		}
+	}
+	if v.RemotePath != "" {
+		if err := checkRemotePath(v.RemotePath); err != nil {
+			return err
+		}
+	}
+	if d := v.DocRoot; d != "" && (!pathRe.MatchString(d) || strings.Contains("/"+d+"/", "/../")) {
+		return fmt.Errorf("doc_root must be a relative path inside remote_path (got %q)", d)
+	}
+	if strings.ContainsAny(strings.TrimSpace(v.PubKey), "\r\n") {
+		return fmt.Errorf("the public key file must hold a single key")
 	}
 	for _, a := range v.Aliases {
 		if !nameRe.MatchString(a) {
@@ -339,10 +383,10 @@ func LogsCommand(id string, v Vars, phpVersion string) string {
 		if u == "" {
 			continue
 		}
-		fmt.Fprintf(&s, "echo; echo '══════ journalctl -u %s ══════'; journalctl -u %s -n 100 --no-pager -o short-iso 2>&1 | tail -n 100\n", u, q(u))
+		fmt.Fprintf(&s, "echo; echo %s; journalctl -u %s -n 100 --no-pager -o short-iso 2>&1 | tail -n 100\n", q("══════ journalctl -u "+u+" ══════"), q(u))
 	}
 	for _, f := range files {
-		fmt.Fprintf(&s, "if [ -f %s ]; then echo; echo '══════ %s ══════'; tail -n 100 %s; fi\n", q(f), f, q(f))
+		fmt.Fprintf(&s, "if [ -f %s ]; then echo; echo %s; tail -n 100 %s; fi\n", q(f), q("══════ "+f+" ══════"), q(f))
 	}
 	if s.Len() == 0 {
 		return "echo 'No logs for this service'"

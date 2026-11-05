@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/user/versaDeploy/internal/logger"
@@ -76,5 +78,19 @@ func TestFetchChecksum_NonOKStatus(t *testing.T) {
 
 	if _, err := fetchChecksum(srv.URL); err == nil {
 		t.Error("expected error for non-200 response")
+	}
+}
+
+func TestUpdate_RefusesReleaseWithoutChecksum(t *testing.T) {
+	name := fmt.Sprintf("versa_%s_%s", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	withMockGithubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"tag_name":"v9.9.9","assets":[{"name":%q,"browser_download_url":"http://127.0.0.1:1/bin"}]}`, name)
+	})
+	log, _ := logger.NewLogger("", false, false)
+	if err := NewUpdater(log).Update(); err == nil || !strings.Contains(err.Error(), "sha256") {
+		t.Fatalf("expected refusal without checksum, got %v", err)
 	}
 }

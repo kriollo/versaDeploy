@@ -2,11 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.9.1] - 2026-11-05
+
+### Security
+
+- **DB backups could be turned into root writes**: the daily backup ran as root inside the project directory, so a symlink planted as `backups/` (by the deploy user, or by PHP-FPM through the group-writable project directory) made root chown and write another path. Every file operation of the backup now runs as the deploy user, and the dumps are private to it (`0700`/`0600`).
+- **Project directory no longer group-writable** (`2775` → `2755`): `www-data` (PHP-FPM) could rename `current`, `.versa/` or `backups/` in it. Re-run *Project directory* in the Services view to apply it to existing servers.
+- **Deploy user's `~/.ssh` set up as that user**: on an existing user, a symlinked `~/.ssh` made root chmod/chown the target.
+- **Root connections always verify the host key**: `provision.ssh` sessions carry the DB password, so they refuse a server missing from `known_hosts` even without `ssh.strict_host_key`.
+- **Self-update refuses a release without its `.sha256`** (every release publishes one) and a failed download; requests have a timeout.
+- **Stricter provisioning values**: `remote_path` (absolute, safe characters, not a system directory like `/` or `/etc`), `doc_root` (inside `remote_path`), `project`, `web_server` and the PHP/Python/Node versions are checked for every step, since they reach sudoers, unit names and vhosts. The public key file must hold one key.
 
 ### Fixed
 
 - **Hook timeouts didn't stop the hook on Ubuntu 25.10+**: these servers ship uutils' `timeout`, which kills only the shell and leaves the hook's processes running until they finish. versa now prefers GNU `gnutimeout` when the server has it, which kills the whole process group. (Found when GitHub's `ubuntu-latest` moved to 26.04.)
+- TUI terminal and file transfers: the working directory and `ssh.key_path` are quoted (paths with spaces broke them).
 
 ## [1.9.0] - 2026-11-05
 

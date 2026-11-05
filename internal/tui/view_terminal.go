@@ -84,7 +84,7 @@ func (t *terminalModel) executeCommand(client *versassh.Client, cmd string) tea.
 	t.doneCh = make(chan error, 1)
 
 	// Wrap command with cd to cwd so it runs in the project directory
-	wrappedCmd := fmt.Sprintf("cd %s && %s", t.cwd, cmd)
+	wrappedCmd := fmt.Sprintf("cd %s && %s", versassh.ShellQuote(t.cwd), cmd)
 
 	return func() tea.Msg {
 		go func() {

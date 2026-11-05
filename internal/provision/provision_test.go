@@ -360,3 +360,28 @@ func TestSupportedVersions(t *testing.T) {
 		}
 	}
 }
+
+// Values that reach sudoers, vhosts and root scripts are refused when unsafe.
+func TestValidateRejectsUnsafeValues(t *testing.T) {
+	bad := map[string]func(*Vars){
+		"remote_path /":        func(v *Vars) { v.RemotePath = "/" },
+		"remote_path /etc/app": func(v *Vars) { v.RemotePath = "/etc/app" },
+		"remote_path /var":     func(v *Vars) { v.RemotePath = "/var" },
+		"remote_path newline":  func(v *Vars) { v.RemotePath = "/var/www/a\n}" },
+		"doc_root escapes":     func(v *Vars) { v.DocRoot = "current/../../etc" },
+		"php into sudoers":     func(v *Vars) { v.PHPVersion = "8.4, /bin/bash" },
+		"project with slash":   func(v *Vars) { v.Project = "../x" },
+		"two keys":             func(v *Vars) { v.PubKey = "ssh-ed25519 AAA a\nssh-rsa BBB b" },
+		"unknown web server":   func(v *Vars) { v.WebServer = "caddy" },
+	}
+	for name, mut := range bad {
+		v := testVars()
+		mut(&v)
+		if err := v.Validate([]string{"dirs", "sudoers"}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if v := testVars(); v.Validate([]string{"dirs", "sudoers"}) != nil {
+		t.Errorf("valid vars refused: %v", v.Validate([]string{"dirs", "sudoers"}))
+	}
+}

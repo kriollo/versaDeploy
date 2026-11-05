@@ -1149,7 +1149,7 @@ func (m *appModel) handleTerminalKey(msg tea.KeyMsg) []tea.Cmd {
 					target := strings.TrimSpace(strings.TrimPrefix(cmd, "cd "))
 					if target != "" {
 						// Resolve the path on the server and update cwd
-						resolveCmd := fmt.Sprintf("cd %s && cd %s && pwd", m.terminal.cwd, target)
+						resolveCmd := fmt.Sprintf("cd %s && cd %s && pwd", versassh.ShellQuote(m.terminal.cwd), target)
 						m.terminal.logBuf.WriteString(fmt.Sprintf("%s $ %s\n", m.terminal.cwd, cmd))
 						m.terminal.history = append(m.terminal.history, cmd)
 						m.terminal.histIdx = len(m.terminal.history)

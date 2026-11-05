@@ -147,7 +147,7 @@ Extra domains go in `provision.aliases` (e.g. `www.myapp.com`): they are added t
 The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a daily systemd timer (`versa-backup-<project>.timer`, randomized up to 30 min, catches up after downtime). Each run writes `remote_path/backups/<db>-<date>.sql.gz` (`pg_dump` / `mysqldump --single-transaction`) and keeps the newest `backup_keep` dumps (default 7).
 
 - `B` runs a backup now and prints its size.
-- The folder belongs to the deploy user (`0750`): download dumps from the **Files** view.
+- The folder belongs to the deploy user (`0700`; the remote path is setgid `www-data`, so the dumps are kept private to it): download dumps from the **Files** view.
 - Restoring is manual on purpose (it overwrites the database), e.g. `gunzip -c dump.sql.gz | sudo -u postgres psql mydb`.
 
 ---
