@@ -156,6 +156,9 @@ func TestServiceInstallSystemd(t *testing.T) {
 		t.Errorf("non-root install used sudo install:\n%s", log)
 	}
 
+	if runtime.GOOS == "windows" {
+		return // Git Bash ignores the id stub; the setup script only runs on Linux servers
+	}
 	// root setup (id stubbed to 0) installs and enables
 	rootBin := stubBin(t, map[string]string{"id": "echo 0"})
 	inst, err := installScript(env, "shop", "prod", l, "I=systemd\n")
