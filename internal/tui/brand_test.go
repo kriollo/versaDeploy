@@ -89,19 +89,43 @@ func TestStartupSplashThenPicker(t *testing.T) {
 	}
 }
 
-// ←/→ must not get stuck in the Terminal view: on an empty prompt they switch views.
-func TestTerminalArrowsSwitchViewsWhenEmpty(t *testing.T) {
+// Passing through the Terminal view must not grab the keyboard: ←/→ switch views
+// until Enter starts typing; Esc stops typing, a second Esc leaves.
+func TestTerminalTypingOnlyAfterEnter(t *testing.T) {
 	m := newAppModel(nil, t.TempDir())
 	m.splash = false
 	m.width, m.height = 120, 40
-	m.currentView = viewTerminal
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	if got := next.(appModel).currentView; got != viewServices {
-		t.Fatalf("Right from an empty Terminal went to %v, want Services", got)
+	press := func(m appModel, k tea.KeyMsg) appModel {
+		next, _ := m.Update(k)
+		return next.(appModel)
 	}
-	m.terminal.input.SetValue("ls")
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	if got := next.(appModel).currentView; got != viewTerminal {
+
+	m.currentView = viewOperations
+	m = press(m, tea.KeyMsg{Type: tea.KeyRight})
+	if m.currentView != viewTerminal || m.terminal.typing || m.terminal.input.Focused() {
+		t.Fatalf("entering Terminal: view=%v typing=%v", m.currentView, m.terminal.typing)
+	}
+	if got := press(m, tea.KeyMsg{Type: tea.KeyRight}).currentView; got != viewServices {
+		t.Fatalf("Right through Terminal went to %v, want Services", got)
+	}
+
+	m = press(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.terminal.typing || !m.terminal.input.Focused() {
+		t.Fatal("Enter must start typing")
+	}
+	m = press(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ls")})
+	if m.terminal.input.Value() != "ls" {
+		t.Fatalf("typed %q", m.terminal.input.Value())
+	}
+	if got := press(m, tea.KeyMsg{Type: tea.KeyRight}).currentView; got != viewTerminal {
 		t.Fatalf("Right while typing must stay in the Terminal, got %v", got)
+	}
+
+	m = press(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.currentView != viewTerminal || m.terminal.typing {
+		t.Fatal("first Esc stops typing and stays")
+	}
+	if got := press(m, tea.KeyMsg{Type: tea.KeyEsc}).currentView; got != viewDashboard {
+		t.Fatalf("second Esc goes back, got %v", got)
 	}
 }

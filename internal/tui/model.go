@@ -447,7 +447,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.terminal.appendOutput(fmt.Sprintf("\n[ERROR] %v\n", msg.err))
 		}
 		m.terminal.appendOutput("\n")
-		m.terminal.input.Focus()
+		if m.terminal.typing {
+			m.terminal.input.Focus()
+		}
 
 	case msgCdResolved:
 		if msg.err != nil {
@@ -470,28 +472,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseMsg:
-		if m.currentView == viewTerminal {
-			switch msg.Button {
-			case tea.MouseButtonWheelUp:
-				m.terminal.vp.LineUp(3)
-			case tea.MouseButtonWheelDown:
-				m.terminal.vp.LineDown(3)
-			}
-		} else if m.currentView == viewServices {
-			switch msg.Button {
-			case tea.MouseButtonWheelUp:
-				m.services.vp.LineUp(3)
-			case tea.MouseButtonWheelDown:
-				m.services.vp.LineDown(3)
-			}
-		} else if m.currentView == viewOperations {
-			switch msg.Button {
-			case tea.MouseButtonWheelUp:
-				m.operations.scrollUp()
-			case tea.MouseButtonWheelDown:
-				m.operations.scrollDown()
-			}
-		}
+		return m.handleMouse(msg, cmds)
 
 	case msgSplashDone:
 		m.splash = false
@@ -538,29 +519,28 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		return m, tea.Batch(cmds...)
 	}
 
-	// While in terminal view, route all keys to the terminal and block global shortcuts.
-	// Only allow Ctrl+C to quit and number keys to switch views when not typing.
-	if m.currentView == viewTerminal {
+	// Terminal view: the prompt takes every key only while typing (Enter starts it,
+	// Esc ends it). Until then ←/→ and the other shortcuts work as in any view.
+	if m.currentView == viewTerminal && !m.sidebarFocused {
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
-		if msg.String() == "esc" && !m.terminal.running {
-			// Esc exits terminal view back to dashboard
+		if m.terminal.typing || m.terminal.running {
+			if msg.String() == "esc" && !m.terminal.running {
+				m.terminal.setTyping(false)
+				return m, tea.Batch(cmds...)
+			}
+			cmds = append(cmds, m.handleTerminalKey(msg)...)
+			return m, tea.Batch(cmds...)
+		}
+		switch msg.String() {
+		case "enter":
+			m.terminal.setTyping(true)
+			return m, tea.Batch(cmds...)
+		case "esc":
 			cmds = append(cmds, m.switchToView(viewDashboard)...)
 			return m, tea.Batch(cmds...)
 		}
-		// ←/→ on an empty prompt move to the next view, as everywhere else (with text
-		// they move the cursor)
-		if (key.Matches(msg, Keys.Left) || key.Matches(msg, Keys.Right)) && m.terminal.input.Value() == "" && !m.terminal.running && !m.sidebarFocused {
-			next := int(m.currentView) + 1
-			if key.Matches(msg, Keys.Left) {
-				next = int(m.currentView) - 1
-			}
-			cmds = append(cmds, m.switchToView(viewID(next))...)
-			return m, tea.Batch(cmds...)
-		}
-		cmds = append(cmds, m.handleTerminalKey(msg)...)
-		return m, tea.Batch(cmds...)
 	}
 
 	// Services: text input and confirm modal take every key
@@ -885,7 +865,17 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		cmds = append(cmds, m.handleOperationsKey(msg)...)
 
 	case viewTerminal:
-		cmds = append(cmds, m.handleTerminalKey(msg)...)
+		// not typing: only scroll the output
+		switch msg.String() {
+		case "up":
+			m.terminal.vp.LineUp(3)
+		case "down":
+			m.terminal.vp.LineDown(3)
+		case "pgup":
+			m.terminal.vp.ViewUp()
+		case "pgdown":
+			m.terminal.vp.ViewDown()
+		}
 
 	case viewServices:
 		cmds = append(cmds, m.handleServicesKey(msg)...)
@@ -1301,7 +1291,7 @@ func (m *appModel) switchToView(v viewID) []tea.Cmd {
 		if env := m.activeEnvCfg(); env != nil && m.terminal.cwd == "" {
 			m.terminal.cwd = env.RemotePath
 		}
-		m.terminal.input.Focus()
+		m.terminal.setTyping(false) // Enter starts typing: passing through keeps ←/→
 	}
 	if v == viewConfig {
 		m.config.loading = true

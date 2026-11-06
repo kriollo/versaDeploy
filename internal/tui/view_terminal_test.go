@@ -58,3 +58,19 @@ func TestRsyncVersionQuoting(t *testing.T) {
 		t.Errorf("rsync ssh misses the host-key policy: %s", args)
 	}
 }
+
+// The prompt must fit in the pane: the content pane clips what is taller.
+func TestTerminalPromptFitsPane(t *testing.T) {
+	for _, h := range []int{20, 37, 50} {
+		term := newTerminalModel()
+		term.initViewport(100, h)
+		out := term.view(100, h)
+		lines := strings.Split(out, "\n")
+		if len(lines) > h {
+			t.Fatalf("height %d: view has %d lines, the prompt is clipped", h, len(lines))
+		}
+		if !strings.Contains(out, "$") {
+			t.Fatalf("height %d: no prompt in the view", h)
+		}
+	}
+}

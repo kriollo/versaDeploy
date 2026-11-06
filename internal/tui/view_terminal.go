@@ -32,6 +32,7 @@ type terminalModel struct {
 	logCh   chan string
 	doneCh  chan error
 	running bool
+	typing  bool // the prompt has the keyboard (Enter starts, Esc ends)
 	history []string
 	histIdx int
 	cwd     string // remote working directory
@@ -56,8 +57,12 @@ func newTerminalModel() terminalModel {
 	}
 }
 
+// terminalChrome is the number of lines view draws around the output viewport
+// (title, cwd, separators, prompt, help): the prompt must stay inside the pane.
+const terminalChrome = 11
+
 func (t *terminalModel) initViewport(width, height int) {
-	vpH := height - 6
+	vpH := height - terminalChrome
 	if vpH < 4 {
 		vpH = 4
 	}
@@ -175,15 +180,18 @@ func (t terminalModel) view(width, height int) string {
 	rows = append(rows, "", sep)
 
 	// Input line
-	if t.running {
+	help := "  ↵:execute  ↑/↓:history  Tab:complete  PgUp/PgDn/scroll  Ctrl+L:clear  Esc:stop typing"
+	switch {
+	case t.running:
 		rows = append(rows, StyleWarning.Render("  ⏳ Running..."))
-	} else {
+	case t.typing:
 		rows = append(rows, fmt.Sprintf("  %s %s", StyleCmd.Render(cwdDisplay+" $"), t.input.View()))
+	default:
+		rows = append(rows, fmt.Sprintf("  %s %s", StyleCmd.Render(cwdDisplay+" $"), StyleMuted.Render("press ↵ to type a command")))
+		help = "  ↵:type a command  ←/→:views  ↑/↓ PgUp/PgDn:scroll  Esc:back"
 	}
 
-	rows = append(rows, "",
-		StyleMuted.Render("  ↵:execute  ↑/↓:history  Tab:complete  PgUp/PgDn/scroll  Ctrl+L:clear  Esc:back"),
-	)
+	rows = append(rows, "", StyleMuted.Render(help))
 
 	return strings.Join(rows, "\n")
 }
@@ -260,4 +268,14 @@ func shellEscape(name string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// setTyping gives the keyboard to the prompt (or takes it back).
+func (t *terminalModel) setTyping(on bool) {
+	t.typing = on
+	if on {
+		t.input.Focus()
+	} else {
+		t.input.Blur()
+	}
 }

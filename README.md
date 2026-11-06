@@ -34,7 +34,7 @@ versa deploy production
 - **Hooks, reloads and checks.** Local and remote hooks, service reloads (PHP-FPM, Nginx…), HTTP or command health checks, Slack/Teams/Discord webhooks.
 - **Old servers included.** POSIX-only remote commands, and legacy SSH algorithms for OpenSSH &lt; 7 (CentOS 5/6).
 - **Local mode** for hosting without SSH: a complete release folder you can upload by FTP.
-- **Interactive TUI.** Run `versa` to browse releases and server files, deploy, roll back and open a remote terminal.
+- **Interactive TUI.** Run `versa` to browse releases and server files, deploy, roll back and open a remote terminal. Works with the keyboard and the mouse (tabs, environments, wheel).
 - **Server setup included.** The TUI *Services* view detects and installs the stack (nginx/Apache, PHP, PostgreSQL/MySQL, Redis, Python, Node, SSL, firewall, deploy user), applies security updates, shows logs and schedules DB backups — agentless, over SSH, and safe on servers already in use.
 
 ## Install

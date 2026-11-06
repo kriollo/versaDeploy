@@ -33,7 +33,7 @@ environments:
 ## 2. From a fresh server to the first deploy
 
 1. Point the domain's DNS to the server and run `ssh-keyscan` (see above).
-2. Run `versa` and open **Services** (← / →). The deploy user doesn't exist yet: the view detects through the root connection and shows *"Deploy user … does not exist yet"*.
+2. Run `versa` and open **Services** (← / → or click the tab). The deploy user doesn't exist yet: the view detects through the root connection and shows *"Deploy user … does not exist yet"*.
 3. Check the preselected services (they come from your app's backend, see §4), adjust the **Parameters** and press **`I`** → **`Y`**. The log streams live.
 4. Or press **`P`** (*prepare for deploy*) to create only the deploy user (with your public key), its sudoers rules and the project directory.
 5. Press **`w`** to save the `provision:` block and **`a`** to add the suggested `services_reload` commands to `deploy.yml`. Commit `deploy.yml`.

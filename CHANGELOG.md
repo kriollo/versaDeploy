@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.12.0] - 2026-11-06
+
+### Added
+
+- **Mouse in the TUI**: click a tab or an environment, and scroll every view with the wheel (before, only Terminal, Services and Operations scrolled). Select text with `Shift` + drag.
+
+### Fixed
+
+- **TUI Terminal view: the prompt was cut off** (since 1.8.0): the output area left no room for the prompt line, so commands couldn't be seen while typing them.
+- **TUI Terminal view no longer grabs the keyboard when you pass through it**: ←/→ and the other shortcuts keep working until you press `Enter` to type a command; `Esc` stops typing and a second `Esc` goes back to the Dashboard.
+
 ## [1.11.0] - 2026-11-06
 
 ### Security
