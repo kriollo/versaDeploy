@@ -154,6 +154,15 @@ server {
         return 404;
     }
 
+    # Lo mismo que bloquea el .htaccess de versaWYS: la CLI y archivos de desarrollo. Solo
+    # archivos reales: una ruta del router que termine igual sigue llegando a index.php
+    location ~* (^/versaCLI$|\.(bak|config|dist|fla|inc|ini|log|psd|sh|sql|json|lock|swp|xml|twig|yml|yaml|md|jade|scss|sqlite3|rst|conf|ts|toml|neon)$) {
+        if (-f $request_filename) {
+            return 404;
+        }
+        try_files /nonexistent /index.php?$query_string;
+    }
+
     # Forzar router PHP para carpetas sensibles (^~ gana sobre las location con regex)
     location ~ ^/(app|versaWYS|vendor|logs|src|configs|documentacion)$ {
         try_files /nonexistent /index.php?$query_string;

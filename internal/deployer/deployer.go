@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -260,6 +261,24 @@ func (d *Deployer) fetchPreviousLock(c *ssh.Client) (*state.DeployLock, error) {
 	return lock, nil
 }
 
+// liveRelease returns a lock naming the release current points to, or nil when there
+// is none. It carries no file hashes: only the release dir is known.
+func (d *Deployer) liveRelease(c *ssh.Client) *state.DeployLock {
+	target, err := c.ReadSymlink(d.remote("current"))
+	if err != nil {
+		return nil
+	}
+	name := filepath.Base(target)
+	if !state.ValidReleaseDir(name) {
+		return nil
+	}
+	if ok, err := c.FileExists(d.remote("releases", name)); err != nil || !ok {
+		return nil
+	}
+	d.log.Info("No deploy.lock, but %s is live: its preserved paths are kept and it is the rollback target", name)
+	return &state.DeployLock{Version: state.LockFileVersion, LastDeploy: state.DeployInfo{ReleaseDir: name}}
+}
+
 // ship uploads a built release, activates it and records it in deploy.lock.
 // Shared by Deploy and DeployWithArtifact.
 func (d *Deployer) ship(c *ssh.Client, a *PrebuiltArtifact, previousLock *state.DeployLock, checkTimeout func() error) error {
@@ -274,6 +293,11 @@ func (d *Deployer) ship(c *ssh.Client, a *PrebuiltArtifact, previousLock *state.
 	}
 	if err := d.uploadRelease(c, a, previousLock, finalDir); err != nil {
 		return err
+	}
+	// No deploy.lock but a live release (an initial deploy whose post_deploy failed):
+	// keep its preserved paths and roll back to it, instead of leaving the site broken.
+	if previousLock == nil {
+		previousLock = d.liveRelease(c)
 	}
 
 	// Shared paths, reused dependencies and preserved paths
@@ -313,7 +337,7 @@ func (d *Deployer) ship(c *ssh.Client, a *PrebuiltArtifact, previousLock *state.
 	// last deployed one after a manual rollback (deploy.lock keeps the last deploy).
 	if previousLock != nil {
 		if target, err := c.ReadSymlink(currentSymlink); err == nil {
-			if active := filepath.Base(target); active != previousLock.LastDeploy.ReleaseDir {
+			if active := filepath.Base(target); active != previousLock.LastDeploy.ReleaseDir && state.ValidReleaseDir(active) {
 				live := *previousLock
 				live.LastDeploy.ReleaseDir = active
 				previousLock = &live
@@ -456,7 +480,11 @@ func (d *Deployer) uploadDelta(c *ssh.Client, a *PrebuiltArtifact, prevVersion s
 	for len(remove) > 0 {
 		cmd := "cd " + ssh.ShellQuote(stagingDir) + " && rm -rf --"
 		for len(remove) > 0 && len(cmd) < 64<<10 {
-			cmd += " " + ssh.ShellQuote(remove[0])
+			// names come from the previous release's hash file on the server: only
+			// clean paths inside the release are removed
+			if p := remove[0]; path.Clean(p) == p && insideApp(p) {
+				cmd += " " + ssh.ShellQuote(p)
+			}
 			remove = remove[1:]
 		}
 		if out, err := c.ExecuteCommand(cmd); err != nil {
@@ -705,8 +733,9 @@ func (d *Deployer) buildFrom(tmpRepo, commitHash string, cs *changeset.ChangeSet
 	d.log.Info("Release version: %s", releaseVersion)
 
 	d.log.Info("Building artifacts...")
-	artifactDir = filepath.Join(os.TempDir(), "versadeploy-artifact-"+releaseVersion)
-	if err = os.MkdirAll(artifactDir, 0775); err != nil {
+	// Private (0700, random suffix): a predictable path in a shared /tmp could be
+	// pre-created by another local user to tamper with the release.
+	if artifactDir, err = os.MkdirTemp("", "versadeploy-artifact-"+releaseVersion+"-"); err != nil {
 		return "", "", err
 	}
 	buildResult, err := builder.NewBuilder(tmpRepo, artifactDir, d.env, cs, d.log).Build()
@@ -811,7 +840,16 @@ func (d *Deployer) rollback(sshClient *ssh.Client, previousLock *state.DeployLoc
 	return sshClient.CreateSymlink(relativeTarget, currentSymlink)
 }
 
+// runHook runs a post_deploy hook and rolls back to previousLock when it fails.
 func (d *Deployer) runHook(sshClient *ssh.Client, finalDir, hook string, previousLock *state.DeployLock) error {
+	if err := d.execHook(sshClient, finalDir, hook); err != nil {
+		return d.rollbackAfterHook(sshClient, err, previousLock)
+	}
+	return nil
+}
+
+// execHook runs one hook in finalDir/app and logs its output; no rollback.
+func (d *Deployer) execHook(sshClient *ssh.Client, finalDir, hook string) error {
 	hookTimeout := time.Duration(d.env.HookTimeout) * time.Second
 	if hookTimeout <= 0 {
 		hookTimeout = 300 * time.Second
@@ -824,21 +862,24 @@ func (d *Deployer) runHook(sshClient *ssh.Client, finalDir, hook string, previou
 	output, err := sshClient.ExecuteCommandWithTimeout(wrappedHook, hookTimeout)
 	if err != nil {
 		d.log.Error("Hook failed: %s\nOutput: %s", hook, output)
-
-		// Rollback on hook failure
-		if previousLock != nil {
-			d.log.Info("Critical Error in Hook: Deployment will be rolled back to version %s", previousLock.LastDeploy.ReleaseDir)
-			if rollbackErr := d.rollback(sshClient, previousLock); rollbackErr != nil {
-				return fmt.Errorf("hook failed and rollback also failed: %w", rollbackErr)
-			}
-			d.afterRollback(sshClient)
-			return fmt.Errorf("post-deploy hook failed (rolled back to %s): %w", previousLock.LastDeploy.ReleaseDir, err)
-		}
-		return fmt.Errorf("post-deploy hook failed (no previous version for rollback): %w", err)
+		return err
 	}
 
 	d.log.Info("Hook output [%s]: %s", hook, strings.TrimSpace(output))
 	return nil
+}
+
+// rollbackAfterHook rolls back once after a failed post_deploy hook (or group).
+func (d *Deployer) rollbackAfterHook(sshClient *ssh.Client, err error, previousLock *state.DeployLock) error {
+	if previousLock == nil {
+		return fmt.Errorf("post-deploy hook failed (no previous version for rollback): %w", err)
+	}
+	d.log.Info("Critical Error in Hook: Deployment will be rolled back to version %s", previousLock.LastDeploy.ReleaseDir)
+	if rollbackErr := d.rollback(sshClient, previousLock); rollbackErr != nil {
+		return fmt.Errorf("hook failed and rollback also failed: %w", rollbackErr)
+	}
+	d.afterRollback(sshClient)
+	return fmt.Errorf("post-deploy hook failed (rolled back to %s): %w", previousLock.LastDeploy.ReleaseDir, err)
 }
 
 func (d *Deployer) executePostDeployHooks(sshClient *ssh.Client, finalDir string, rollbackLock *state.DeployLock) error {
@@ -858,12 +899,14 @@ func (d *Deployer) executePostDeployHooks(sshClient *ssh.Client, finalDir string
 			d.log.Info("Executing parallel hook group (%d commands)...", len(hookConfig.Parallel))
 			for _, h := range hookConfig.Parallel {
 				cmd := h // closure capture
+				// no rollback inside the group: concurrent rollbacks would race on
+				// the current symlink; roll back once after every hook has finished
 				g.Go(func() error {
-					return d.runHook(sshClient, finalDir, cmd, rollbackLock)
+					return d.execHook(sshClient, finalDir, cmd)
 				})
 			}
 			if err := g.Wait(); err != nil {
-				return err
+				return d.rollbackAfterHook(sshClient, err, rollbackLock)
 			}
 		}
 	}
@@ -1137,6 +1180,11 @@ func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) e
 	return nil
 }
 
+// insideApp reports whether a cleaned slash path names something inside the app dir.
+func insideApp(clean string) bool {
+	return clean != "" && clean != "." && clean != ".." && !strings.HasPrefix(clean, "../") && !strings.HasPrefix(clean, "/")
+}
+
 // sharedLinkScript replaces each shared path in releaseDir/app with a symlink into
 // sharedBase, in one script; any failing step aborts it. Existing shared targets
 // (files like .env included) are left untouched; missing ones become directories.
@@ -1145,11 +1193,13 @@ func sharedLinkScript(releaseDir, sharedBase string, paths []string) string {
 	for _, path := range paths {
 		// Clean the path to avoid directory traversal or trailing slashes
 		cleanPath := filepath.ToSlash(filepath.Clean(path))
-		if strings.HasPrefix(cleanPath, "../") || cleanPath == ".." {
-			continue // Security: don't allow escaping release dir
+		if !insideApp(cleanPath) {
+			continue // Security: don't allow escaping (or replacing) the app dir
 		}
 		releasePath := filepath.ToSlash(filepath.Join(releaseDir, "app", cleanPath))
-		script = append(script, fmt.Sprintf("{ [ -e %[1]s ] || mkdir -p %[1]s; } && rm -rf -- %[2]s && mkdir -p %[3]s && ln -sfn %[1]s %[2]s",
+		// A new shared dir (uploads, logs, cache) is group-writable: the web server
+		// writes there through the project's setgid group (www-data)
+		script = append(script, fmt.Sprintf("{ [ -e %[1]s ] || { mkdir -p %[1]s && chmod g+w %[1]s; }; } && rm -rf -- %[2]s && mkdir -p %[3]s && ln -sfn %[1]s %[2]s",
 			ssh.ShellQuote(filepath.ToSlash(filepath.Join(sharedBase, cleanPath))),
 			ssh.ShellQuote(releasePath), ssh.ShellQuote(filepath.ToSlash(filepath.Dir(releasePath)))))
 	}
@@ -1416,6 +1466,9 @@ func preserveScript(prevRelease, finalDir string, paths []string) string {
 	var script []string
 	for _, path := range paths {
 		cleanPath := filepath.ToSlash(filepath.Clean(path))
+		if !insideApp(cleanPath) {
+			continue // config validation refuses these; never rm -rf outside the app dir
+		}
 		script = append(script, fmt.Sprintf(`f=; for s in %s %s; do if [ -e "$s" ]; then f=$s; break; fi; done
 if [ -n "$f" ]; then { rm -rf -- %[3]s && mkdir -p %[5]s && cp -rfp -- "$f" %[3]s; } || exit 1; echo ok %[4]s; else echo missing %[4]s; fi`,
 			ssh.ShellQuote(prevRelease+"/app/"+cleanPath), ssh.ShellQuote(prevRelease+"/"+cleanPath),
@@ -1597,7 +1650,8 @@ func (d *Deployer) sendNotification(releaseVersion, commit string, deployErr err
 		return
 	}
 
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	// No redirects: the payload (with remote error output) goes only to the URL configured.
+	httpClient := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := httpClient.Post(d.env.Notifications.WebhookURL, "application/json", bytes.NewReader(body))
 	if err != nil {
 		d.log.Warn("Failed to send deployment notification: %v", err)

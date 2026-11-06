@@ -78,7 +78,8 @@ func copyFile(src, dst string, d os.DirEntry) error {
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	// dst was just cleared: O_EXCL refuses a file or link planted meanwhile
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, info.Mode().Perm())
 	if err != nil {
 		return err
 	}

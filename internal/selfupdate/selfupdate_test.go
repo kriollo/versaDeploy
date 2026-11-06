@@ -56,17 +56,63 @@ func TestGetLatestRelease_NonOKStatus(t *testing.T) {
 }
 
 func TestFetchChecksum(t *testing.T) {
+	sum := strings.Repeat("ab", 32)
+	other := strings.Repeat("cd", 32)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "abc123  versa_linux_amd64\n")
+		switch r.URL.Path {
+		case "/bad":
+			fmt.Fprint(w, "abc123  versa_linux_amd64\n")
+		default: // CI runs sha256sum on dist/<name>
+			fmt.Fprintf(w, "%s  dist/versa_darwin_arm64\n%s  dist/versa_linux_amd64\n", other, sum)
+		}
 	}))
 	defer srv.Close()
+	original := githubAPIBase
+	githubAPIBase = srv.URL
+	defer func() { githubAPIBase = original }()
 
-	got, err := fetchChecksum(srv.URL)
-	if err != nil {
-		t.Fatalf("fetchChecksum failed: %v", err)
+	got, err := fetchChecksum(srv.URL, "versa_linux_amd64")
+	if err != nil || got != sum {
+		t.Fatalf("fetchChecksum = %q, %v; want the digest listed for the asset", got, err)
 	}
-	if got != "abc123" {
-		t.Errorf("expected 'abc123', got %q", got)
+	if _, err := fetchChecksum(srv.URL+"/bad", "versa_linux_amd64"); err == nil {
+		t.Error("a non-sha256 digest must be refused")
+	}
+	if _, err := fetchChecksum(srv.URL, "versa_windows_amd64.exe"); err == nil {
+		t.Error("a missing entry must be refused")
+	}
+}
+
+func TestDownloadURLsMustBeGitHubHTTPS(t *testing.T) {
+	for raw, ok := range map[string]bool{
+		"https://github.com/kriollo/versaDeploy/releases/download/v1/versa": true,
+		"https://objects.githubusercontent.com/x":                           true,
+		"http://github.com/kriollo/versaDeploy/releases/download/v1/versa":  false,
+		"https://evil.example/versa":                                        false,
+		"https://github.com.evil.example/versa":                             false,
+		"https://release-assets.githubusercontent.com.evil.example/versa":   false,
+	} {
+		if err := checkURL(raw); (err == nil) != ok {
+			t.Errorf("checkURL(%q) = %v, want ok=%v", raw, err, ok)
+		}
+	}
+}
+
+func TestIsOlder(t *testing.T) {
+	cases := []struct {
+		tag, current string
+		older        bool
+	}{
+		{"v1.9.1", "1.10.0", true},
+		{"v1.10.0", "1.10.0", false},
+		{"v1.11.0", "1.10.0", false},
+		{"v2.0.0-beta", "1.10.0", false},
+		{"v1.0.0", "dev", false},
+	}
+	for _, c := range cases {
+		if got := isOlder(c.tag, c.current); got != c.older {
+			t.Errorf("isOlder(%s, %s) = %v", c.tag, c.current, got)
+		}
 	}
 }
 
@@ -76,7 +122,7 @@ func TestFetchChecksum_NonOKStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := fetchChecksum(srv.URL); err == nil {
+	if _, err := fetchChecksum(srv.URL, "x"); err == nil {
 		t.Error("expected error for non-200 response")
 	}
 }

@@ -72,6 +72,15 @@ func (v Vars) DocRootPath() string {
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
+var emailRe = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`)
+
+// Values the server reports end up in root scripts: accept only what apt and
+// systemd can actually print.
+var (
+	phpVersionRe = regexp.MustCompile(`^\d+\.\d+$`)
+	debPkgRe     = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+$`)
+)
+
 // pathRe: remote_path and doc_root end up in vhosts and root scripts
 var pathRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 
@@ -166,6 +175,17 @@ func (v Vars) Validate(steps []string) error {
 			return fmt.Errorf("invalid alias %q", a)
 		}
 	}
+	// vhosts are rendered whenever a web server is set, whatever the steps
+	if v.Domain != "" && !nameRe.MatchString(v.Domain) {
+		return fmt.Errorf("invalid domain %q", v.Domain)
+	}
+	if v.AdminEmail != "" && !emailRe.MatchString(v.AdminEmail) {
+		return fmt.Errorf("invalid admin_email %q", v.AdminEmail)
+	}
+	// sudoers reads ALL (and other reserved words) as "every user"
+	if u := strings.ToUpper(v.DeployUser); u == "ALL" || u == "ROOT" && v.DeployUser != "root" {
+		return fmt.Errorf("deploy_user %q is reserved", v.DeployUser)
+	}
 	if s := v.SSHPort; s == 0 {
 		return fmt.Errorf("ssh port unknown")
 	}
@@ -253,13 +273,18 @@ func UpgradeBundle(pkgs, units []string, refreshOnly bool) Bundle {
 	s.Write(common)
 	s.WriteString("ok 'Package index refreshed'\n") // common.sh runs apt-get update
 	if !refreshOnly {
-		q := make([]string, len(pkgs))
-		for i, p := range pkgs {
-			q[i] = versassh.ShellQuote(p)
+		var q []string
+		for _, p := range pkgs {
+			if debPkgRe.MatchString(p) {
+				q = append(q, versassh.ShellQuote(p))
+			}
 		}
 		fmt.Fprintf(&s, "\nsection 'Upgrade'\napt-get install --only-upgrade -y -o Dpkg::Options::=--force-confold %s\n", strings.Join(q, " "))
 		for _, u := range units {
-			fmt.Fprintf(&s, "systemctl try-reload-or-restart %s 2>/dev/null && ok 'Reloaded %s' || true\n", versassh.ShellQuote(u), u)
+			if !nameRe.MatchString(u) {
+				continue
+			}
+			fmt.Fprintf(&s, "systemctl try-reload-or-restart %s 2>/dev/null && ok %s || true\n", versassh.ShellQuote(u), versassh.ShellQuote("Reloaded "+u))
 		}
 		s.WriteString("[ -f /var/run/reboot-required ] && warn 'A reboot is required to finish the upgrade'\nok 'Upgrade finished'\n")
 	}
@@ -285,12 +310,14 @@ func Run(client *versassh.Client, user string, b Bundle, w io.Writer) error {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
 	for name, data := range b {
-		if err := client.WriteRemoteBytes(dir+"/"+name, data); err != nil {
+		// 0600: env holds the DB password (the dir is 0700 too)
+		if err := client.WriteRemoteFileMode(dir+"/"+name, data, 0600); err != nil {
 			client.ExecuteCommand("rm -rf " + dir)
 			return fmt.Errorf("upload %s: %w", name, err)
 		}
 	}
-	return Exec(client, user, fmt.Sprintf("bash %s/run.sh; rc=$?; rm -rf %s; exit $rc", dir, dir), w)
+	// The trap also removes the bundle (and its secrets) when the SSH session drops.
+	return Exec(client, user, fmt.Sprintf("trap 'rm -rf %[1]s' EXIT HUP INT TERM; bash %[1]s/run.sh", dir), w)
 }
 
 // SuggestedReload returns the services_reload commands matching v.
@@ -312,7 +339,7 @@ func (v Vars) env() string {
 	q := versassh.ShellQuote
 	kv := [][2]string{
 		{"PROJECT_NAME", v.Project}, {"DOMAIN", v.Domain}, {"WEB_SERVER", v.WebServer},
-		{"PHP_VERSION", v.PHPVersion}, {"REMOTE_PATH", v.RemotePath}, {"DOC_ROOT", v.DocRootPath()},
+		{"PHP_VERSION", v.PHPVersion}, {"REMOTE_PATH", path.Clean(v.RemotePath)}, {"DOC_ROOT", v.DocRootPath()},
 		{"DEPLOY_USER", v.DeployUser}, {"DATABASE", v.Database}, {"DB_NAME", v.DBName},
 		{"DB_USER", v.DBUser}, {"DB_PASS", v.DBPassword}, {"ADMIN_EMAIL", v.AdminEmail},
 		{"SSH_PORT", strconv.Itoa(v.SSHPort)}, {"PUBKEY", strings.TrimSpace(v.PubKey)},

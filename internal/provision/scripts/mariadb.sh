@@ -22,20 +22,23 @@ MYCNF
 fi
 service_active "$unit" || die "$unit is not running — journalctl -u $unit -n 30"
 
+# The password reaches the client through stdin (printf is a builtin), never argv,
+# so other local users can't read it from the process list. The SET pins the
+# escaping mode pass_sql assumes.
 pass_sql="${DB_PASS//\\/\\\\}"
 pass_sql="${pass_sql//\'/\\\'}"
 mysqlc() { mysql --protocol=socket -u root "$@"; }
 mysqlc -e "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 if [ "$(mysqlc -N -e "SELECT COUNT(*) FROM mysql.user WHERE user='${DB_USER}' AND host='localhost'")" != 0 ]; then
     if [ "${RESET_DB_PASSWORD:-false}" = true ]; then
-        mysqlc -e "ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${pass_sql}';"
+        printf '%s\n' "SET SESSION sql_mode=REPLACE(@@sql_mode,'NO_BACKSLASH_ESCAPES',''); ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${pass_sql}';" | mysqlc
         warn "DB user ${DB_USER}: password CHANGED (explicit reset) — update the app's .env"
     else
         ok "DB user ${DB_USER} exists — password kept (reset it explicitly from the Services view)"
     fi
 else
     [ -n "$DB_PASS" ] || die "db_password is required to create ${DB_USER}"
-    mysqlc -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${pass_sql}';"
+    printf '%s\n' "SET SESSION sql_mode=REPLACE(@@sql_mode,'NO_BACKSLASH_ESCAPES',''); CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${pass_sql}';" | mysqlc
     ok "DB user ${DB_USER} created"
 fi
 mysqlc -e "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost'; FLUSH PRIVILEGES;"

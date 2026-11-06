@@ -221,7 +221,8 @@ func tabComplete(client *versassh.Client, cwd, prefix, token string) tea.Cmd {
 		}
 
 		// List files in the target directory
-		lsCmd := fmt.Sprintf("ls -1Ap %s 2>/dev/null", dir)
+		// dir may contain server-chosen names (cwd, earlier completions): quote it
+		lsCmd := fmt.Sprintf("ls -1Ap -- %s 2>/dev/null", versassh.ShellQuote(dir))
 		output, err := client.ExecuteCommand(lsCmd)
 		if err != nil {
 			return msgTabComplete{err: err, prefix: prefix, token: token}
@@ -234,15 +235,29 @@ func tabComplete(client *versassh.Client, cwd, prefix, token string) tea.Cmd {
 				continue
 			}
 			if partial == "" || strings.HasPrefix(entry, partial) {
-				// Rebuild the full token with the match
+				// Rebuild the full token with the match. The name comes from the
+				// server and lands in a shell command line: escape it.
 				if idx := strings.LastIndex(token, "/"); idx >= 0 {
-					matches = append(matches, token[:idx+1]+entry)
+					matches = append(matches, token[:idx+1]+shellEscape(entry))
 				} else {
-					matches = append(matches, entry)
+					matches = append(matches, shellEscape(entry))
 				}
 			}
 		}
 
 		return msgTabComplete{matches: matches, prefix: prefix, token: token}
 	}
+}
+
+// shellEscape backslash-escapes every character of a remote name that the shell
+// would interpret, so a completed name stays one literal word.
+func shellEscape(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-/@%+=:,", r)) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }

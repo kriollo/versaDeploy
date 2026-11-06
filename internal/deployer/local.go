@@ -38,6 +38,10 @@ func (d *Deployer) deployLocal() error {
 		os.RemoveAll(artifactDir)
 	}()
 
+	if d.dryRun {
+		d.log.Info("Dry run: release %s (%s) built; %s left untouched, hooks not run", releaseVersion, commitHash[:8], d.env.LocalPath)
+		return nil
+	}
 	d.log.Info("Writing release %s (%s) to %s...", releaseVersion, commitHash[:8], d.env.LocalPath)
 	if err := fsutil.CopyDirReplace(artifactDir, d.env.LocalPath); err != nil {
 		return fmt.Errorf("failed to write local release: %w", err)

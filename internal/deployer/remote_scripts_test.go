@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,10 @@ func TestSharedLinkScript(t *testing.T) {
 		}
 		if b, _ := os.ReadFile(filepath.Join(root, "shared/.env")); string(b) != "KEEP" {
 			t.Errorf("shared .env overwritten: %q", b)
+		}
+		// new shared dirs are group-writable: the web server writes logs/uploads there
+		if fi, err := os.Stat(filepath.Join(root, "shared/storage")); runtime.GOOS != "windows" && (err != nil || fi.Mode().Perm()&0o020 == 0) {
+			t.Errorf("new shared dir not group-writable: %v %v", fi.Mode(), err)
 		}
 	})
 }

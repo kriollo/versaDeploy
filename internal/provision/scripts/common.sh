@@ -62,7 +62,8 @@ install_vhost() {
     if [ -n "$other" ]; then
         die "${DOMAIN} is already served by: $(echo $other) — set provision project/domain to match it or disable it first"
     fi
-    cp "$src" "$dst"
+    # 644: the bundle files are 0600, and the deploy user's detection reads vhosts
+    install -m 644 "$src" "$dst"
     if [ "$WEB_SERVER" = nginx ]; then
         # 'http2 on;' needs nginx >= 1.25.1; older versions take it on the listen line
         local v; v="$(nginx -v 2>&1 | sed 's|.*/||')"

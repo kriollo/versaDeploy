@@ -32,6 +32,10 @@ func Clone(repoPath, ref string) (string, error) {
 
 	// Checkout specific ref if provided
 	if ref != "" {
+		if strings.HasPrefix(ref, "-") { // would be read as an option
+			os.RemoveAll(tmpDir)
+			return "", fmt.Errorf("invalid git ref %q", ref)
+		}
 		if _, err := executeGitInternal(tmpDir, "checkout", ref); err != nil {
 			os.RemoveAll(tmpDir)
 			return "", fmt.Errorf("git checkout %s failed: %w", ref, err)

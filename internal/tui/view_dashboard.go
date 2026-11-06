@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	versassh "github.com/user/versaDeploy/internal/ssh"
 )
 
@@ -58,8 +59,52 @@ func stat(label, value string) string {
 	return fmt.Sprintf("  %-24s %s", label, v)
 }
 
+// sideBannerMinWidth leaves the stats about 60 columns beside the logo.
+const sideBannerMinWidth = 90
+
 func (d dashboardModel) view(width, height int) string {
-	lines := d.lines(width)
+	if !d.loaded || d.err != nil {
+		return d.splash(width, height)
+	}
+	banner := brandBanner()
+	if width < sideBannerMinWidth || height < len(banner)+1 {
+		return d.window(d.lines(width), height)
+	}
+
+	// Logo pinned on the right; the stats scroll beside it.
+	leftW := width - brandBannerWidth - 2
+	clip := lipgloss.NewStyle().MaxWidth(leftW)
+	body := strings.Split(d.window(d.lines(leftW), height), "\n")
+	for i, line := range body {
+		line = clip.Render(line)
+		line += strings.Repeat(" ", leftW-lipgloss.Width(line))
+		if j := i - 1; j >= 0 && j < len(banner) { // row 0 is blank, start beside the title
+			line += "  " + banner[j]
+		}
+		body[i] = line
+	}
+	return strings.Join(body, "\n")
+}
+
+// splash shows the logo centered while connecting/loading, with the status
+// (or error) under it. Too small a pane gets just the status.
+func (d dashboardModel) splash(width, height int) string {
+	msg := d.lines(width)
+	banner := brandBanner()
+	if width < brandBannerWidth+2 || height < len(banner)+len(msg)+2 {
+		return strings.Join(msg, "\n")
+	}
+	out := make([]string, 0, height)
+	for range (height - len(banner) - len(msg)) / 3 {
+		out = append(out, "")
+	}
+	for _, line := range append(banner, msg...) {
+		out = append(out, centerLine(line, width))
+	}
+	return strings.Join(out, "\n")
+}
+
+func (d dashboardModel) window(lines []string, height int) string {
 	if height <= 0 || len(lines) <= height {
 		return strings.Join(lines, "\n")
 	}

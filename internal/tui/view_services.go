@@ -318,7 +318,12 @@ func (s *servicesModel) askSteps(ids []string, title string) {
 	if slices.Contains(ids, "sudoers") && s.env != nil {
 		// let deploys install and restart the app's services as the deploy user
 		e := *s.env
-		e.Services = provision.ProposedServices(s.env, s.vars)
+		svcs, err := servicesForDeployUser(s.env, s.vars)
+		if err != nil {
+			s.status = StyleError.Render("✕ " + err.Error())
+			return
+		}
+		e.Services = svcs
 		if len(e.Services) > 0 {
 			e.SSH.User = s.vars.DeployUser
 			v.ServicesSudoers = deployer.SudoersScript(&e, s.project)
@@ -349,6 +354,23 @@ func (s *servicesModel) askSteps(ids []string, title string) {
 	if slices.Contains(ids, "ufw") {
 		s.confirmLines = append(s.confirmLines, "", StyleWarning.Render(fmt.Sprintf("  UFW: allows SSH %d, 80 and 443 (an active firewall keeps its policy)", s.vars.SSHPort)))
 	}
+}
+
+// servicesForDeployUser returns the services the sudoers step installs for the deploy
+// user. The rules go to that user, so services that ran as the old ssh.user run as
+// the deploy user, and none may run as root: the deploy user owns the wrapper root
+// would execute.
+func servicesForDeployUser(env *config.Environment, v provision.Vars) ([]config.ServiceConfig, error) {
+	svcs := slices.Clone(provision.ProposedServices(env, v))
+	for i := range svcs {
+		if u := svcs[i].User; u == "" || u == env.SSH.User {
+			svcs[i].User = v.DeployUser
+		}
+		if svcs[i].User == "root" && v.DeployUser != "root" {
+			return nil, fmt.Errorf("service %s runs as root: set its user to %s", svcs[i].Name, v.DeployUser)
+		}
+	}
+	return svcs, nil
 }
 
 // askUpgrade prepares the confirm modal for upgrades: one service, security only, or

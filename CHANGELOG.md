@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.11.0] - 2026-11-06
+
+### Security
+
+- **Build artifacts in `/tmp` could be tampered with by another local user**: the artifact dir had a predictable name and chunks were world-readable. The dir is now private (`MkdirTemp`, `0700`) and chunks are `0600` and refuse a pre-created file or symlink. Uploaded chunks on the server are `0600` too.
+- **Local Python binaries could bundle packages planted by another local user**: `use_cache` passed the shared `--cache-dir /tmp/pip-cache`. pip now uses its private per-user cache (`--no-cache-dir` when `use_cache` is off).
+- **Root provisioning followed symlinks in `remote_path`** (*Project directory* step): a deploy user could get any directory chowned to it. The step refuses a path through a symlink.
+- **Services-view sudoers step could hand a root service to the deploy user** when `ssh.user` was root. Those services now run as the deploy user; a root one is refused. Root setup also refuses any uid-0 service user (e.g. `toor`).
+- **DB password no longer in `mysql`/`psql` arguments** (visible in `ps`): it goes through stdin, with the SQL escaping mode pinned.
+- **Service wrappers in `.versa/` (they export `environment`) are `0600`** when the service runs as `ssh.user`. The provisioning bundle is `0600` and is removed even if the SSH session drops.
+- **`env_file` is no longer read by systemd as root** for non-root deploys (a symlink in `shared/` could expose root-readable files): the wrapper loads it as the service user. **Existing servers: run `versa service <env> setup | ssh root@SERVER sh` once** (deploys stop with *needs root setup* until then).
+- **Server-reported values in root scripts**: PHP version and package/unit names from detection are validated before the upgrade script uses them; control characters are stripped from the report.
+- **Apache/nginx vhosts block what versaWYS's `.htaccess` blocks**: the vhost has `AllowOverride None`, so `versaCLI`, `README.md`, `pnpm-lock.yaml`, `tsconfig.json` and other development files were served. Only real files are blocked (router paths with those extensions still reach `index.php`). **Existing servers: re-run the web server step in the Services view.**
+- **TUI**: tab completion quotes and escapes remote names (a crafted directory name ran commands); rsync quotes remote paths with rsync < 3.2.4 and uses the configured `known_hosts_file` / `strict_host_key`.
+- **Sudoers rules**: OpenRC/SysV rules allow only `start|stop|restart|status`; command paths come from system dirs, never `PATH`.
+- **Self-update** only downloads from https GitHub URLs (redirects included), caps sizes, reads the digest of its own file from the `.sha256` and refuses to downgrade. Releases are prereleases only when the tag has a suffix (`/releases/latest` skipped them).
+- **Release workflow**: `contents: read` except the release job, actions pinned to commit SHAs, tag format checked, manual releases only from `main`.
+- **Stricter config**: environment names, `project` (no quotes, `$`, backslashes), `shared_paths`/`preserved_paths` (inside the app dir, not `.`), `go.binary_name`; `release_dir` read from the server's `deploy.lock` must be a plain name; incremental uploads only remove clean paths inside the release.
+- `--log-file` is `0600`; webhooks don't follow redirects; remote command output is capped at 16 MB; tracked symlinks pointing outside the repo ship as links, not as the file they point to; `ssh.legacy_algorithms` logs a warning.
+
+### Added
+
+- TUI: versaDeploy logo — a splash screen while it starts (before the config picker and the first connection), a compact mark in the header and the full logo beside the Dashboard stats.
+
+### Fixed
+
+- **A failed first deploy left the next one without a rollback target**: when `post_deploy` failed on an initial deploy (no `deploy.lock` yet), the next attempt ignored the live release, so `preserved_paths` (e.g. `config.json`) were lost and a failure left the site down. Without `deploy.lock`, the release `current` points to is now used for both.
+- **New `shared_paths` directories are group-writable**: the web server (group `www-data` through the setgid project dir) couldn't write logs, cache or uploads there. Existing shared dirs are left as they are: `chmod g+w` them if the app writes there.
+- **TUI `w`/`a` and the Config view wrote to `<repo>/deploy.yml`** instead of the file loaded with `--config` (or found as `versa_deploy.yml`).
+- **Vhosts installed `0600`** after the provisioning bundle became private, so the detection (run as the deploy user) showed sites without names. They are `0644` again.
+- **Base packages include `cron`** and start it: app schedulers (versaWYS `app:schedule:run`) need it, and minimal images don't ship it.
+- TUI Terminal view: ←/→ on an empty prompt switch views instead of getting stuck there.
+- A failing hook in a `parallel` post_deploy group rolled back once per failing hook, concurrently; now once, after the group ends.
+- Cleaning old releases never deletes the live one (`current`), whatever its name sorts as.
+- `--dry-run` in local mode no longer replaces `local_path` or runs hooks.
+
 ## [1.10.0] - 2026-11-05
 
 ### Security

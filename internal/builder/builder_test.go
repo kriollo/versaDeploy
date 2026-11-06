@@ -268,3 +268,28 @@ func TestBuilder_Build_Subdirectories(t *testing.T) {
 		t.Error("api/index.php not found in artifact/app/api")
 	}
 }
+
+// A tracked symlink to a file outside the repo must not ship that file's content.
+func TestCopyEntireRepoKeepsOutsideLinksAsLinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	repo, out, secretDir := t.TempDir(), t.TempDir(), t.TempDir()
+	secret := filepath.Join(secretDir, "id_rsa")
+	os.WriteFile(secret, []byte("PRIVATE KEY"), 0600)
+	os.WriteFile(filepath.Join(repo, "inside.txt"), []byte("ok"), 0644)
+	os.Symlink(secret, filepath.Join(repo, "key"))
+	os.Symlink("inside.txt", filepath.Join(repo, "alias.txt"))
+
+	log, _ := logger.NewLogger("", false, false)
+	b := NewBuilder(repo, out, &config.Environment{}, &changeset.ChangeSet{}, log)
+	if err := b.copyEntireRepo(); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(filepath.Join(out, "app", "key")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("outside link must stay a link: %v %v", fi, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(out, "app", "alias.txt")); string(got) != "ok" {
+		t.Errorf("inside link content = %q", got)
+	}
+}

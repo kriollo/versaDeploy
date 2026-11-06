@@ -98,3 +98,33 @@ func TestPythonBuildBinaryNeedsLinux(t *testing.T) {
 		t.Errorf("expected a clear error, got %v", err)
 	}
 }
+
+// pip must never get a cache dir in the shared /tmp (another local user could plant
+// packages there that end up in the deployed binary).
+func TestPythonPipCacheIsPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	for _, useCache := range []bool{true, false} {
+		dir := t.TempDir()
+		app := filepath.Join(dir, "app")
+		os.MkdirAll(app, 0755)
+		os.WriteFile(filepath.Join(app, "requirements.txt"), []byte("flask\n"), 0644)
+		argv := filepath.Join(dir, "argv")
+		stub := filepath.Join(dir, "python3")
+		os.WriteFile(stub, []byte("#!/bin/sh\necho \"$@\" >> "+argv+"\n"), 0755)
+
+		log, _ := logger.NewLogger("", false, false)
+		cfg := config.PythonBuildConfig{PythonCommand: stub, RequirementsFile: "requirements.txt", UseCache: useCache}
+		if err := (&PythonBuilder{}).installDependencies(&BuilderContext{ArtifactDir: dir, Log: log}, app, cfg); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(argv)
+		if strings.Contains(string(got), "--cache-dir") {
+			t.Errorf("use_cache=%v: pip gets a shared cache dir: %s", useCache, got)
+		}
+		if !useCache && !strings.Contains(string(got), "--no-cache-dir") {
+			t.Errorf("use_cache=false must pass --no-cache-dir: %s", got)
+		}
+	}
+}

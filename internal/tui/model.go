@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -67,7 +68,14 @@ type msgConnError struct {
 	err     error
 }
 
+// msgSplashDone ends the startup logo screen.
+type msgSplashDone struct{}
+
+const splashDuration = 1200 * time.Millisecond
+
 type appModel struct {
+	splash bool // startup logo; any key skips it
+
 	cfg      *config.Config
 	repoPath string
 	width    int
@@ -132,6 +140,7 @@ func newAppModel(cfg *config.Config, repoPath string) appModel {
 		services:    newServicesModel(0, 0),
 		config:      newConfigModel(repoPath),
 		currentView: viewDashboard,
+		splash:      true,
 	}
 }
 
@@ -227,8 +236,9 @@ func (m appModel) renderConfigSelector(width int) string {
 }
 
 func (m appModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.spinner.Tick}
-	if len(m.envNames) > 0 {
+	cmds := []tea.Cmd{m.spinner.Tick, tea.Tick(splashDuration, func(time.Time) tea.Msg { return msgSplashDone{} })}
+	// With the config picker up, connect only after a file is chosen.
+	if len(m.envNames) > 0 && m.currentView != viewConfigSelector {
 		name := m.envNames[0]
 		m.connStates[name] = connConnecting
 		cmds = append(cmds, connectEnvCmd(m.cfg, name))
@@ -483,7 +493,14 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case msgSplashDone:
+		m.splash = false
+
 	case tea.KeyMsg:
+		if m.splash && msg.String() != "ctrl+c" {
+			m.splash = false
+			return m, tea.Batch(cmds...)
+		}
 		return m.handleKey(msg, cmds)
 	}
 
@@ -530,6 +547,16 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		if msg.String() == "esc" && !m.terminal.running {
 			// Esc exits terminal view back to dashboard
 			cmds = append(cmds, m.switchToView(viewDashboard)...)
+			return m, tea.Batch(cmds...)
+		}
+		// ←/→ on an empty prompt move to the next view, as everywhere else (with text
+		// they move the cursor)
+		if (key.Matches(msg, Keys.Left) || key.Matches(msg, Keys.Right)) && m.terminal.input.Value() == "" && !m.terminal.running && !m.sidebarFocused {
+			next := int(m.currentView) + 1
+			if key.Matches(msg, Keys.Left) {
+				next = int(m.currentView) - 1
+			}
+			cmds = append(cmds, m.switchToView(viewID(next))...)
 			return m, tea.Batch(cmds...)
 		}
 		cmds = append(cmds, m.handleTerminalKey(msg)...)
@@ -718,7 +745,7 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 				if x.dir == xferUpload {
 					sel := x.local.selectedFiles()
 					if len(sel) > 0 {
-						dst := fmt.Sprintf("%s@%s:%s/", x.sshUser, x.sshHost, x.remotePath)
+						dst := rsyncRemote(x.sshUser, x.sshHost, x.remotePath) + "/"
 						x.running = true
 						cmds = append(cmds,
 							startRsyncCmd(x.sshCfg, sel, dst, x.logCh, x.doneCh),
@@ -727,7 +754,7 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 					}
 				} else {
 					// Download: save remote file into the currently browsed local dir
-					src := fmt.Sprintf("%s@%s:%s", x.sshUser, x.sshHost, x.remotePath)
+					src := rsyncRemote(x.sshUser, x.sshHost, x.remotePath)
 					dst := x.local.currentPath() + "/"
 					x.running = true
 					cmds = append(cmds,
@@ -912,6 +939,9 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 			}
 		case msg.String() == "esc":
 			m.currentView = viewDashboard
+			if m.cfg != nil {
+				cmds = append(cmds, m.autoConnectCmds()...) // startup picker skipped the connect
+			}
 		case msg.String() == " ":
 			// Toggle selection for multi-deploy
 			i := m.configSelector.cursor
@@ -1303,9 +1333,21 @@ func (m appModel) contentHeight() int {
 	return m.height - 3 // header + tabbar + statusbar
 }
 
+func (m appModel) contentWidth() int {
+	w := m.width - sidebarWidth - 2
+	if w < 10 {
+		w = 10
+	}
+	return w
+}
+
 func (m appModel) View() string {
 	if m.width == 0 {
 		return "Initializing…"
+	}
+
+	if m.splash {
+		return m.splashView()
 	}
 
 	envName := m.activeEnvName()
@@ -1317,10 +1359,7 @@ func (m appModel) View() string {
 	contentH := m.contentHeight()
 	sidebar := renderSidebar(contentH+1, m.envNames, m.activeEnv, m.sidebarFocused, m.connStates)
 
-	contentW := m.width - sidebarWidth - 2
-	if contentW < 10 {
-		contentW = 10
-	}
+	contentW := m.contentWidth()
 
 	tabBar := m.renderTabBar(contentW)
 
@@ -1358,4 +1397,11 @@ func (m appModel) View() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, contentPane)
 
 	return headerStr + "\n" + body + "\n" + statusbarStr
+}
+
+// splashView is the full-screen startup logo, shown before the config
+// picker or the first connection takes over.
+func (m appModel) splashView() string {
+	lines := append(brandBanner(), "", m.spinner.View()+StyleMuted.Render(" Loading…"))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, strings.Join(lines, "\n"))
 }

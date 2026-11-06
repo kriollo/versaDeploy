@@ -49,8 +49,6 @@ func TestRenderService(t *testing.T) {
 	unit := files["api.service"]
 	for _, want := range []string{
 		"User=deploy",
-		"EnvironmentFile=-/var/www/my app/shared/.env",
-		"Environment=VERSA_ENV_LOADED=1",
 		`ExecStart=/bin/sh "/var/www/my app/.versa/api.sh"`,
 		"Restart=always",
 		"TimeoutStopSec=30",
@@ -59,6 +57,18 @@ func TestRenderService(t *testing.T) {
 		if !strings.Contains(unit, want) {
 			t.Errorf("unit missing %q:\n%s", want, unit)
 		}
+	}
+
+	// systemd would read env_file as root through a deploy-user symlink: with a
+	// non-root deploy user only the wrapper (running as the service user) loads it
+	if strings.Contains(unit, "EnvironmentFile") {
+		t.Errorf("non-root deploy: unit must not load env_file as root:\n%s", unit)
+	}
+	rootEnv := serviceEnv("/var/www/my app")
+	rootEnv.SSH.User = "root"
+	rootFiles, _ := renderService("shop", "production", rootEnv, rootEnv.Services[0], rootEnv.RemotePath, serverLayout)
+	if !strings.Contains(rootFiles["api.service"], "EnvironmentFile=-/var/www/my app/shared/.env") {
+		t.Errorf("root deploy keeps EnvironmentFile:\n%s", rootFiles["api.service"])
 	}
 
 	if !strings.Contains(files["api.initd"], "# chkconfig: 2345") || !strings.Contains(files["api.initd"], "# Provides:          api") {
@@ -102,8 +112,14 @@ func stubBin(t *testing.T, stubs map[string]string) string {
 	return dir
 }
 
+// pathFnShTest resolves commands from PATH, where the tests put their stubs (the
+// real P only searches system dirs).
+const pathFnShTest = `P() { c=$(command -v "$1" 2>/dev/null); case "$c" in /*) echo "$c"; return ;; esac; echo "$1"; }
+`
+
 func runScript(t *testing.T, script, path string) (string, error) {
 	t.Helper()
+	script = strings.ReplaceAll(script, pathFnSh, pathFnShTest)
 	cmd := exec.Command("sh", "-c", script)
 	cmd.Env = append(os.Environ(), "PATH="+path+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
@@ -160,7 +176,8 @@ func TestServiceInstallSystemd(t *testing.T) {
 		return // Git Bash ignores the id stub; the setup script only runs on Linux servers
 	}
 	// root setup (id stubbed to 0) installs and enables
-	rootBin := stubBin(t, map[string]string{"id": "echo 0"})
+	// id -u (the caller) is root; id -u <user> is the service user's uid
+	rootBin := stubBin(t, map[string]string{"id": `[ -z "$2" ] && echo 0 || echo 1000`})
 	inst, err := installScript(env, "shop", "prod", l, "I=systemd\n")
 	if err != nil {
 		t.Fatal(err)
@@ -365,5 +382,53 @@ func TestSetupScriptSyntax(t *testing.T) {
 	}
 	if !strings.Contains(script, "/etc/sudoers.d/versa-my-shop") || !strings.Contains(script, "visudo -c") {
 		t.Errorf("setup must install the validated sudoers file:\n%s", script)
+	}
+}
+
+func TestWrapperModeOwnerOnlyForDeployUser(t *testing.T) {
+	env := &config.Environment{SSH: config.SSHConfig{User: "deploy"}}
+	if m := wrapperMode(env, config.ServiceConfig{Name: "api"}); m != 0600 {
+		t.Errorf("default user: mode %v, want 0600", m)
+	}
+	if m := wrapperMode(env, config.ServiceConfig{Name: "api", User: "deploy"}); m != 0600 {
+		t.Errorf("deploy user: mode %v, want 0600", m)
+	}
+	if m := wrapperMode(env, config.ServiceConfig{Name: "api", User: "www-data"}); m != 0644 {
+		t.Errorf("other user must still read it: mode %v", m)
+	}
+}
+
+// Any uid-0 account as a service user is refused by the root setup.
+func TestServiceInstallRefusesUID0Alias(t *testing.T) {
+	requireSh(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("setup script runs on Linux servers")
+	}
+	remote := t.TempDir()
+	env := serviceEnv(filepath.ToSlash(remote))
+	env.Services[0].User = "toor"
+	l := svcLayout{etc: filepath.ToSlash(filepath.Join(remote, "etc")), run: filepath.ToSlash(remote), log: filepath.ToSlash(remote)}
+	inst, err := installScript(env, "shop", "prod", l, "I=systemd\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := runScript(t, inst, stubBin(t, map[string]string{"id": "echo 0"}))
+	if err == nil || !strings.Contains(out, "is uid 0") {
+		t.Fatalf("uid-0 service user accepted: %v\n%s", err, out)
+	}
+}
+
+// P resolves sudo'd commands from system dirs only, never a user-controlled PATH.
+func TestPathFnIgnoresPATH(t *testing.T) {
+	requireSh(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("server-side script")
+	}
+	bin := stubBin(t, map[string]string{"systemctl": "echo planted"})
+	cmd := exec.Command("sh", "-c", pathFnSh+"P systemctl")
+	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin"}
+	out, _ := cmd.Output()
+	if strings.Contains(string(out), bin) {
+		t.Fatalf("P resolved from PATH: %s", out)
 	}
 }

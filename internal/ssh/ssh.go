@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -94,6 +95,9 @@ func NewClient(cfg *config.SSHConfig, log *logger.Logger) (*Client, error) {
 	// servers (OpenSSH < 7.2) only offer; SupportedAlgorithms leaves it out.
 	hostKeyAlgos := append(ssh.SupportedAlgorithms().HostKeys, ssh.KeyAlgoRSA)
 	if cfg.LegacyAlgorithms {
+		if log != nil {
+			log.Warn("ssh.legacy_algorithms is on for %s: SHA1 and CBC algorithms are accepted (only for servers with OpenSSH < 7)", cfg.Host)
+		}
 		sup, ins := ssh.SupportedAlgorithms(), ssh.InsecureAlgorithms()
 		sshConfig.KeyExchanges = append(sup.KeyExchanges, ins.KeyExchanges...)
 		sshConfig.Ciphers = append(sup.Ciphers, ins.Ciphers...)
@@ -274,7 +278,7 @@ func (c *Client) UploadDirectory(localDir, remoteDir string) error {
 	for i := 0; i < uploadWorkers; i++ {
 		g.Go(func() error {
 			for f := range jobs {
-				if err := c.uploadFile(f.local, f.remote, nil); err != nil {
+				if err := c.uploadFile(f.local, f.remote, nil, false); err != nil {
 					return err
 				}
 			}
@@ -322,7 +326,7 @@ func (c *Client) UploadFilesParallel(localPaths []string, remoteDir string, conc
 	for i := 0; i < concurrency; i++ {
 		g.Go(func() error {
 			for job := range jobs {
-				if err := c.uploadFile(job.localPath, job.remotePath, bar); err != nil {
+				if err := c.uploadFile(job.localPath, job.remotePath, bar, true); err != nil {
 					return err
 				}
 			}
@@ -336,7 +340,9 @@ func (c *Client) UploadFilesParallel(localPaths []string, remoteDir string, conc
 // uploadFile uploads a single file, optionally reporting progress to a writer.
 // Writes are pipelined (ReadFromWithConcurrency) so throughput isn't capped at one
 // 32 KB packet per network round-trip.
-func (c *Client) uploadFile(localPath, remotePath string, progress io.Writer) error {
+// private makes the remote file 0600 before any data lands (release chunks hold the
+// whole app, .env included).
+func (c *Client) uploadFile(localPath, remotePath string, progress io.Writer, private bool) error {
 	localFile, err := os.Open(localPath)
 	if err != nil {
 		return fmt.Errorf("failed to open local file: %w", err)
@@ -348,6 +354,11 @@ func (c *Client) uploadFile(localPath, remotePath string, progress io.Writer) er
 		return err
 	}
 	defer remoteFile.Close()
+	if private {
+		if err := c.sftpClient.Chmod(remotePath, 0600); err != nil {
+			return fmt.Errorf("failed to restrict %s: %w", remotePath, err)
+		}
+	}
 
 	var r io.Reader = localFile
 	if progress != nil {
@@ -359,33 +370,6 @@ func (c *Client) uploadFile(localPath, remotePath string, progress io.Writer) er
 	if err := remoteFile.Close(); err != nil {
 		return fmt.Errorf("failed to close remote file: %w", err)
 	}
-	return nil
-}
-
-// DownloadFile downloads a file from remote server
-func (c *Client) DownloadFile(remotePath, localPath string) error {
-	// Open remote file
-	remoteFile, err := c.sftpClient.Open(remotePath)
-	if err != nil {
-		return fmt.Errorf("cannot open remote file %s: %w", remotePath, err)
-	}
-	defer remoteFile.Close()
-
-	// Create local file (and its folder)
-	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
-		return fmt.Errorf("cannot create local folder %s: %w", filepath.Dir(localPath), err)
-	}
-	localFile, err := os.Create(localPath)
-	if err != nil {
-		return fmt.Errorf("cannot create local file %s: %w", localPath, err)
-	}
-	defer localFile.Close()
-
-	// Copy contents
-	if _, err := io.Copy(localFile, remoteFile); err != nil {
-		return fmt.Errorf("failed to copy file: %w", err)
-	}
-
 	return nil
 }
 
@@ -408,7 +392,7 @@ func (c *Client) UploadFileWithProgress(localPath, remotePath string) error {
 		return fmt.Errorf("failed to stat local file: %w", err)
 	}
 	bar := progressbar.DefaultBytes(info.Size(), fmt.Sprintf("Uploading %s", filepath.Base(localPath)))
-	return c.uploadFile(localPath, remotePath, bar)
+	return c.uploadFile(localPath, remotePath, bar, false)
 }
 
 // ExecuteCommand executes one of versa's own commands under /bin/sh, with no timeout.
@@ -418,6 +402,8 @@ func (c *Client) ExecuteCommand(cmd string) (string, error) {
 
 // ExecuteCommandWithTimeout executes a command with a specific timeout in the remote
 // user's login shell, so user hooks keep the shell features they were written for.
+//
+// Output past maxCommandOutput is dropped.
 func (c *Client) ExecuteCommandWithTimeout(cmd string, timeout time.Duration) (string, error) {
 	session, err := c.sshClient.NewSession()
 	if err != nil {
@@ -425,9 +411,10 @@ func (c *Client) ExecuteCommandWithTimeout(cmd string, timeout time.Duration) (s
 	}
 	defer session.Close()
 
-	var outBuf, errBuf bytes.Buffer
-	session.Stdout = &outBuf
-	session.Stderr = &errBuf
+	// Bounded: a misbehaving server must not exhaust the operator's memory.
+	outBuf, errBuf := &capBuffer{max: maxCommandOutput}, &capBuffer{max: maxCommandOutput}
+	session.Stdout = outBuf
+	session.Stderr = errBuf
 
 	if err := session.Start(cmd); err != nil {
 		return "", fmt.Errorf("failed to start command %q: %w", cmd, err)
@@ -571,13 +558,28 @@ func (c *Client) CleanupOldReleases(releasesDir string, keepCount int) error {
 	// Simple string sort works due to timestamp format YYYYMMDD-HHMMSS
 	sort.Sort(sort.Reverse(sort.StringSlice(releases)))
 
+	// The live release (current, e.g. after a rollback or with clock skew between
+	// operators) is never deleted, whatever its name sorts as.
+	live := ""
+	if target, err := c.ReadSymlink(path.Join(path.Dir(filepath.ToSlash(releasesDir)), "current")); err == nil {
+		live = path.Base(target)
+	}
+
 	// Delete old releases in one round-trip
 	cmd := "rm -rf --"
+	var removed []string
 	for _, r := range releases[keepCount:] {
+		if r == live {
+			continue
+		}
+		removed = append(removed, r)
 		cmd += " " + ShellQuote(filepath.ToSlash(filepath.Join(releasesDir, r)))
 	}
+	if len(removed) == 0 {
+		return nil
+	}
 	if output, err := c.ExecuteCommand(cmd); err != nil {
-		return fmt.Errorf("failed to delete old releases %v: %w (output: %s)", releases[keepCount:], err, output)
+		return fmt.Errorf("failed to delete old releases %v: %w (output: %s)", removed, err, output)
 	}
 
 	return nil
@@ -714,24 +716,44 @@ func (c *Client) WriteRemoteBytes(path string, data []byte) error {
 		existingMode = info.Mode()
 	}
 
-	f, err := c.createRemote(path)
+	chmodErr, err := c.writeRemote(path, data, existingMode)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-
-	if _, err := f.Write(data); err != nil {
-		return fmt.Errorf("failed to write remote file: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("failed to close remote file: %w", err)
-	}
-
-	if err := c.sftpClient.Chmod(path, existingMode); err != nil {
+	if chmodErr != nil {
 		// Non-fatal: log but don't fail the write
-		c.log.Warn("failed to restore file permissions on %s: %v", path, err)
+		c.log.Warn("failed to restore file permissions on %s: %v", path, chmodErr)
 	}
 	return nil
+}
+
+// WriteRemoteFileMode writes data to a remote file with exactly mode, for files that
+// hold secrets. The mode is set before the data is written.
+func (c *Client) WriteRemoteFileMode(path string, data []byte, mode os.FileMode) error {
+	chmodErr, err := c.writeRemote(path, data, mode)
+	if err == nil && chmodErr != nil {
+		err = fmt.Errorf("failed to set permissions on %s: %w", path, chmodErr)
+	}
+	return err
+}
+
+// writeRemote truncates path, sets mode, then writes data. A failed chmod is
+// returned apart so callers decide whether it is fatal.
+func (c *Client) writeRemote(path string, data []byte, mode os.FileMode) (chmodErr, err error) {
+	f, err := c.createRemote(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	chmodErr = c.sftpClient.Chmod(path, mode)
+	if _, err := f.Write(data); err != nil {
+		return chmodErr, fmt.Errorf("failed to write remote file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return chmodErr, fmt.Errorf("failed to close remote file: %w", err)
+	}
+	return chmodErr, nil
 }
 
 // ReleaseLock releases the deployment lock via SFTP
@@ -795,4 +817,29 @@ func knownHostKeyAlgorithms(cb ssh.HostKeyCallback, addr string, port int) []str
 		}
 	}
 	return algos
+}
+
+const maxCommandOutput = 16 << 20
+
+// capBuffer keeps the first max bytes written and silently drops the rest. Safe for
+// concurrent use (output is read on timeout while the session may still write).
+type capBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+	max int
+}
+
+func (b *capBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if room := b.max - b.buf.Len(); room > 0 {
+		b.buf.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+func (b *capBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

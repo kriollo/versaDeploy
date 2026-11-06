@@ -59,7 +59,11 @@ var rootCmd = &cobra.Command{
 			cfg, _ = config.Load(configPath)
 		}
 
-		return tui.Launch(cfg, repoPath)
+		loadedFrom := ""
+		if cfg != nil {
+			loadedFrom = configPath
+		}
+		return tui.Launch(cfg, repoPath, loadedFrom)
 	},
 }
 

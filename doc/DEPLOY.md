@@ -277,6 +277,7 @@ post_deploy:
 - On the first deploy (`--initial-deploy`), versa asks before running `post_deploy`, so you can set up `.env` first.
 - Re-run `post_deploy` without deploying: `versa hooks <env> [indices...]`.
 - `$NAME` is [expanded locally](#environment-variables-in-the-config); write `$$NAME` for a variable of the server's shell.
+- Don't put `${SECRET}` in remote hooks: the expanded command line is visible to other users of the server (`ps`). Read secrets on the server instead, e.g. `$$DB_PASS` from the app's `.env` in `shared/`.
 
 ---
 
@@ -324,7 +325,7 @@ services:
 | `working_dir` | string  | `app` (`app/<python.root>` for Python-only projects) | Directory, relative to `<remote_path>/current`, the process starts in.                    |
 | `user`        | string  | `ssh.user`               | Unix user the process runs as.                                                                               |
 | `env_file`    | string  | —                        | File under `<remote_path>/shared/` with `KEY=value` lines, loaded into the process environment.               |
-| `environment` | map     | —                        | Extra environment variables.                                                                                 |
+| `environment` | map     | —                        | Extra environment variables, written to the wrapper in `.versa/` (mode 0600 when the service runs as `ssh.user`, 0644 otherwise: put secrets in `env_file` then). |
 | `start_wait`  | int (s) | `3`                      | Seconds to wait after (re)starting before checking the process is still running.                            |
 | `stop_timeout`| int (s) | `30`                     | Seconds a stop waits for the process to exit after SIGTERM before killing it (SIGKILL). Raise it if your app needs longer to shut down cleanly. |
 

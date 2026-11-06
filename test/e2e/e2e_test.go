@@ -435,8 +435,14 @@ func TestProvisionAndDeploy(t *testing.T) {
 			}
 		}
 		if a.vars(pub).ProxyPort == 0 {
-			if status, _ := get(t, a.server.httpPort, a.domain(), "/composer.json"); status != 404 {
-				t.Errorf("%s: /composer.json = %d, want 404", a.name, status)
+			// what versaWYS's .htaccess blocks (the vhost has AllowOverride None)
+			for _, f := range []string{"/composer.json", "/versaCLI", "/pnpm-lock.yaml", "/README.md", "/tsconfig.json"} {
+				if _, err := os.Stat(filepath.Join(a.repo, f)); err != nil {
+					continue // not in this app: the router answers that path
+				}
+				if status, _ := get(t, a.server.httpPort, a.domain(), f); status == 200 {
+					t.Errorf("%s: %s = 200, want it blocked", a.name, f)
+				}
 			}
 		}
 	}
@@ -458,6 +464,19 @@ func TestProvisionAndDeploy(t *testing.T) {
 			}
 			if len(r.Sites) != len(hosted) {
 				t.Errorf("%s: sites = %+v, want %d", s.name, r.Sites, len(hosted))
+			}
+			// the TUI detects over the deploy connection: vhosts must be readable by it
+			dcfg := sshCfg(s, "versadeploy")
+			if dc, err := versassh.NewClient(&dcfg, log); err != nil {
+				t.Errorf("%s: deploy ssh: %v", s.name, err)
+			} else {
+				dr, err := provision.Detect(dc, provision.DetectParams{Project: a.name, RemotePath: v.RemotePath, DeployUser: "versadeploy"})
+				dc.Close()
+				for _, site := range dr.Sites {
+					if err != nil || site.Names == "" || site.Root == "" {
+						t.Errorf("%s: deploy user can't read vhost %s: %+v %v", s.name, site.File, site, err)
+					}
+				}
 			}
 			want := []string{s.web, "php", s.db, "redis"}
 			if v.AppService != "" {

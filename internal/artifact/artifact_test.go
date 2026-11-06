@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/user/versaDeploy/internal/builder"
@@ -160,5 +161,31 @@ func TestGenerateReleaseVersion(t *testing.T) {
 	v := GenerateReleaseVersion()
 	if len(v) != 15 { // YYYYMMDD-HHMMSS is 8 + 1 + 6 = 15
 		t.Errorf("unexpected version format: %s", v)
+	}
+}
+
+// Chunks live in a shared temp dir: another local user must not be able to
+// pre-create (or symlink) a chunk path, and chunks must not be world-readable.
+func TestCompressChunkedPrivateChunks(t *testing.T) {
+	artifactDir := t.TempDir()
+	os.WriteFile(filepath.Join(artifactDir, "index.php"), []byte("<?php"), 0644)
+	base := filepath.Join(t.TempDir(), "rel.tar.gz")
+
+	chunks, err := NewGenerator(artifactDir, "v", "h").CompressChunked(base, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(chunks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm()&0o077 != 0 && runtime.GOOS != "windows" {
+		t.Fatalf("chunk mode = %v, want owner-only", fi.Mode().Perm())
+	}
+
+	planted := filepath.Join(t.TempDir(), "planted.tar.gz")
+	os.WriteFile(planted+".001", []byte("attacker"), 0666)
+	if _, err := NewGenerator(artifactDir, "v", "h").CompressChunked(planted, 1<<20); err == nil {
+		t.Fatal("a pre-existing chunk file must be refused")
 	}
 }

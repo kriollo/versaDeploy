@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"time"
 )
@@ -58,8 +59,20 @@ func Parse(data []byte) (*DeployLock, error) {
 	if lock.Version != LockFileVersion {
 		return nil, fmt.Errorf("unsupported deploy.lock version: %s (expected %s)", lock.Version, LockFileVersion)
 	}
+	// The lock lives on the server: its release dir is joined into paths that get
+	// rm -rf'd and copied, so it must be one plain name under releases/.
+	if lock.LastDeploy.ReleaseDir != "" && !ValidReleaseDir(lock.LastDeploy.ReleaseDir) {
+		return nil, fmt.Errorf("deploy.lock has an invalid release_dir %q", lock.LastDeploy.ReleaseDir)
+	}
 
 	return &lock, nil
+}
+
+var releaseDirRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// ValidReleaseDir reports whether name is a plain release directory name.
+func ValidReleaseDir(name string) bool {
+	return releaseDirRe.MatchString(name) && name != "." && name != ".."
 }
 
 // ToJSON serializes DeployLock to JSON

@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,8 +30,84 @@ const (
 // of the real GitHub API.
 var githubAPIBase = "https://api.github.com"
 
-// httpClient bounds every request: a stalled connection must not hang the update.
-var httpClient = &http.Client{Timeout: 5 * time.Minute}
+// httpClient bounds every request (a stalled connection must not hang the update)
+// and refuses redirects off GitHub or to plain http.
+var httpClient = &http.Client{
+	Timeout: 5 * time.Minute,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("too many redirects")
+		}
+		return checkURL(req.URL.String())
+	},
+}
+
+// Size caps: release metadata, binary, checksum file.
+const (
+	maxMetadata = 1 << 20
+	maxBinary   = 200 << 20
+	maxChecksum = 4 << 10
+)
+
+// checkURL accepts only https GitHub hosts (or the API base itself, which tests
+// point at a local server).
+func checkURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if base, err := url.Parse(githubAPIBase); err == nil && u.Scheme == base.Scheme && u.Host == base.Host {
+		return nil
+	}
+	h := u.Hostname()
+	if u.Scheme != "https" || (h != "github.com" && h != "api.github.com" && !strings.HasSuffix(h, ".githubusercontent.com")) {
+		return fmt.Errorf("refusing download from %s: only https GitHub URLs are allowed", raw)
+	}
+	return nil
+}
+
+// get fetches raw after checking it is a GitHub URL.
+func get(raw string) (*http.Response, error) {
+	if err := checkURL(raw); err != nil {
+		return nil, err
+	}
+	return httpClient.Get(raw)
+}
+
+// semver parses vX.Y.Z (any -suffix ignored); ok is false for dev builds.
+func semver(v string) (out [3]int, ok bool) {
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
+}
+
+// isOlder reports whether tag is an older release than current.
+func isOlder(tag, current string) bool {
+	a, okA := semver(tag)
+	b, okB := semver(current)
+	if !okA || !okB {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
 
 // Release represents a GitHub release
 type Release struct {
@@ -67,6 +147,10 @@ func (u *Updater) Update() error {
 		return nil
 	}
 
+	if isOlder(latest.TagName, current) {
+		return fmt.Errorf("latest release %s is older than the installed %s: refusing to downgrade", latest.TagName, current)
+	}
+
 	u.log.Info("New version available: %s (Current: %s)", latest.TagName, current)
 
 	// Find the matching asset for current OS/Arch
@@ -96,7 +180,7 @@ func (u *Updater) Update() error {
 
 	u.log.Info("Downloading update from %s...", targetAsset)
 
-	if err := u.performUpdate(targetAsset, checksumAsset); err != nil {
+	if err := u.performUpdate(targetAsset, checksumAsset, expectedName); err != nil {
 		return err
 	}
 
@@ -109,7 +193,7 @@ func (u *Updater) Update() error {
 func (u *Updater) getLatestRelease() (*Release, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, githubOwner, githubRepo)
 
-	resp, err := httpClient.Get(url)
+	resp, err := get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -120,14 +204,14 @@ func (u *Updater) getLatestRelease() (*Release, error) {
 	}
 
 	var release Release
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxMetadata)).Decode(&release); err != nil {
 		return nil, err
 	}
 
 	return &release, nil
 }
 
-func (u *Updater) performUpdate(url, checksumURL string) error {
+func (u *Updater) performUpdate(url, checksumURL, assetName string) error {
 	// Resolve current binary path first so we can place the temp file on the
 	// same filesystem, avoiding cross-device rename errors.
 	currentPath, err := os.Executable()
@@ -145,7 +229,7 @@ func (u *Updater) performUpdate(url, checksumURL string) error {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	resp, err := httpClient.Get(url)
+	resp, err := get(url)
 	if err != nil {
 		tmpFile.Close()
 		return err
@@ -157,13 +241,18 @@ func (u *Updater) performUpdate(url, checksumURL string) error {
 	}
 
 	hasher := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmpFile, hasher), resp.Body); err != nil {
+	n, err := io.Copy(io.MultiWriter(tmpFile, hasher), io.LimitReader(resp.Body, maxBinary+1))
+	if err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("failed to download update: %w", err)
 	}
+	if n > maxBinary {
+		tmpFile.Close()
+		return fmt.Errorf("update is larger than %d MB: refusing it", maxBinary>>20)
+	}
 	tmpFile.Close()
 
-	expected, err := fetchChecksum(checksumURL)
+	expected, err := fetchChecksum(checksumURL, assetName)
 	if err != nil {
 		return fmt.Errorf("failed to fetch checksum: %w", err)
 	}
@@ -175,7 +264,7 @@ func (u *Updater) performUpdate(url, checksumURL string) error {
 
 	// Set execution bits before replacing (Linux/Mac)
 	if runtime.GOOS != "windows" {
-		if err := os.Chmod(tmpPath, 0775); err != nil {
+		if err := os.Chmod(tmpPath, 0755); err != nil {
 			return fmt.Errorf("failed to set permissions on update: %w", err)
 		}
 	}
@@ -203,10 +292,10 @@ func (u *Updater) performUpdate(url, checksumURL string) error {
 	return nil
 }
 
-// fetchChecksum downloads a sha256sum-format file ("<hex digest>  <filename>")
-// and returns the hex digest.
-func fetchChecksum(url string) (string, error) {
-	resp, err := httpClient.Get(url)
+// fetchChecksum downloads a sha256sum-format file ("<hex digest>  <filename>") and
+// returns the digest listed for name, which must be 64 hex characters.
+func fetchChecksum(url, name string) (string, error) {
+	resp, err := get(url)
 	if err != nil {
 		return "", err
 	}
@@ -216,17 +305,25 @@ func fetchChecksum(url string) (string, error) {
 		return "", fmt.Errorf("checksum download returned status %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxChecksum))
 	if err != nil {
 		return "", err
 	}
 
-	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return "", fmt.Errorf("empty checksum file")
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		// sha256sum prints "dist/<name>" in CI: compare the base name
+		if len(f) == 2 && path.Base(strings.TrimPrefix(f[1], "*")) == name {
+			if !sha256Re.MatchString(f[0]) {
+				return "", fmt.Errorf("checksum for %s is not a sha256 digest", name)
+			}
+			return f[0], nil
+		}
 	}
-	return fields[0], nil
+	return "", fmt.Errorf("checksum file lists no digest for %s", name)
 }
+
+var sha256Re = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 
 // copyFile copies src to dst, preserving executable permissions.
 func copyFile(src, dst string) error {

@@ -42,7 +42,8 @@ func OpenLogFile(path string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, fmt.Errorf("cannot create the folder of log file %s: %w", path, err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// 0600: logs carry hook commands, which may hold interpolated ${SECRETS}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open log file %s: %w", path, err)
 	}

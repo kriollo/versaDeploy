@@ -59,7 +59,7 @@ echo "created %[4]s"
 		}
 		for _, req := range append([]string{py.RequirementsFile}, py.ExtraRequirements...) {
 			args := strings.Join(append([]string{"install", "-r", q(req), cache}, index...), " ")
-			fmt.Fprintf(&b, "if [ -f %[1]s ]; then %[2]s -m pip %[3]s || exit 1; echo \"installed %[4]s\"; fi\n", q(req), q(pyBin), args, strings.ReplaceAll(req, `"`, ""))
+			fmt.Fprintf(&b, "if [ -f %[1]s ]; then %[2]s -m pip %[3]s || exit 1; echo %[4]s; fi\n", q(req), q(pyBin), args, q("installed "+req))
 		}
 	}
 	return b.String()

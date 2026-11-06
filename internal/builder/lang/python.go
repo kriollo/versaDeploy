@@ -83,8 +83,10 @@ func (p *PythonBuilder) installDependencies(ctx *BuilderContext, appDir string, 
 
 		if _, err := os.Stat(reqFile); err == nil {
 			args = []string{"-m", "pip", "install", "-r", cfg.RequirementsFile}
-			if cfg.UseCache {
-				args = append(args, "--cache-dir", "/tmp/pip-cache")
+			// use_cache keeps pip's per-user cache: a fixed dir in the shared /tmp could
+			// be pre-created by another local user to plant packages in the binary.
+			if !cfg.UseCache {
+				args = append(args, "--no-cache-dir")
 			}
 
 			// Handle PyTorch index URL

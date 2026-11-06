@@ -165,6 +165,13 @@ func ParseReport(out string) *Report {
 	r := &Report{Services: map[string]State{}, AptAge: -1}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimRight(line, "\r")
+		// the server controls this text and the TUI prints it: no escape sequences
+		line = strings.Map(func(r rune) rune {
+			if r < 0x20 && r != '\t' || r == 0x7f || r >= 0x80 && r < 0xa0 {
+				return -1
+			}
+			return r
+		}, line)
 		if rest, ok := strings.CutPrefix(line, "upg "); ok {
 			if u, ok := parseUpgrade(rest); ok {
 				r.Upgrades = append(r.Upgrades, u)
@@ -187,7 +194,9 @@ func ParseReport(out string) *Report {
 		case "apt":
 			r.Apt = v == "1"
 		case "php_fpm":
-			r.PHPVersion = v
+			if phpVersionRe.MatchString(v) { // ends up in unit names of root scripts
+				r.PHPVersion = v
+			}
 		case "reboot":
 			r.RebootRequired = v == "1"
 		case "reboot_pkgs":
@@ -221,7 +230,7 @@ func parseUpgrade(line string) (Upgrade, bool) {
 		return Upgrade{}, false
 	}
 	pkg, suites, ok := strings.Cut(f[0], "/")
-	if !ok {
+	if !ok || !debPkgRe.MatchString(pkg) {
 		return Upgrade{}, false
 	}
 	u := Upgrade{Pkg: pkg, To: f[1], Security: strings.Contains(suites, "-security")}

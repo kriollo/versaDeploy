@@ -180,7 +180,11 @@ func (b *Builder) copyEntireRepo() error {
 
 	// Collect files; create directories inline (sequential, preserves order).
 	var files []filePair
-	err := filepath.Walk(b.repoPath, func(path string, info os.FileInfo, err error) error {
+	realRepo, err := filepath.EvalSymlinks(b.repoPath)
+	if err != nil {
+		return err
+	}
+	err = filepath.Walk(b.repoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -205,6 +209,19 @@ func (b *Builder) copyEntireRepo() error {
 
 		if info.IsDir() {
 			return os.MkdirAll(dstPath, info.Mode())
+		}
+
+		// A link out of the repo (e.g. to ~/.ssh/id_rsa) must not ship that file's
+		// content: keep it as a link. Links inside the repo are copied as before.
+		if info.Mode()&os.ModeSymlink != 0 {
+			if real, err := filepath.EvalSymlinks(path); err == nil && !insideDir(realRepo, real) {
+				target, err := os.Readlink(path)
+				if err != nil {
+					return err
+				}
+				b.log.Warn("%s links outside the repository (%s): shipped as a link, not its content", relPath, target)
+				return os.Symlink(target, dstPath)
+			}
 		}
 
 		files = append(files, filePair{src: path, dst: dstPath})
@@ -285,6 +302,11 @@ func (b *Builder) cleanupIgnoredPaths() error {
 // calculateDirSize calculates the total size of a directory recursively
 func (b *Builder) calculateDirSize(path string) (int64, error) {
 	return fsutil.CalculateDirSize(path)
+}
+
+func insideDir(dir, p string) bool {
+	rel, err := filepath.Rel(dir, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // copyFile copies a single file using io.Copy for efficiency and reliability

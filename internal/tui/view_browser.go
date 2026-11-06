@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -259,10 +260,45 @@ func buildRsyncArgs(sshCfg *config.SSHConfig, srcs []string, dst string) []strin
 	if sshCfg.KeyPath != "" {
 		sshArg += " -i " + versassh.ShellQuote(sshCfg.KeyPath)
 	}
+	// same host-key policy as the SFTP connection
+	if sshCfg.KnownHostsFile != "" {
+		sshArg += " -o UserKnownHostsFile=" + versassh.ShellQuote(sshCfg.KnownHostsFile)
+	}
+	if sshCfg.StrictHostKey {
+		sshArg += " -o StrictHostKeyChecking=yes"
+	}
 	args := []string{"-avz", "--info=progress2", "-e", sshArg, "--"}
 	args = append(args, srcs...)
 	args = append(args, dst)
 	return args
+}
+
+// rsyncRemote builds user@host:path for rsync. Before 3.2.4 rsync hands the path to
+// the remote shell as is, so a server-listed name like $(cmd) would run there: quote
+// it. Newer versions escape it themselves (quoting again would break the path).
+func rsyncRemote(user, host, p string) string {
+	if oldRsync() {
+		p = versassh.ShellQuote(p)
+	}
+	return user + "@" + host + ":" + p
+}
+
+var oldRsync = sync.OnceValue(func() bool {
+	out, err := exec.Command("rsync", "--version").Output()
+	return err == nil && rsyncBefore324(string(out))
+})
+
+// rsyncBefore324 parses `rsync --version` ("rsync  version 3.2.7  protocol ...").
+func rsyncBefore324(out string) bool {
+	f := strings.Fields(out)
+	for i := 0; i+1 < len(f); i++ {
+		if f[i] == "version" {
+			var a, b, c int
+			fmt.Sscanf(strings.TrimPrefix(f[i+1], "v"), "%d.%d.%d", &a, &b, &c)
+			return a < 3 || a == 3 && (b < 2 || b == 2 && c < 4)
+		}
+	}
+	return false
 }
 
 func startRsyncCmd(sshCfg *config.SSHConfig, srcs []string, dst string, logCh chan string, doneCh chan error) tea.Cmd {

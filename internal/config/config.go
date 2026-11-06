@@ -257,7 +257,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("at least one environment must be defined")
 	}
 
+	// These names end up in root scripts, unit files and sudoers on the server.
+	if strings.ContainsAny(c.Project, "'\"`$\\") || hasControl(c.Project) {
+		return fmt.Errorf("project %q has quotes, $, backslashes or control characters", c.Project)
+	}
 	for envName := range c.Environments {
+		if !envKeyRe.MatchString(envName) {
+			return fmt.Errorf("environment name %q is invalid (use letters, digits, '-', '_', '.')", envName)
+		}
 		env := c.Environments[envName]
 		if err := env.Validate(envName); err != nil {
 			return err
@@ -325,6 +332,16 @@ func (e *Environment) Validate(envName string) error {
 			e.SSH.Port = 22
 		}
 
+		if hasControl(e.RemotePath) {
+			return fmt.Errorf("environment %s: remote_path has control characters", envName)
+		}
+		// shared/preserved paths are rm -rf'd inside the release: they must stay in it
+		for _, p := range append(append([]string{}, e.SharedPaths...), e.PreservedPaths...) {
+			if err := checkReleaseRelPath(p); err != nil {
+				return fmt.Errorf("environment %s: shared_paths/preserved_paths entry %q: %w", envName, p, err)
+			}
+		}
+
 		// Remote path validation
 		if e.RemotePath == "" {
 			return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: remote_path is required", envName), "Add 'remote_path: \"/path/to/app\"' to your configuration.", nil)
@@ -388,6 +405,13 @@ func (e *Environment) Validate(envName string) error {
 		}
 		if e.Builds.Go.BinaryName == "" {
 			return fmt.Errorf("environment %s: go.binary_name is required when go builds are enabled", envName)
+		}
+		// it goes into the build command line and service unit paths
+		if !serviceNameRe.MatchString(e.Builds.Go.BinaryName) {
+			return fmt.Errorf("environment %s: go.binary_name %q must be a file name of letters, digits, '-', '_', '.'", envName, e.Builds.Go.BinaryName)
+		}
+		if strings.ContainsAny(e.Builds.Go.DeployPath, "\"'`$\\") || hasControl(e.Builds.Go.DeployPath) {
+			return fmt.Errorf("environment %s: go.deploy_path has quotes, $ or backslashes", envName)
 		}
 	}
 
@@ -486,6 +510,7 @@ var (
 	serviceNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]*$`)
 	unixUserRe    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
 	envNameRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	envKeyRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 )
 
 // validateServices migrates the deprecated python.service_name and checks services.
@@ -650,4 +675,23 @@ func interpolateEnvVars(content string) string {
 		}
 		return os.Getenv(strings.Trim(m, "${}"))
 	})
+}
+
+func hasControl(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0
+}
+
+// checkReleaseRelPath accepts a path relative to the release's app dir that stays
+// inside it (not the app dir itself).
+func checkReleaseRelPath(p string) error {
+	c := filepath.ToSlash(filepath.Clean(p))
+	switch {
+	case p == "" || hasControl(p):
+		return fmt.Errorf("must be a non-empty path")
+	case strings.HasPrefix(c, "/") || filepath.IsAbs(p):
+		return fmt.Errorf("must be relative to the app dir")
+	case c == "." || c == ".." || strings.HasPrefix(c, "../"):
+		return fmt.Errorf("must be inside the app dir")
+	}
+	return nil
 }

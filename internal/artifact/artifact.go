@@ -160,7 +160,9 @@ func (cw *chunkWriter) nextChunk() error {
 	cw.currentID++
 	cw.totalSize = 0
 	path := fmt.Sprintf("%s.%03d", cw.basePath, cw.currentID)
-	f, err := os.Create(path)
+	// O_EXCL + 0600: refuse a pre-created file or symlink and keep the release
+	// unreadable to other local users.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}

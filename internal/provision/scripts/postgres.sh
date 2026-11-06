@@ -24,18 +24,21 @@ else
     ok "PostgreSQL ${pg_major} already installed — postgresql.conf untouched, no restart"
 fi
 
+# The password reaches the client through stdin (printf is a builtin), never argv,
+# so other local users can't read it from the process list. The SET pins the
+# escaping mode pass_sql assumes.
 pass_sql="${DB_PASS//\'/\'\'}"
 psqlc() { sudo -u postgres psql -v ON_ERROR_STOP=1 -q "$@"; }
 if [ "$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'")" = 1 ]; then
     if [ "${RESET_DB_PASSWORD:-false}" = true ]; then
-        psqlc -c "ALTER USER ${DB_USER} WITH ENCRYPTED PASSWORD '${pass_sql}';"
+        printf '%s\n' "SET standard_conforming_strings = on; ALTER USER ${DB_USER} WITH ENCRYPTED PASSWORD '${pass_sql}';" | psqlc
         warn "DB user ${DB_USER}: password CHANGED (explicit reset) — update the app's .env"
     else
         ok "DB user ${DB_USER} exists — password kept (reset it explicitly from the Services view)"
     fi
 else
     [ -n "$DB_PASS" ] || die "db_password is required to create ${DB_USER}"
-    psqlc -c "CREATE USER ${DB_USER} WITH ENCRYPTED PASSWORD '${pass_sql}';"
+    printf '%s\n' "SET standard_conforming_strings = on; CREATE USER ${DB_USER} WITH ENCRYPTED PASSWORD '${pass_sql}';" | psqlc
     ok "DB user ${DB_USER} created"
 fi
 if [ "$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'")" = 1 ]; then

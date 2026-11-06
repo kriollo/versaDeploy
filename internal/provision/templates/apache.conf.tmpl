@@ -32,6 +32,11 @@ TraceEnable Off
     RewriteRule ^/?(composer\.(json|lock)|package(-lock)?\.json|vhost\.conf|\.env)$ - [R=404,L,NC]
     RewriteRule (^|/)\.(?!well-known/) - [R=404,L]
     RewriteRule .+~$ - [R=404,L]
+    # Lo mismo que bloquea el .htaccess de versaWYS (AllowOverride None lo ignora): la CLI
+    # y archivos de desarrollo. Solo archivos reales: una ruta del router que termine
+    # igual sigue llegando a index.php
+    RewriteCond %{DOCUMENT_ROOT}%{REQUEST_URI} -f
+    RewriteRule (^/?versaCLI$|\.(bak|config|dist|fla|inc|ini|log|psd|sh|sql|json|lock|swp|xml|twig|yml|yaml|md|jade|scss|sqlite3|rst|conf|ts|toml|neon)$) - [R=404,L,NC]
 
     # Headers de seguridad
     Header always set X-Frame-Options "SAMEORIGIN"

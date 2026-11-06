@@ -92,7 +92,7 @@ Services that are already active are never preselected.
 
 | Service | What it does |
 | :------ | :----------- |
-| Base packages | curl, git, unzip, build-essential, ufw… (no system upgrade: use `U`/`S`) |
+| Base packages | curl, git, unzip, build-essential, ufw, cron (for app schedulers)… (no system upgrade: use `U`/`S`) |
 | PHP-FPM + OPCache | PHP from ondrej (Ubuntu) or sury (Debian), extensions for your DB and Redis, production `php.ini` and OPCache tuned for symlink deploys (`revalidate_path=1`) |
 | Apache2 / Nginx | Web server + the project's vhost (from the versaWYS templates): security headers, rate limiting (nginx), caching, sensitive files blocked, `$realpath_root` for PHP |
 | SSL | `certbot certonly` for the domain and the aliases that resolve to the server, then the SSL vhost. Skipped with a hint when DNS doesn't point here |

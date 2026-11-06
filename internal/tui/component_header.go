@@ -8,7 +8,7 @@ import (
 )
 
 func renderHeader(width int, version, activeEnv string, connected bool) string {
-	left := StyleTitle.Render("versaDeploy") + StyleMuted.Render(" "+version)
+	left := brandMark() + StyleMuted.Render(" "+version)
 
 	envPart := StyleMuted.Render("[ENV: ") + StyleActive.Render(activeEnv) + StyleMuted.Render("]")
 
