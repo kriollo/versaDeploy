@@ -1,3 +1,25 @@
+if [ "$PKG_MGR" != apt ]; then
+    sys_ver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+    ver="${PYTHON_VERSION:-$sys_ver}"
+    if [ -z "$ver" ] || [ "$ver" = "$sys_ver" ]; then
+        pkg_install python3 python3-pip python3-devel
+        ok "Python $(python3 -V 2>&1 | awk '{print $2}') (system) ready"
+        return 0
+    fi
+    # requested version next to system
+    py="python${ver}"
+    if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import ensurepip' >/dev/null 2>&1; then
+        ok "Python ${ver} already installed"
+        return 0
+    fi
+    if pkg_available "$py"; then
+        pkg_install "$py" "${py}-devel"
+        ok "Python ${ver} installed next to the system Python ${sys_ver}"
+        return 0
+    else
+        die "Python ${ver} is not packaged for ${OS_ID}: the system has ${sys_ver:-none} — set python_version: \"${sys_ver}\""
+    fi
+fi
 sys_ver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
 ver="${PYTHON_VERSION:-$sys_ver}"
 if [ -z "$ver" ] || [ "$ver" = "$sys_ver" ]; then

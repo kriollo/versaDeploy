@@ -1,7 +1,11 @@
 if id "$DEPLOY_USER" >/dev/null 2>&1; then
     ok "User ${DEPLOY_USER} exists"
 else
-    adduser --disabled-password --gecos "" "$DEPLOY_USER" >/dev/null
+    if [ "$PKG_MGR" = apt ]; then
+        adduser --disabled-password --gecos "" "$DEPLOY_USER" >/dev/null
+    else
+        useradd -m -s /bin/bash "$DEPLOY_USER" # no password: key login only
+    fi
     ok "User ${DEPLOY_USER} created"
 fi
 getent group www-data >/dev/null || groupadd www-data
@@ -18,4 +22,6 @@ runuser -u "$DEPLOY_USER" -- sh -c 'set -e
     if [ -n "$2" ] && ! grep -qxF "$2" "$1/.ssh/authorized_keys"; then
         echo "$2" >> "$1/.ssh/authorized_keys" && echo "[OK]    Public key added to $1/.ssh/authorized_keys"
     fi' _ "$home" "$PUBKEY"
+# SELinux: sshd reads authorized_keys only with the ssh_home_t label
+selinux_on && restorecon -R "$home/.ssh"
 ok "SSH access ready for ${DEPLOY_USER}"

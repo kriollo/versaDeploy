@@ -34,6 +34,8 @@ type Report struct {
 	Services       map[string]State
 	PHPVersion     string // php-fpm version found on the server, e.g. "8.4"
 	Apt            bool   // apt-get available: installs and upgrades are supported
+	Dnf            bool   // dnf available (RHEL family 8+): installs are supported, upgrades aren't
+	Yum            bool   // yum available (also on dnf servers, as an alias)
 	OSID           string // ID from /etc/os-release
 	Upgrades       []Upgrade
 	RebootRequired bool
@@ -76,6 +78,8 @@ svc() { # id "units" version present
 }
 [ -f /etc/os-release ] && echo "os_id=$(. /etc/os-release; echo $ID)"
 has apt-get && echo "apt=1"
+has dnf && echo "dnf=1"
+has yum && echo "yum=1"
 has curl && has git && has unzip && echo "svc_base=installed"
 has nginx && svc nginx nginx "$(nginx -v 2>&1 | sed 's|.*/||')" 1
 if has apache2; then svc apache apache2 "$( (apache2ctl -v || apache2 -v) 2>/dev/null | sed -n 's|^Server version: Apache/\([^ ]*\).*|\1|p')" 1
@@ -83,13 +87,16 @@ elif has httpd; then svc apache httpd "$(httpd -v 2>/dev/null | sed -n 's|^Serve
 fpm=""
 for v in 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do if has php-fpm$v; then fpm=$v; break; fi; done
 if [ -n "$fpm" ]; then echo "php_fpm=$fpm"; svc php "php$fpm-fpm" "$(php-fpm$fpm -v 2>/dev/null | head -1 | awk '{print $2}')" 1
-elif has php-fpm; then svc php php-fpm "$(php-fpm -v 2>/dev/null | head -1 | awk '{print $2}')" 1
+elif has php-fpm; then fv=$(php-fpm -v 2>/dev/null | head -1 | awk '{print $2}'); echo "php_fpm=$(echo "$fv" | cut -d. -f1,2)"; svc php php-fpm "$fv" 1
 elif has php; then echo "svc_php=absent $(php -v 2>/dev/null | head -1 | awk '{print $2}') (cli only)"; fi
-has certbot && echo "svc_ssl=installed $(certbot --version 2>&1 | awk '{print $2}')"
+if has certbot; then echo "svc_ssl=installed $(certbot --version 2>&1 | awk '{print $2}')"
+elif ls /etc/ssl/versa/*/fullchain.pem >/dev/null 2>&1; then echo "svc_ssl=installed self-signed"; fi
 pgv=$(psql --version 2>/dev/null | awk '{print $3}')
 if ls -d /usr/lib/postgresql/*/bin/postgres >/dev/null 2>&1 || has postgres || has postmaster; then svc postgres postgresql "$pgv" 1; fi
 if has mariadbd || has mysqld; then svc mariadb "mariadb mysql mysqld" "$(mysql --version 2>/dev/null | sed 's/^mysql *//')" 1; fi
 has redis-server && svc redis "redis-server redis" "$(redis-server --version 2>/dev/null | sed -n 's/.*v=\([^ ]*\).*/\1/p')" 1
+# dragonfly --version is colored: "dragonfly ESC[0;32mv2.1-<sha>ESC[m"
+{ has dragonfly || [ -x /usr/local/bin/dragonfly ]; } && svc dragonfly dragonfly "$( (dragonfly --version || /usr/local/bin/dragonfly --version) 2>/dev/null | head -1 | awk '{print $2}' | tr -d '\033' | sed 's/\[[0-9;]*m//g; s/-.*//')" 1
 if has python3; then pv=$(python3 -V 2>&1 | awk '{print $2}')
   if python3 -c 'import ensurepip' >/dev/null 2>&1; then echo "svc_python=installed $pv"; else echo "svc_python=absent $pv (no venv)"; fi; fi
 has node && echo "svc_node=installed $(node -v 2>/dev/null)"
@@ -98,16 +105,18 @@ if [ -n "$app" ] && [ -f "/etc/systemd/system/$app.service" ]; then svc app_serv
 if [ -n "$user" ] && { ls /etc/sudoers.d/"$user"* >/dev/null 2>&1 || { [ "$(id -un)" = "$user" ] && sudo -n -l 2>/dev/null | grep -q systemctl; }; }; then echo "svc_sudoers=installed"; fi
 [ -d "$p" ] && echo "svc_dirs=installed $p"
 has ufw && svc ufw ufw "" 1
+if [ -n "$proj" ] && [ -f "/etc/cron.d/versa-$(echo "$proj" | tr . _)" ]; then echo "svc_cron=installed $(grep -c "^[@0-9*]" "/etc/cron.d/versa-$(echo "$proj" | tr . _)") job(s)"; fi
 if [ -n "$proj" ] && [ -f "/etc/systemd/system/versa-backup-$proj.timer" ]; then svc backup "versa-backup-$proj.timer" "" 1; fi
 if [ -d "$p/backups" ]; then b=$(ls -1t "$p/backups" 2>/dev/null | head -1); [ -n "$b" ] && echo "backup_last=$b $(du -h "$p/backups/$b" 2>/dev/null | cut -f1)"; fi
-for f in /etc/nginx/sites-enabled/* /etc/apache2/sites-enabled/*; do
+for f in /etc/nginx/sites-enabled/* /etc/apache2/sites-enabled/* /etc/nginx/conf.d/*.conf; do
   [ -f "$f" ] || continue
   n=$(sed -n -e 's/^[[:space:]]*server_name[[:space:]]*\([^;]*\);.*/\1/p' -e 's/^[[:space:]]*ServerName[[:space:]]*\([^[:space:]]*\).*/\1/p' "$f" | head -1)
+  case $f in /etc/nginx/conf.d/*) [ -n "$n" ] || continue ;; esac # RHEL's sites; skip global snippets
   r=$(sed -n -e 's/^[[:space:]]*root[[:space:]]*\([^;]*\);.*/\1/p' -e 's/^[[:space:]]*DocumentRoot[[:space:]]*\([^[:space:]]*\).*/\1/p' "$f" | head -1)
   echo "site=$(basename "$f")|$n|$r"
 done
 if [ -n "$proj" ]; then
-  if [ -f "/etc/nginx/sites-available/$proj" ]; then echo "vhost=nginx"; elif [ -f "/etc/apache2/sites-available/$proj.conf" ]; then echo "vhost=apache"; fi
+  if [ -f "/etc/nginx/sites-available/$proj" ] || [ -f "/etc/nginx/conf.d/$proj.conf" ]; then echo "vhost=nginx"; elif [ -f "/etc/apache2/sites-available/$proj.conf" ]; then echo "vhost=apache"; fi
 fi
 if has apt-get; then
   apt list --upgradable 2>/dev/null | sed -n 's|^\([^ ]*/.*upgradable.*\)$|upg \1|p'
@@ -160,6 +169,9 @@ func siteServer(file string, r *Report) string {
 	return "apache"
 }
 
+// CanInstall reports whether the install scripts support this server's package manager.
+func (r *Report) CanInstall() bool { return r.Apt || r.Dnf }
+
 // ParseReport parses the probe output.
 func ParseReport(out string) *Report {
 	r := &Report{Services: map[string]State{}, AptAge: -1}
@@ -193,6 +205,10 @@ func ParseReport(out string) *Report {
 			r.OSID = v
 		case "apt":
 			r.Apt = v == "1"
+		case "dnf":
+			r.Dnf = v == "1"
+		case "yum":
+			r.Yum = v == "1"
 		case "php_fpm":
 			if phpVersionRe.MatchString(v) { // ends up in unit names of root scripts
 				r.PHPVersion = v

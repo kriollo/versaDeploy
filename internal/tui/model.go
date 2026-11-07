@@ -157,6 +157,21 @@ func (m *appModel) discoverConfigs() {
 	}
 }
 
+// useConfig records the file cfg came from. A file the user chose (--config) skips the
+// picker even when the directory has other deploy*.yml files.
+func (m *appModel) useConfig(path string, explicit bool) {
+	if m.cfg == nil || path == "" {
+		return
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	m.config.configPath = path
+	if explicit && m.currentView == viewConfigSelector {
+		m.currentView = viewDashboard
+	}
+}
+
 func (m appModel) activeEnvName() string {
 	if len(m.envNames) == 0 {
 		return ""

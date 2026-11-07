@@ -8,8 +8,14 @@ elif package_installed mariadb-server; then
     ok "MariaDB already installed — config untouched"
 else
     unit=mariadb
-    apt_install mariadb-server
-    cat > /etc/mysql/mariadb.conf.d/99-versadeploy.cnf <<'MYCNF'
+    pkg_install mariadb-server
+    if [ -d /etc/mysql/mariadb.conf.d ]; then
+        cnf=/etc/mysql/mariadb.conf.d/99-versadeploy.cnf
+    else
+        mkdir -p /etc/my.cnf.d
+        cnf=/etc/my.cnf.d/99-versadeploy.cnf
+    fi
+    cat > "$cnf" <<'MYCNF'
 # Generado por versaDeploy — solo conexiones locales
 [mysqld]
 bind-address = 127.0.0.1

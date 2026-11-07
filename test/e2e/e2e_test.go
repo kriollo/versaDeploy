@@ -5,24 +5,29 @@
 //
 //   - ubuntu:24.04 (nginx + PostgreSQL): four apps on one server, one per backend
 //     (test/e2e/apps/{php,python,go,node}), each with its own domain, vhost and unit
-//   - debian:12 (Apache + MariaDB): versaTodo (../versaTodo, skipped when missing)
+//   - debian:12 (Apache + MariaDB + Dragonfly .deb): versaTodo (../versaTodo, skipped when missing)
+//   - rockylinux:9 (nginx + PostgreSQL + Redis over dnf, PHP 8.3 from Remi): the same four apps
+//   - almalinux:9 (nginx + MariaDB + Dragonfly .rpm, PHP 8.4 from Remi): the same four apps
 //
 // It also checks DB backups (timer + backup now), service logs and the sites listing.
 // Needs Docker able to run systemd containers:
 //
 //	go test -tags e2e -v -timeout 60m ./test/e2e/
 //
-// VERSA_E2E_REPO overrides the versaTodo path, VERSA_E2E_KEEP=1 leaves the containers.
+// VERSA_E2E_REPO overrides the versaTodo path, VERSA_E2E_KEEP=1 leaves the containers,
+// VERSA_E2E_SERVERS=rocky,ubuntu runs only those servers.
 package e2e
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -40,10 +45,14 @@ type server struct {
 	sshPort, httpPort int
 	web, db           string
 	stack             []string // server-wide steps, run once before the first app
+	dockerfile        string   // "" = Dockerfile (apt)
+	php, phpIni       string   // PHP version and the php.ini PHP-FPM reads
+	cache             string   // redis | dragonfly (both answer on 127.0.0.1:6379)
 }
 
 type app struct {
 	name     string // project name, env name and domain prefix
+	fixture  string // test/e2e/apps/<fixture> ("" = versaTodo)
 	server   *server
 	repo     string // filled at runtime
 	builds   string // YAML for builds:
@@ -54,37 +63,55 @@ type app struct {
 }
 
 var (
-	ubuntu = &server{"ubuntu", "ubuntu:24.04", 2222, 8080, "nginx", "postgres",
-		[]string{"base", "php", "nginx", "postgres", "redis", "python", "node", "deploy_user"}}
-	debian = &server{"debian", "debian:12", 2223, 8081, "apache", "mariadb",
-		[]string{"base", "php", "apache", "mariadb", "redis", "deploy_user"}}
+	ubuntu = &server{name: "ubuntu", image: "ubuntu:24.04", sshPort: 2222, httpPort: 8080, web: "nginx", db: "postgres",
+		stack: []string{"base", "php", "nginx", "postgres", "redis", "python", "node", "deploy_user"},
+		php:   "8.4", phpIni: "/etc/php/8.4/fpm/php.ini", cache: "redis"}
+	debian = &server{name: "debian", image: "debian:12", sshPort: 2223, httpPort: 8081, web: "apache", db: "mariadb",
+		stack: []string{"base", "php", "apache", "mariadb", "dragonfly", "deploy_user"},
+		php:   "8.4", phpIni: "/etc/php/8.4/fpm/php.ini", cache: "dragonfly"}
+	rocky = &server{name: "rocky", image: "rockylinux:9", sshPort: 2226, httpPort: 8088, web: "nginx", db: "postgres",
+		stack:      []string{"base", "php", "nginx", "postgres", "redis", "python", "node", "deploy_user"},
+		dockerfile: "Dockerfile.rhel", php: "8.3", phpIni: "/etc/php.ini", cache: "redis"}
+	alma = &server{name: "alma", image: "almalinux:9", sshPort: 2228, httpPort: 8091, web: "nginx", db: "mariadb",
+		stack:      []string{"base", "php", "nginx", "mariadb", "dragonfly", "python", "node", "deploy_user"},
+		dockerfile: "Dockerfile.rhel", php: "8.4", phpIni: "/etc/php.ini", cache: "dragonfly"}
 )
 
-var apps = []app{
-	{name: "e2ephp", server: ubuntu, expect: "versa-e2e php",
-		builds: `php: { enabled: true, root: '.', composer_command: 'composer install --no-dev' }`,
-		steps:  []string{"nginx", "sudoers", "dirs"}},
-	{name: "e2epython", server: ubuntu, expect: "versa-e2e python",
-		builds: `python: { enabled: true, web_server: true, web_port: 8000, entry_point: app.py, service_name: e2epython }`,
-		tweak:  func(v *provision.Vars) { v.Backend, v.ProxyPort = "python", 8000 },
-		// owns the server's PostgreSQL database and its daily backup
-		services: `[{ name: e2epython }]`, // exec: the builder's run_server.sh
-		steps:    []string{"nginx", "postgres", "sudoers", "dirs", "backup"}},
-	{name: "e2ego", server: ubuntu, expect: "versa-e2e go",
-		builds:   `go: { enabled: true, target_os: linux, target_arch: amd64, binary_name: app, deploy_path: bin }`,
-		tweak:    func(v *provision.Vars) { v.Backend, v.ProxyPort = "go", 8090 },
-		services: `[{ name: e2ego, environment: { PORT: "8090" } }]`, // exec: the go binary
-		steps:    []string{"nginx", "sudoers", "dirs"}},
-	{name: "e2enode", server: ubuntu, expect: "versa-e2e node",
-		builds:   `frontend: { enabled: true, npm_command: 'npm install', compile_command: 'npm run build' }`,
-		tweak:    func(v *provision.Vars) { v.Backend, v.ProxyPort, v.NodeMajor = "node", 3000, "22" },
-		services: `[{ name: e2enode, exec: "npm start", environment: { PORT: "3000" } }]`,
-		steps:    []string{"nginx", "sudoers", "dirs"}},
-	{name: "versatodo", server: debian,
-		builds: `php: { enabled: true, root: '.', composer_command: 'composer install --no-dev --optimize-autoloader' }
-            frontend: { enabled: true, npm_command: 'pnpm install --frozen-lockfile', compile_command: 'pnpm run compile', cleanup_dev_deps: true, production_command: 'pnpm install --production' }`,
-		steps: []string{"apache", "mariadb", "sudoers", "dirs", "backup"}},
+// fixtureApps are the four backend fixtures hosted on srv, prefixed so names stay unique.
+func fixtureApps(srv *server, prefix string) []app {
+	return []app{
+		{name: prefix + "php", fixture: "php", server: srv, expect: "versa-e2e php",
+			builds: `php: { enabled: true, root: '.', composer_command: 'composer install --no-dev' }`,
+			// first app on the server: its vars reach the base step (provision.packages)
+			tweak: func(v *provision.Vars) {
+				v.Packages = []string{"jq"}
+				v.Cron = []string{"* * * * * php -r 'echo 1;' > /dev/null"}
+			},
+			steps: []string{"nginx", "sudoers", "dirs", "cron"}},
+		{name: prefix + "python", fixture: "python", server: srv, expect: "versa-e2e python",
+			builds: `python: { enabled: true, web_server: true, web_port: 8000, entry_point: app.py, service_name: ` + prefix + `python }`,
+			tweak:  func(v *provision.Vars) { v.Backend, v.ProxyPort = "python", 8000 },
+			// owns the server's database and its daily backup
+			services: `[{ name: ` + prefix + `python }]`, // exec: the builder's run_server.sh
+			steps:    []string{"nginx", srv.db, "sudoers", "dirs", "backup"}},
+		{name: prefix + "go", fixture: "go", server: srv, expect: "versa-e2e go",
+			builds:   `go: { enabled: true, target_os: linux, target_arch: amd64, binary_name: app, deploy_path: bin }`,
+			tweak:    func(v *provision.Vars) { v.Backend, v.ProxyPort = "go", 8090 },
+			services: `[{ name: ` + prefix + `go, environment: { PORT: "8090" } }]`, // exec: the go binary
+			steps:    []string{"nginx", "sudoers", "dirs"}},
+		{name: prefix + "node", fixture: "node", server: srv, expect: "versa-e2e node",
+			builds:   `frontend: { enabled: true, npm_command: 'npm install', compile_command: 'npm run build' }`,
+			tweak:    func(v *provision.Vars) { v.Backend, v.ProxyPort, v.NodeMajor = "node", 3000, "22" },
+			services: `[{ name: ` + prefix + `node, exec: "npm start", environment: { PORT: "3000" } }]`,
+			steps:    []string{"nginx", "sudoers", "dirs"}},
+	}
 }
+
+var apps = append(append(fixtureApps(ubuntu, "e2e"), app{name: "versatodo", server: debian,
+	builds: `php: { enabled: true, root: '.', composer_command: 'composer install --no-dev --optimize-autoloader' }
+            frontend: { enabled: true, npm_command: 'pnpm install --frozen-lockfile', compile_command: 'pnpm run compile', cleanup_dev_deps: true, production_command: 'pnpm install --production' }`,
+	steps: []string{"apache", "mariadb", "sudoers", "dirs", "backup"}}),
+	append(fixtureApps(rocky, "e2er"), fixtureApps(alma, "e2ea")...)...)
 
 func run(t *testing.T, name string, args ...string) string {
 	t.Helper()
@@ -129,10 +156,10 @@ func (a app) domain() string { return a.name + ".test" }
 
 func (a app) vars(pub string) provision.Vars {
 	v := provision.Vars{
-		Project: a.name, Domain: a.domain(), WebServer: a.server.web, PHPVersion: "8.4",
+		Project: a.name, Domain: a.domain(), WebServer: a.server.web, PHPVersion: a.server.php,
 		RemotePath: "/var/www/versa/" + a.name, DeployUser: "versadeploy",
 		Database: a.server.db, DBName: a.name, DBUser: a.name + "_user", DBPassword: "e2e'pass",
-		SSHPort: 22, PubKey: pub, Backend: "php", Redis: true, BackupKeep: 3,
+		SSHPort: 22, PubKey: pub, Backend: "php", Redis: a.server.cache == "redis", Dragonfly: a.server.cache == "dragonfly", BackupKeep: 3,
 		Aliases: []string{"www." + a.domain()},
 	}
 	if a.tweak != nil {
@@ -179,23 +206,25 @@ func TestProvisionAndDeploy(t *testing.T) {
 		todo = "../../../versaTodo"
 	}
 	todo, _ = filepath.Abs(todo)
+	only := os.Getenv("VERSA_E2E_SERVERS")
 	var selected []app
+	var servers []*server
 	for _, a := range apps {
-		if a.name == "versatodo" {
+		if only != "" && !contains(strings.Split(only, ","), a.server.name) {
+			continue
+		}
+		if a.fixture == "" {
 			if _, err := os.Stat(filepath.Join(todo, "composer.json")); err != nil {
 				t.Logf("versaTodo not found at %s: skipping it", todo)
 				continue
 			}
 			a.repo = todo
 		} else {
-			a.repo = gitRepo(t, filepath.Join("apps", strings.TrimPrefix(a.name, "e2e")))
+			a.repo = gitRepo(t, filepath.Join("apps", a.fixture))
 		}
 		selected = append(selected, a)
-	}
-	servers := []*server{ubuntu}
-	for _, a := range selected {
-		if a.server == debian {
-			servers = append(servers, debian)
+		if !slices.Contains(servers, a.server) {
+			servers = append(servers, a.server)
 		}
 	}
 
@@ -207,11 +236,11 @@ func TestProvisionAndDeploy(t *testing.T) {
 	ctx := filepath.Join(dir, "ctx")
 	os.MkdirAll(ctx, 0755)
 	os.WriteFile(filepath.Join(ctx, "id.pub"), pubBytes, 0644)
-	df, _ := filepath.Abs("Dockerfile")
 
 	knownHosts := filepath.Join(dir, "known_hosts")
 	for _, s := range servers {
 		img := "versa-e2e-" + s.name
+		df, _ := filepath.Abs(cmp.Or(s.dockerfile, "Dockerfile"))
 		run(t, "docker", "build", "-q", "-t", img, "--build-arg", "BASE="+s.image, "-f", df, ctx)
 		exec.Command("docker", "rm", "-f", img).Run()
 		run(t, "docker", "run", "-d", "--name", img, "--privileged", "--cgroupns=host",
@@ -360,14 +389,14 @@ func TestProvisionAndDeploy(t *testing.T) {
 			t.Fatalf("%s: %s cannot log in after provisioning", s.name, v.DBUser)
 		}
 		// pgrep arguments matching each daemon's main process
-		daemons := map[string]string{"redis": "-x redis-server", "php": "-f 'php-fpm: master'",
+		daemons := map[string]string{s.cache: map[string]string{"redis": "-x redis-server", "dragonfly": "-x dragonfly"}[s.cache], "php": "-f 'php-fpm: master'",
 			s.web: map[string]string{"nginx": "-x nginx", "apache": "-x apache2"}[s.web],
-			s.db:  map[string]string{"postgres": "-x postgres", "mariadb": "-x mariadbd"}[s.db]}
+			s.db:  map[string]string{"postgres": "-x 'postgres|postmaster'", "mariadb": "-x mariadbd"}[s.db]}
 		pids := map[string]string{}
 		for name, match := range daemons {
 			pids[name] = sh("pgrep -o " + match)
 		}
-		sh("sed -i 's/^memory_limit = .*/memory_limit = 512M/' /etc/php/8.4/fpm/php.ini")
+		sh("sed -i 's/^memory_limit = .*/memory_limit = 512M/' " + s.phpIni)
 
 		v.DBPassword = "another-pass"
 		steps := append(append([]string{}, s.stack...), owner.steps...)
@@ -386,7 +415,7 @@ func TestProvisionAndDeploy(t *testing.T) {
 				t.Errorf("%s: %s was restarted by the re-run (pid %s → %s)", s.name, name, pids[name], now)
 			}
 		}
-		if got := sh("grep '^memory_limit' /etc/php/8.4/fpm/php.ini"); got != "memory_limit = 512M" {
+		if got := sh("grep '^memory_limit' " + s.phpIni); got != "memory_limit = 512M" {
 			t.Errorf("%s: php.ini overwritten: %q", s.name, got)
 		}
 
@@ -478,7 +507,7 @@ func TestProvisionAndDeploy(t *testing.T) {
 					}
 				}
 			}
-			want := []string{s.web, "php", s.db, "redis"}
+			want := []string{s.web, "php", s.db, s.cache}
 			if v.AppService != "" {
 				want = append(want, "app_service")
 			}
@@ -498,8 +527,19 @@ func TestProvisionAndDeploy(t *testing.T) {
 					t.Errorf("%s: %s not detected", a.name, id)
 				}
 			}
+			// same release modes on every distro: the web server's group can write (RHEL's 022 umask)
+			if mode, _ := c.ExecuteCommand("stat -c %A " + v.RemotePath + "/current/app/"); !strings.HasPrefix(strings.TrimSpace(mode), "drwxrws") {
+				t.Errorf("%s: release dir is %q, want group-writable drwxrws", a.name, strings.TrimSpace(mode))
+			}
+			if contains(a.steps, "cron") {
+				tab, _ := c.ExecuteCommand("cat " + provision.CronFile(a.name) + "; command -v jq")
+				if r.Get("cron").Status == provision.Absent || !strings.Contains(tab, "versadeploy cd '"+v.RemotePath+"/current/app' && umask 002 && php") || !strings.Contains(tab, "/jq") {
+					t.Errorf("%s: cron/packages not installed: %+v\n%s", a.name, r.Get("cron"), tab)
+				}
+			}
 		}
-		// never install an alternative web server: the script aborts before apt-get
+		// never install an alternative web server: the script aborts before installing
+		// (on rocky Apache is refused outright: it is provisioned only on Debian/Ubuntu)
 		other := map[string]string{"nginx": "apache", "apache": "nginx"}[s.web]
 		v := hosted[0].vars(pub)
 		v.WebServer = other
@@ -507,16 +547,44 @@ func TestProvisionAndDeploy(t *testing.T) {
 			t.Fatal(err)
 		} else {
 			var out bytes.Buffer
-			if err := provision.Run(c, "root", b, &out); err == nil || !strings.Contains(out.String(), "is already installed") {
+			refused := "is already installed"
+			if s.dockerfile != "" {
+				refused = "only on Debian/Ubuntu"
+			}
+			if err := provision.Run(c, "root", b, &out); err == nil || !strings.Contains(out.String(), refused) {
 				t.Errorf("%s: installing %s next to %s was not refused: %v\n%s", s.name, other, s.web, err, out.String())
 			}
-			if st, _ := c.ExecuteCommand("dpkg -l " + map[string]string{"nginx": "nginx", "apache": "apache2"}[other] + " 2>/dev/null | grep -c '^ii' || true"); strings.TrimSpace(st) != "0" {
-				t.Errorf("%s: %s got installed anyway", s.name, other)
+			pkg := map[string]string{"nginx": "nginx", "apache": "apache2"}[other]
+			if st, _ := c.ExecuteCommand("dpkg -l " + pkg + " 2>/dev/null | grep -c '^ii'; rpm -q httpd >/dev/null 2>&1 && echo rpm"); strings.TrimSpace(st) != "0" {
+				t.Errorf("%s: %s got installed anyway: %q", s.name, other, st)
 			}
 		}
 
+		// PHP-FPM writes group-writable files the deploy user can clean (and reuse)
+		if um, _ := c.ExecuteCommand("systemctl show -p UMask php" + s.php + "-fpm"); strings.TrimSpace(um) != "UMask=0002" {
+			t.Errorf("%s: php-fpm %q, want UMask=0002", s.name, strings.TrimSpace(um))
+		}
+
+		// never install the other cache server next to the one in use (same port)
+		otherCache := map[string]string{"redis": "dragonfly", "dragonfly": "redis"}[s.cache]
+		if b, err := provision.Build([]string{otherCache}, hosted[0].vars(pub)); err != nil {
+			t.Fatal(err)
+		} else {
+			var out bytes.Buffer
+			if err := provision.Run(c, "root", b, &out); err == nil || !strings.Contains(out.String(), "is already installed") {
+				t.Errorf("%s: installing %s next to %s was not refused: %v\n%s", s.name, otherCache, s.cache, err, out.String())
+			}
+		}
+
+		// PHP reaches the cache through phpredis, which only listens on localhost
+		if out, _ := c.ExecuteCommand(`php -r '$r = new Redis(); $r->connect("127.0.0.1", 6379); $r->set("e2e", "ok"); echo $r->get("e2e");' 2>&1; ss -Hltn 'sport = :6379' | awk '{print $4}' | sort -u | tr '\n' ' '`); !strings.HasPrefix(out, "ok") || strings.Contains(out, "0.0.0.0") || strings.Contains(out, "*:6379") {
+			t.Errorf("%s: %s via phpredis / bind: %q", s.name, s.cache, out)
+		} else {
+			t.Logf("%s: %s ok, listening on %s", s.name, s.cache, strings.TrimPrefix(out, "ok"))
+		}
+
 		var logs bytes.Buffer
-		if err := provision.Exec(c, "root", provision.LogsCommand(s.web, provision.Vars{Domain: hosted[0].domain()}, "8.4"), &logs); err != nil || !strings.Contains(logs.String(), "journalctl -u") {
+		if err := provision.Exec(c, "root", provision.LogsCommand(s.web, provision.Vars{Domain: hosted[0].domain()}, s.php), &logs); err != nil || !strings.Contains(logs.String(), "journalctl -u") {
 			t.Errorf("%s logs: %v\n%s", s.name, err, logs.String())
 		}
 		for _, a := range hosted {

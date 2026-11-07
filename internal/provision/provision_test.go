@@ -86,6 +86,35 @@ func testVars() Vars {
 		RemotePath: "/var/www/versatodo", DocRoot: "current", DeployUser: "versadeploy",
 		Database: "postgres", DBName: "todo", DBUser: "todo_user", DBPassword: "s3'cret",
 		SSHPort: 22, Backend: "php", PubKey: "ssh-ed25519 AAAAtest e2e",
+		Cron: []string{"* * * * * php versaCLI app:schedule:run >> versaWYS/logs/cron.log 2>&1"},
+	}
+}
+
+func TestCron(t *testing.T) {
+	for l, ok := range map[string]bool{
+		"*/5 * * * * php versaCLI app:schedule:run": true,
+		"@daily  php versaCLI backup":               true,
+		"0 3 * * 1-5 date +\\%F >> x.log":           true,  // escaped %
+		"0 3 * * * date +%F":                        false, // cron would cut the command there
+		"@sometimes php x":                          false,
+		"* * * * php x":                             false, // 4 fields: "php" is no weekday
+		"0 9 * jan mon-fri php x":                   true,
+		"* * * *":                                   false,
+		"* * * * * ; rm -rf /\n* * * * * id":        false,
+	} {
+		if _, _, err := cronLine(l); (err == nil) != ok {
+			t.Errorf("cronLine(%q) err = %v, want ok=%v", l, err, ok)
+		}
+	}
+	v := testVars()
+	v.DocRoot = "current/app/public" // jobs still run in the app dir
+	got := v.cronTab()
+	want := "* * * * * versadeploy cd '/var/www/versatodo/current/app' && umask 002 && php versaCLI app:schedule:run >> versaWYS/logs/cron.log 2>&1\n"
+	if !strings.HasSuffix(got, want) || !strings.Contains(got, "PATH=") {
+		t.Errorf("cronTab:\n%s\nwant suffix:\n%s", got, want)
+	}
+	if CronFile("app.example") != "/etc/cron.d/versa-app_example" {
+		t.Error(CronFile("app.example"))
 	}
 }
 
@@ -383,5 +412,67 @@ func TestValidateRejectsUnsafeValues(t *testing.T) {
 	}
 	if v := testVars(); v.Validate([]string{"dirs", "sudoers"}) != nil {
 		t.Errorf("valid vars refused: %v", v.Validate([]string{"dirs", "sudoers"}))
+	}
+}
+
+func TestSelfSignedVhost(t *testing.T) {
+	for _, ws := range []string{"nginx", "apache"} {
+		v := testVars()
+		v.WebServer, v.SSLSelfSigned = ws, true
+		out, err := RenderVhost(v, true)
+		if err != nil || !strings.Contains(out, "/etc/ssl/versa/todo.example.org/fullchain.pem") || strings.Contains(out, "/etc/letsencrypt/live") {
+			t.Errorf("%s: self-signed vhost uses the wrong certificate (%v)", ws, err)
+		}
+	}
+}
+
+func TestConflictsCache(t *testing.T) {
+	v := testVars()
+	withRedis := ParseReport("svc_redis=active 7.0.15\n")
+	withDfly := ParseReport("svc_dragonfly=active v2.1\n")
+	empty := ParseReport("")
+	for _, c := range []struct {
+		r      *Report
+		steps  []string
+		refuse bool
+	}{
+		{empty, []string{"dragonfly"}, false},
+		{empty, []string{"redis", "dragonfly"}, true},
+		{withRedis, []string{"dragonfly"}, true},
+		{withDfly, []string{"redis"}, true},
+		{withDfly, []string{"dragonfly"}, false}, // re-run keeps it
+	} {
+		if err := Conflicts(c.r, c.steps, v); (err != nil) != c.refuse {
+			t.Errorf("Conflicts(%v) = %v, want refuse=%v", c.steps, err, c.refuse)
+		}
+	}
+}
+
+// limit_req applies to the app only: static files must not use up the burst.
+func TestNginxRateLimitOnlyDynamic(t *testing.T) {
+	for _, proxy := range []int{0, 8000} {
+		v := testVars()
+		v.ProxyPort = proxy
+		out, err := RenderVhost(v, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var where []string
+		block := "server"
+		for _, l := range strings.Split(out, "\n") {
+			if t := strings.TrimSpace(l); strings.HasPrefix(t, "location") {
+				block = t
+			}
+			if strings.Contains(l, "limit_req zone=") {
+				where = append(where, block)
+			}
+		}
+		want := "location = /index.php {"
+		if proxy != 0 {
+			want = "location / {"
+		}
+		if len(where) != 1 || where[0] != want {
+			t.Errorf("proxy %d: limit_req in %q, want only in %q", proxy, where, want)
+		}
 	}
 }

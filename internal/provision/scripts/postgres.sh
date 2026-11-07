@@ -1,13 +1,18 @@
 pg_fresh=""
-package_installed postgresql || pg_fresh=1
-apt_install postgresql postgresql-contrib
+if package_installed postgresql || package_installed postgresql-server; then pg_fresh=""; else pg_fresh=1; fi
+if [ "$PKG_MGR" = apt ]; then
+    apt_install postgresql postgresql-contrib
+else
+    pkg_install postgresql-server postgresql postgresql-contrib
+    if [ -n "$pg_fresh" ]; then postgresql-setup --initdb >/dev/null 2>&1 || true; fi
+fi
 if [ -n "$pg_fresh" ]; then
     systemctl enable postgresql >/dev/null 2>&1
     systemctl start postgresql
 fi
 service_active postgresql || die "PostgreSQL is not running — journalctl -u postgresql -n 30"
 pg_major="$(psql --version | awk '{print $3}' | cut -d. -f1)"
-pg_dir="/etc/postgresql/${pg_major}/main"
+if [ -d "/etc/postgresql" ]; then pg_dir="/etc/postgresql/${pg_major}/main"; else pg_dir="/var/lib/pgsql/data"; fi
 
 if [ -n "$pg_fresh" ] && [ -f "$pg_dir/postgresql.conf" ]; then
     # tuning only on a server installed by this run; an existing one keeps its settings

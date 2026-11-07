@@ -1,7 +1,7 @@
 // Package provision detects and installs the server stack (web server, PHP, databases,
 // runtimes...) for an environment. The install scripts are a non-interactive port of
-// setup-vps.sh; they only support apt-based servers (Debian/Ubuntu). Detection is POSIX
-// and runs anywhere.
+// setup-vps.sh; they support apt (Debian/Ubuntu) and dnf (RHEL/Rocky/Alma 8+) servers.
+// Detection is POSIX and runs anywhere.
 package provision
 
 import (
@@ -24,10 +24,11 @@ var Catalog = []Service{
 	{ID: "php", Label: "PHP-FPM + OPCache", Packages: []string{"php{v}-*"}, Units: []string{"php{v}-fpm"}},
 	{ID: "apache", Label: "Apache2", Group: "web", Packages: []string{"apache2", "apache2-*"}, Units: []string{"apache2"}},
 	{ID: "nginx", Label: "Nginx", Group: "web", Packages: []string{"nginx", "nginx-*", "libnginx-mod-*"}, Units: []string{"nginx"}},
-	{ID: "ssl", Label: "SSL (Certbot / Let's Encrypt)", Packages: []string{"certbot", "python3-certbot*"}},
+	{ID: "ssl", Label: "SSL (Let's Encrypt or self-signed)", Packages: []string{"certbot", "python3-certbot*"}},
 	{ID: "postgres", Label: "PostgreSQL", Group: "db", Packages: []string{"postgresql", "postgresql-*"}, Units: []string{"postgresql"}},
 	{ID: "mariadb", Label: "MariaDB / MySQL", Group: "db", Packages: []string{"mariadb-*", "mysql-*"}, Units: []string{"mariadb", "mysql"}},
-	{ID: "redis", Label: "Redis", Packages: []string{"redis-server", "redis-tools", "redis"}, Units: []string{"redis-server"}},
+	{ID: "redis", Label: "Redis", Group: "cache", Packages: []string{"redis-server", "redis-tools", "redis"}, Units: []string{"redis-server"}},
+	{ID: "dragonfly", Label: "Dragonfly (Redis-compatible)", Group: "cache", Units: []string{"dragonfly"}},
 	{ID: "python", Label: "Python 3 + venv", Packages: []string{"python3", "python3-pip", "python3-venv", "python3-dev"}},
 	{ID: "node", Label: "Node.js", Packages: []string{"nodejs"}},
 	{ID: "app_service", Label: "App service (deploy installs it)"},
@@ -35,6 +36,7 @@ var Catalog = []Service{
 	{ID: "sudoers", Label: "Sudoers (services_reload)"},
 	{ID: "dirs", Label: "Project directory"},
 	{ID: "backup", Label: "DB backups (daily timer)"},
+	{ID: "cron", Label: "Cron jobs (provision.cron)"},
 	{ID: "ufw", Label: "UFW firewall", Packages: []string{"ufw"}},
 }
 

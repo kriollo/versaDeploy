@@ -1,3 +1,21 @@
+# RHEL family: Node from the AppStream module stream nodejs:N
+if [ "$PKG_MGR" != apt ]; then
+    major="${NODE_MAJOR:-22}"
+    current="$(node -v 2>/dev/null | sed 's/^v//; s/\..*//' || true)"
+    if [ "$current" = "$major" ]; then
+        ok "Node.js ${major} already installed ($(node -v))"
+        return 0
+    elif [ -n "$current" ]; then
+        die "Node.js $(node -v) is already installed — Node ${major} not installed. Set node_major: \"${current}\""
+    fi
+    dnf module reset -y -q nodejs >/dev/null 2>&1 || true
+    dnf module enable -y -q "nodejs:${major}" >/dev/null 2>&1 || true
+    cand="$(dnf_candidate nodejs | cut -d. -f1)"
+    [ "$cand" = "$major" ] || die "Node.js ${major} is not available for ${OS_ID} (its repos offer ${cand:-none}) — set node_major: \"${cand}\""
+    pkg_install nodejs npm
+    ok "Node.js installed: $(node -v)"
+    return 0
+fi
 major="${NODE_MAJOR:-22}"
 current="$(node -v 2>/dev/null | sed 's/^v//; s/\..*//' || true)"
 if [ "$current" = "$major" ]; then

@@ -13,35 +13,81 @@ warn()    { echo "[WARN]  $*"; }
 die()     { echo "[ERROR] $*"; exit 1; }
 section() { echo; echo "══════ $* ══════"; }
 
-package_installed() { dpkg -l "$1" 2>/dev/null | grep -q '^ii'; }
+package_installed() {
+    if [ "$PKG_MGR" = apt ]; then dpkg -l "$1" 2>/dev/null | grep -q '^ii'; else rpm -q "$1" >/dev/null 2>&1; fi
+}
+# pkg_available NAME: installed, or installable from the enabled repos
+pkg_available() {
+    package_installed "$1" && return 0
+    if [ "$PKG_MGR" = apt ]; then apt-cache show "$1" >/dev/null 2>&1; else dnf list -q available "$1" >/dev/null 2>&1; fi
+}
+# dnf_candidate NAME: version dnf would install (after module streams), e.g. 8.3.19
+dnf_candidate() { dnf repoquery -q --latest-limit 1 --qf '%{version}' "$1" 2>/dev/null | head -1; }
 service_active()    { systemctl is-active --quiet "$1" 2>/dev/null; }
 # apt_install installs only the packages that are missing: `apt-get install` of an
 # installed package would upgrade it, and upgrades only happen on request (U/S).
 # APT_INSTALLED lists what this run actually installed.
 APT_INSTALLED=""
-apt_install() {
+pkg_install() {
     local p missing=()
     for p in "$@"; do package_installed "$p" || missing+=("$p"); done
     [ ${#missing[@]} -eq 0 ] && return 0
-    apt-get install -y -qq -o Dpkg::Options::=--force-confold "${missing[@]}"
+    if [ "$PKG_MGR" = apt ]; then
+        apt-get install -y -qq -o Dpkg::Options::=--force-confold "${missing[@]}"
+    else
+        dnf install -y -q "${missing[@]}"
+    fi
     APT_INSTALLED="$APT_INSTALLED ${missing[*]}"
+}
+apt_install() { pkg_install "$@"; }
+
+# fpm_umask UNIT: PHP-FPM creates group-writable files (cache, logs, uploads), so the
+# deploy user's CLI and cron can clean and reuse them, and the other way round
+fpm_umask() {
+    mkdir -p "/etc/systemd/system/$1.service.d"
+    printf '[Service]\nUMask=0002\n' > "/etc/systemd/system/$1.service.d/versa-umask.conf"
+    systemctl daemon-reload
+}
+
+# SELinux (RHEL family): a persistent file context, applied now. No-op without SELinux.
+selinux_on() { command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; }
+selinux_label() { # TYPE PATTERN PATH
+    selinux_on || return 0
+    command -v semanage >/dev/null 2>&1 || pkg_install policycoreutils-python-utils
+    semanage fcontext -a -t "$1" "$2" 2>/dev/null || semanage fcontext -m -t "$1" "$2"
+    restorecon -R "$3"
 }
 
 [ "$(id -u)" = 0 ] || die "must run as root (set provision.ssh.user: root in deploy.yml)"
-command -v apt-get >/dev/null || die "installation supports only apt-based servers (Debian/Ubuntu)"
+if command -v apt-get >/dev/null 2>&1; then
+    PKG_MGR=apt
+elif command -v dnf >/dev/null 2>&1; then
+    PKG_MGR=dnf
+else
+    die "installation supports apt (Debian/Ubuntu) or dnf (RHEL/Rocky/Alma 8+) servers"
+fi
 OS_ID="$(. /etc/os-release 2>/dev/null; echo "${ID:-}")"
 OS_CODENAME="$(. /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-}")"
 
 APT_UPDATED=""
-apt_update_once() { [ -n "$APT_UPDATED" ] || { apt-get update -qq; APT_UPDATED=1; }; }
-apt_update_once
+pkg_update_once() {
+    [ -n "$APT_UPDATED" ] && return 0
+    if [ "$PKG_MGR" = apt ]; then apt-get update -qq; else dnf makecache -q >/dev/null 2>&1 || true; fi
+    APT_UPDATED=1
+}
+apt_update_once() { pkg_update_once; }
+pkg_update_once
 
 # install_vhost FILE: installs ./FILE as the project's vhost, validates and reloads.
 # Keeps a timestamped backup and restores it when the new config fails validation.
 install_vhost() {
     local src="$1" dst bak=""
     if [ "$WEB_SERVER" = nginx ]; then
-        dst="/etc/nginx/sites-available/${PROJECT_NAME}"
+        if [ -d /etc/nginx/sites-available ]; then
+            dst="/etc/nginx/sites-available/${PROJECT_NAME}"
+        else
+            dst="/etc/nginx/conf.d/${PROJECT_NAME}.conf"
+        fi
     else
         dst="/etc/apache2/sites-available/${PROJECT_NAME}.conf"
     fi
@@ -70,9 +116,10 @@ install_vhost() {
         if [ "$(printf '%s\n' "$v" 1.25.1 | sort -V | head -1)" != 1.25.1 ]; then
             sed -i 's|^\(\s*\)http2 on;|\1# http2 on; (nginx < 1.25.1)|; s|listen 443 ssl;|listen 443 ssl http2;|' "$dst"
         fi
-        ln -sfn "$dst" "/etc/nginx/sites-enabled/${PROJECT_NAME}"
-        # the stock default site goes only on a web server installed by this run
-        [ -n "${WEB_FRESH:-}" ] && rm -f /etc/nginx/sites-enabled/default
+        if [ -d /etc/nginx/sites-enabled ]; then
+            ln -sfn "$dst" "/etc/nginx/sites-enabled/${PROJECT_NAME}"
+            [ -n "${WEB_FRESH:-}" ] && rm -f /etc/nginx/sites-enabled/default
+        fi
         if ! nginx -t 2>&1; then
             [ -n "$bak" ] && cp "$bak" "$dst" || rm -f "$dst" "/etc/nginx/sites-enabled/${PROJECT_NAME}"
             die "nginx -t failed — previous config restored"
@@ -93,7 +140,7 @@ install_vhost() {
 # install_site_config picks the SSL vhost when the certificate already exists, so
 # re-running the web server step never downgrades a site to plain HTTP.
 install_site_config() {
-    if [ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]; then
+    if [ -f "$CERT_DIR/fullchain.pem" ]; then
         ensure_ssl_includes
         install_vhost vhost-ssl.conf
     else

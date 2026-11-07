@@ -1,6 +1,30 @@
 [ -n "$WEB_SERVER" ] || die "select a web server for SSL"
+if [ "${SSL_SELF_SIGNED:-false}" = true ]; then
+    # staging/LAN: no public DNS, so no Let's Encrypt. Kept across runs (renew: delete it).
+    d="$CERT_DIR"
+    if [ ! -f "$d/fullchain.pem" ]; then
+        san="DNS:${DOMAIN}"
+        for a in $ALIASES; do san="${san},DNS:${a}"; done
+        mkdir -p "$d"
+        openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=${DOMAIN}" -addext "subjectAltName=${san}" \
+            -keyout "$d/privkey.pem" -out "$d/fullchain.pem" 2>/dev/null
+        chmod 600 "$d/privkey.pem"
+        ok "Self-signed certificate for ${DOMAIN} (${san}), valid 825 days"
+    fi
+    # trusted on the server itself: the app's own HTTPS probes (app:check:deploy) verify it
+    if [ "$PKG_MGR" = apt ]; then
+        cp "$d/fullchain.pem" "/usr/local/share/ca-certificates/versa-${DOMAIN}.crt" && update-ca-certificates >/dev/null
+    else
+        cp "$d/fullchain.pem" "/etc/pki/ca-trust/source/anchors/versa-${DOMAIN}.crt" && update-ca-trust
+    fi
+    ensure_ssl_includes
+    install_vhost vhost-ssl.conf
+    warn "Browsers warn about a self-signed certificate: import ${d}/fullchain.pem, or use Let's Encrypt for a public site"
+    return 0
+fi
 plugin="--$WEB_SERVER"
-apt_install certbot "python3-certbot-${WEB_SERVER}"
+# RHEL family: both packages come from EPEL
+pkg_install certbot "python3-certbot-${WEB_SERVER}"
 ok "Certbot installed"
 
 server_ip="$(curl -4 -s --max-time 8 https://api64.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"

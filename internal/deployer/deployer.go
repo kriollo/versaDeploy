@@ -379,7 +379,12 @@ func (d *Deployer) ship(c *ssh.Client, a *PrebuiltArtifact, previousLock *state.
 	}
 
 	if err := d.performHealthCheck(previousLock, c, finalDir); err != nil {
-		return err
+		if previousLock != nil || !skipPostDeploy {
+			return err
+		}
+		// first deploy with post_deploy skipped: the app isn't set up yet (versaWYS answers
+		// 503 until installed), the release stays live and is recorded
+		d.log.Warn("Health check failed on the initial deploy before the app is set up (%v): finish the setup and deploy again", err)
 	}
 
 	d.log.Info("Updating deploy.lock...")
@@ -568,7 +573,10 @@ func (d *Deployer) uploadArchive(c *ssh.Client, chunks []string, extractedSize i
 	d.log.Info("Extracting artifact on server...")
 	chunkGlob := ssh.ShellQuote(remoteArchive) + ".*"
 	defer c.ExecuteCommand("rm -f -- " + chunkGlob)
-	cmd := fmt.Sprintf("mkdir -p %[2]s && cat %[1]s | tar -xzf - -C %[2]s", chunkGlob, ssh.ShellQuote(stagingDir))
+	// umask 002 keeps the archive's group-write bits (the web server's group writes logs,
+	// cache and the app's first-run config): Debian's pam_umask gives 002 to SSH sessions,
+	// RHEL's non-interactive ones 022, which made the same release read-only there
+	cmd := fmt.Sprintf("umask 002 && mkdir -p %[2]s && cat %[1]s | tar -xzf - -C %[2]s", chunkGlob, ssh.ShellQuote(stagingDir))
 	if out, err := c.ExecuteCommand(cmd); err != nil {
 		return fmt.Errorf("failed to extract artifact on server: %w (output: %s)", err, out)
 	}
@@ -836,8 +844,20 @@ func (d *Deployer) rollback(sshClient *ssh.Client, previousLock *state.DeployLoc
 
 	currentSymlink := filepath.ToSlash(filepath.Join(d.env.RemotePath, "current"))
 	relativeTarget := filepath.ToSlash(filepath.Join("releases", previousLock.LastDeploy.ReleaseDir))
-
-	return sshClient.CreateSymlink(relativeTarget, currentSymlink)
+	failed, _ := sshClient.ReadSymlink(currentSymlink)
+	if err := sshClient.CreateSymlink(relativeTarget, currentSymlink); err != nil {
+		return err
+	}
+	// The release we leave never finished activating: remove it, so a later rollback
+	// (or the Releases view) can't land on it
+	if f := path.Base(failed); failed != "" && f != previousLock.LastDeploy.ReleaseDir && state.ValidReleaseDir(f) {
+		if out, err := sshClient.ExecuteCommand("rm -rf -- " + ssh.ShellQuote(d.remote("releases", f))); err != nil {
+			d.log.Warn("Could not remove failed release %s: %v %s", f, err, out)
+		} else {
+			d.log.Info("  Removed failed release %s", f)
+		}
+	}
+	return nil
 }
 
 // runHook runs a post_deploy hook and rolls back to previousLock when it fails.
@@ -973,6 +993,18 @@ func (d *Deployer) executePreDeployServer(sshClient *ssh.Client, finalDir string
 }
 
 // Rollback rolls back to the previous release
+// ReleaseBefore returns the newest release older than current ("" if none): after a
+// rollback, another one goes further back, not forward. Names sort by time.
+func ReleaseBefore(releases []string, current string) string {
+	state.SortReleases(releases)
+	for _, r := range releases {
+		if r < current {
+			return r
+		}
+	}
+	return ""
+}
+
 func (d *Deployer) Rollback() error {
 	if d.env.Local {
 		return errLocalUnsupported("rollback")
@@ -1007,22 +1039,10 @@ func (d *Deployer) Rollback() error {
 		return fmt.Errorf("no previous release to rollback to")
 	}
 
-	// Sort releases (newest first)
-	state.SortReleases(releases)
-	sorted := releases
-
-	// Find previous (skip current if it's in the list)
-	var previousRelease string
 	currentRelease := filepath.Base(currentTarget)
-	for _, release := range sorted {
-		if release != currentRelease {
-			previousRelease = release
-			break
-		}
-	}
-
+	previousRelease := ReleaseBefore(releases, currentRelease)
 	if previousRelease == "" {
-		return fmt.Errorf("could not determine previous release")
+		return fmt.Errorf("no release older than %s to roll back to", currentRelease)
 	}
 
 	d.log.Info("Rolling back to: %s", previousRelease)

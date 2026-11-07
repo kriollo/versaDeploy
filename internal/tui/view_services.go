@@ -306,8 +306,8 @@ func (s *servicesModel) askResetPassword() {
 
 func (s *servicesModel) askSteps(ids []string, title string) {
 	s.pending = nil
-	if !s.report.Apt {
-		s.status = StyleError.Render("Install needs an apt-based server (Debian/Ubuntu)")
+	if !s.report.CanInstall() {
+		s.status = StyleError.Render("Install needs an apt (Debian/Ubuntu) or dnf (RHEL/Rocky/Alma 8+) server")
 		return
 	}
 	if err := provision.Conflicts(s.report, ids, s.vars); err != nil {
@@ -593,7 +593,11 @@ func (s servicesModel) view(width, height int, env *config.Environment) string {
 	if s.status != "" {
 		foot = append(foot, "  "+s.status)
 	}
-	foot = append(foot, sep, StyleMuted.Render("  Space select  ↵ edit  I install  P prepare deploy  U upgrade  S security  ctrl+r apt  L logs  B backup  X reset DB pass  w save  a reload"))
+	upgrades := "  U upgrade  S security  ctrl+r apt" // apt only (UpgradeBundle)
+	if s.report == nil || !s.report.Apt {
+		upgrades = ""
+	}
+	foot = append(foot, sep, StyleMuted.Render("  Space select  ↵ edit  I install  P prepare deploy"+upgrades+"  L logs  B backup  X reset DB pass  w save  a reload"))
 
 	// window the body around the cursor so long lists fit
 	avail := height - len(head) - len(foot)
@@ -684,10 +688,13 @@ func securityAlerts(r *provision.Report) []string {
 
 func osLabel(r *provision.Report) string {
 	l := r.OSID
-	if r.Apt {
+	switch {
+	case r.Apt:
 		l += " · apt"
-	} else {
-		l += " · detection only (no apt)"
+	case r.Dnf:
+		l += " · dnf (upgrades: dnf upgrade by hand)"
+	default:
+		l += " · detection only (no apt/dnf)"
 	}
 	return strings.TrimPrefix(l, " · ")
 }

@@ -431,3 +431,16 @@ func TestDeployer_ExecRemoteCommand_NoSSH(t *testing.T) {
 		t.Error("ExecRemoteCommand should fail when SSH connection fails")
 	}
 }
+
+func TestReleaseBefore(t *testing.T) {
+	rs := []string{"20261107-041501", "20261107-041943", "20261107-041719", "20261107-041826"}
+	for current, want := range map[string]string{
+		"20261107-041943": "20261107-041826", // newest live: the one before it
+		"20261107-041719": "20261107-041501", // after a rollback: further back, not forward
+		"20261107-041501": "",                // oldest: nothing to go back to
+	} {
+		if got := ReleaseBefore(append([]string(nil), rs...), current); got != want {
+			t.Errorf("ReleaseBefore(%s) = %q, want %q", current, got, want)
+		}
+	}
+}

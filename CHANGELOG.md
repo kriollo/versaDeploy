@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.13.0] - 2026-11-07
+
+### Added
+
+- **RHEL family servers (Rocky/Alma/RHEL 8+, dnf)** in the Services view: base packages, PHP-FPM and Node.js from AppStream module streams, nginx (+ EPEL headers-more), PostgreSQL, MariaDB, Redis, Python, certbot, deploy user, sudoers, project dir and backups. nginx only (Apache and UFW are refused, firewalld gets http/https), SELinux labels for the project dir, `/run/php` and `~/.ssh`, `httpd_can_network_connect` for proxied apps. Upgrades (`U`/`S`) stay apt only. The e2e test provisions Rocky 9 with the same four apps as Ubuntu.
+- **`provision.packages`**: extra OS packages the app needs (e.g. `tesseract-ocr`), installed by the base step and never upgraded.
+- **`provision.cron`** and the **Cron jobs** step: `/etc/cron.d/versa-<project>`, each job run as the deploy user in `current/app` (e.g. versaWYS `app:schedule:run`).
+- **`provision.ssl_self_signed`**: the SSL step makes a self-signed certificate (trusted on the server itself) for staging, LAN or Docker hosts without public DNS.
+- A warning when the config uses an unset `$name`: it becomes empty; server-side variables need `$$name`.
+- **Dragonfly** (`provision.dragonfly: true`), a Redis-compatible alternative: the official release package (pinned, sha256-checked) bound to 127.0.0.1 with 256 MB and LRU-like eviction. Never installed next to Redis (and the opposite). Tested on Rocky 9 (e2e) and AlmaLinux 9 with versaStore.
+- RHEL family: **Remi's repository** when AppStream lacks the PHP version (EL9 stops at 8.3) or the app needs phpredis; `php-process` and `php-sodium` installed like Debian's `php-common`.
+
+### Fixed
+
+- **`rollback` could restore a release whose deploy had failed**: a deploy rolled back after `post_deploy`, services or the health check now deletes its release.
+- **`rollback` without `--to` could move forward**: after a rollback, another one went to the newest release instead of the one before the active one (CLI and TUI).
+- **Releases were read-only for the web server on RHEL**: they're extracted with the SSH session's umask, 002 on Debian/Ubuntu but 022 on RHEL, so versaWYS couldn't create its first-run config there. Extraction now uses `umask 002` everywhere, a new PHP-FPM runs with `UMask=0002` and `provision.cron` jobs with `umask 002`, so the deploy user and PHP-FPM can write each other's cache and logs.
+- **nginx answered 429 to SPA pages**: the vhost rate limit (10 req/s, burst 50) covered static files, and one page of an ES-module SPA (versaStore's storefront: ~50 JS modules + product images + 8 API calls) used up the burst before its own API calls. The limit now applies only to requests that reach the app (`index.php` or the proxied app). **Existing servers: re-run the Nginx step** in the Services view to regenerate the vhost (it keeps a backup).
+- **`--config` no longer shows the config picker** when the directory has other `deploy*.yml` files.
+- **First deploy before the app is set up**: with `--initial-deploy` and the `post_deploy` hooks skipped, a failing health check (versaWYS answers 503 until installed) is a warning, and `deploy.lock` is written.
+- Dragonfly on Debian/Ubuntu: its `.deb` starts the service on install, so versa's config (localhost only) is written before the package, never after.
+- Services logs (`L`) on RHEL: PHP-FPM, Redis and Dragonfly log files and units; `U`/`S`/`ctrl+r` are listed only on apt servers.
+- The SSL step shows as installed with a self-signed certificate; Dragonfly's version shows without color codes.
+
 ## [1.12.0] - 2026-11-06
 
 ### Added

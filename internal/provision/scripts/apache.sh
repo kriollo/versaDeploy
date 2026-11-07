@@ -1,3 +1,4 @@
+[ "$PKG_MGR" = apt ] || die "Apache is installed only on Debian/Ubuntu: use nginx (web_server: nginx) on this server"
 # Never install an alternative web server: both want ports 80/443
 if package_installed nginx || package_installed nginx-core; then
     die "Nginx is already installed — Apache not installed. Use the Nginx step (web_server: nginx)"

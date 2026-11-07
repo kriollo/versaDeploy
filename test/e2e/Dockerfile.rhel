@@ -1,0 +1,12 @@
+# Servidor RHEL (Rocky/Alma 9) de prueba para el e2e de provisioning: systemd como PID 1 +
+# sshd, root con la llave generada por el test. Solo para pruebas locales.
+ARG BASE=rockylinux:9
+FROM ${BASE}
+ENV container=docker
+RUN dnf -y -q install systemd openssh-server sudo ca-certificates procps-ng iproute && dnf clean all \
+    && systemctl enable sshd \
+    && mkdir -p /root/.ssh && chmod 700 /root/.ssh
+COPY id.pub /root/.ssh/authorized_keys
+RUN chmod 600 /root/.ssh/authorized_keys
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

@@ -506,7 +506,7 @@ func rollbackDone(client *versassh.Client, err error, env *config.Environment) m
 	return msgRollbackDone{}
 }
 
-// doRollbackToPrevious rolls back to the release immediately before the current one.
+// doRollbackToPrevious rolls back to the newest release older than the current one.
 func doRollbackToPrevious(client *versassh.Client, remotePath string, env *config.Environment) tea.Cmd {
 	return func() tea.Msg {
 		releasesDir := filepath.ToSlash(filepath.Join(remotePath, "releases"))
@@ -520,20 +520,9 @@ func doRollbackToPrevious(client *versassh.Client, remotePath string, env *confi
 
 		currentSymlink := filepath.ToSlash(filepath.Join(remotePath, "current"))
 		currentTarget, _ := client.ReadSymlink(currentSymlink)
-		currentRelease := filepath.Base(currentTarget)
-
-		// Sort newest first
-		sortReleases(releases)
-
-		var previous string
-		for _, r := range releases {
-			if r != currentRelease {
-				previous = r
-				break
-			}
-		}
+		previous := deployer.ReleaseBefore(releases, filepath.Base(currentTarget))
 		if previous == "" {
-			return msgRollbackDone{err: fmt.Errorf("could not determine previous release")}
+			return msgRollbackDone{err: fmt.Errorf("no release older than the current one")}
 		}
 
 		relTarget := filepath.ToSlash(filepath.Join("releases", previous))

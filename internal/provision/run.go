@@ -7,6 +7,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,11 +51,15 @@ type Vars struct {
 	// PythonVersion is installed next to the system Python ("" = system python3)
 	PythonVersion string
 	Redis         bool
+	Dragonfly     bool     // Redis-compatible server instead of Redis
 	Aliases       []string // extra server names (www.example.com, other.com)
 	// ResetDBPassword sets DBPassword on an existing DB user; by default an existing
 	// user keeps its password, so other apps using it don't lose access.
 	ResetDBPassword bool
-	BackupKeep      int // daily DB backups kept (default 7)
+	BackupKeep      int      // daily DB backups kept (default 7)
+	SSLSelfSigned   bool     // ssl step: self-signed certificate instead of Let's Encrypt
+	Packages        []string // extra system packages (base step)
+	Cron            []string // "<schedule> <command>" lines (cron step)
 }
 
 // DefaultDocRoot is where releases keep the app code (versaDeploy uploads it under app/).
@@ -80,6 +85,52 @@ var (
 	phpVersionRe = regexp.MustCompile(`^\d+\.\d+$`)
 	debPkgRe     = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+$`)
 )
+
+// pkgNameRe: apt and rpm package names (rpm allows upper case: perl-Data-Dumper)
+var pkgNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._-]*$`)
+
+// cronRe: "<min> <hour> <day> <month> <weekday> <command>" or "@daily <command>". Letters
+// only as month/day names, so a 4-field typo can't turn the command into the weekday.
+var cronRe = func() *regexp.Regexp {
+	f := `(?i:[0-9*/,-]|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|sun|mon|tue|wed|thu|fri|sat)+`
+	return regexp.MustCompile(`^\s*(@[a-z]+|(?:` + f + `\s+){4}` + f + `)\s+(\S.*?)\s*$`)
+}()
+
+var cronKeywords = []string{"@reboot", "@yearly", "@annually", "@monthly", "@weekly", "@daily", "@midnight", "@hourly"}
+
+// cronLine splits a provision.cron entry. The command can't hold a line break or an
+// unescaped % (cron turns % into newlines).
+func cronLine(l string) (schedule, cmd string, err error) {
+	m := cronRe.FindStringSubmatch(l)
+	switch {
+	case m == nil:
+		return "", "", fmt.Errorf(`want "<minute> <hour> <day> <month> <weekday> <command>" or "@daily <command>"`)
+	case strings.HasPrefix(m[1], "@") && !slices.Contains(cronKeywords, m[1]):
+		return "", "", fmt.Errorf("unknown schedule %s", m[1])
+	case strings.ContainsAny(m[2], "\r\n") || strings.Contains(strings.ReplaceAll(m[2], `\%`, ""), "%"):
+		return "", "", fmt.Errorf(`the command can't hold line breaks or %% (write \%%)`)
+	}
+	return strings.Join(strings.Fields(m[1]), " "), m[2], nil
+}
+
+// CronFile is the project's crontab in /etc/cron.d (Debian's run-parts skips names with dots).
+func CronFile(project string) string {
+	return "/etc/cron.d/versa-" + strings.ReplaceAll(project, ".", "_")
+}
+
+// cronTab renders CronFile: every job runs as the deploy user in the live release's app dir.
+func (v Vars) cronTab() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Generado por versaDeploy — %s (provision.cron)\nSHELL=/bin/sh\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n", v.Project)
+	dir := versassh.ShellQuote(path.Join(v.RemotePath, DefaultDocRoot)) // the app, whatever the doc root
+	for _, l := range v.Cron {
+		if sched, cmd, err := cronLine(l); err == nil {
+			// umask 002: what the jobs create stays writable for PHP-FPM (same group)
+			fmt.Fprintf(&b, "%s %s cd %s && umask 002 && %s\n", sched, v.DeployUser, dir, cmd)
+		}
+	}
+	return b.String()
+}
 
 // pathRe: remote_path and doc_root end up in vhosts and root scripts
 var pathRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
@@ -132,6 +183,10 @@ func (v Vars) Validate(steps []string) error {
 			err = need(nameRe.MatchString(v.DeployUser), "deploy_user is required")
 		case "dirs":
 			err = need(v.RemotePath != "", "remote_path is required")
+		case "cron":
+			if err = need(len(v.Cron) > 0, "add the jobs to provision.cron in deploy.yml"); err == nil {
+				err = need(v.RemotePath != "" && nameRe.MatchString(v.DeployUser), "remote_path and deploy_user are required")
+			}
 		case "backup":
 			if err = need(v.Database == "postgres" || v.Database == "mariadb", "select PostgreSQL or MariaDB for backups"); err == nil {
 				err = need(identRe.MatchString(v.DBName) && v.RemotePath != "" && nameRe.MatchString(v.DeployUser), "db_name, remote_path and deploy_user are required")
@@ -173,6 +228,16 @@ func (v Vars) Validate(steps []string) error {
 	for _, a := range v.Aliases {
 		if !nameRe.MatchString(a) {
 			return fmt.Errorf("invalid alias %q", a)
+		}
+	}
+	for _, p := range v.Packages {
+		if !pkgNameRe.MatchString(p) {
+			return fmt.Errorf("invalid package name %q in provision.packages", p)
+		}
+	}
+	for _, l := range v.Cron {
+		if _, _, err := cronLine(l); err != nil {
+			return fmt.Errorf("provision.cron %q: %w", l, err)
 		}
 	}
 	// vhosts are rendered whenever a web server is set, whatever the steps
@@ -251,13 +316,22 @@ func Build(selected []string, v Vars) (Bundle, error) {
 	return b, nil
 }
 
+// CertDir holds the domain's certificate: Let's Encrypt's, or the self-signed one.
+func (v Vars) CertDir() string {
+	if v.SSLSelfSigned {
+		return "/etc/ssl/versa/" + v.Domain
+	}
+	return "/etc/letsencrypt/live/" + v.Domain
+}
+
 // RenderVhost renders the web server config, with or without the SSL server blocks.
 func RenderVhost(v Vars, ssl bool) (string, error) {
 	data := struct {
 		Vars
 		SSL         bool
 		DocRootPath string
-	}{v, ssl, v.DocRootPath()}
+		CertDir     string // fullchain.pem + privkey.pem
+	}{v, ssl, v.DocRootPath(), v.CertDir()}
 	var out bytes.Buffer
 	if err := templates.ExecuteTemplate(&out, v.WebServer+".conf.tmpl", data); err != nil {
 		return "", err
@@ -344,10 +418,12 @@ func (v Vars) env() string {
 		{"DB_USER", v.DBUser}, {"DB_PASS", v.DBPassword}, {"ADMIN_EMAIL", v.AdminEmail},
 		{"SSH_PORT", strconv.Itoa(v.SSHPort)}, {"PUBKEY", strings.TrimSpace(v.PubKey)},
 		{"PROXY_PORT", strconv.Itoa(v.ProxyPort)},
-		{"NODE_MAJOR", v.NodeMajor}, {"INSTALL_REDIS", strconv.FormatBool(v.Redis)},
+		{"NODE_MAJOR", v.NodeMajor}, {"INSTALL_REDIS", strconv.FormatBool(v.Redis || v.Dragonfly)},
 		{"ALIASES", strings.Join(v.Aliases, " ")}, {"BACKUP_KEEP", strconv.Itoa(v.keep())},
 		{"RESET_DB_PASSWORD", strconv.FormatBool(v.ResetDBPassword)},
 		{"PYTHON_VERSION", v.PythonVersion},
+		{"PACKAGES", strings.Join(v.Packages, " ")}, {"SSL_SELF_SIGNED", strconv.FormatBool(v.SSLSelfSigned)}, {"CERT_DIR", v.CertDir()},
+		{"CRON_PATH", CronFile(v.Project)}, {"CRON_FILE", v.cronTab()},
 	}
 	var s strings.Builder
 	for _, p := range kv {
@@ -397,10 +473,13 @@ func LogsCommand(id string, v Vars, phpVersion string) string {
 		files = []string{"/var/log/nginx/error.log", "/var/log/nginx/access.log"}
 	case "apache":
 		files = []string{"/var/log/apache2/" + v.Domain + "-error.log", "/var/log/apache2/error.log"}
-	case "php":
-		files = []string{"/var/log/php" + phpVersion + "-fpm.log"}
+	case "php": // Debian, then RHEL (only the files that exist are shown)
+		files = []string{"/var/log/php" + phpVersion + "-fpm.log", "/var/log/php-fpm/error.log", "/var/log/php-fpm/www-error.log"}
 	case "redis":
-		files = []string{"/var/log/redis/redis-server.log"}
+		units = append(units, "redis") // the unit's name on RHEL
+		files = []string{"/var/log/redis/redis-server.log", "/var/log/redis/redis.log"}
+	case "dragonfly":
+		files = []string{"/var/log/dragonfly/dragonfly.WARNING", "/var/log/dragonfly/dragonfly.INFO"}
 	case "app_service":
 		units = []string{v.AppService}
 	case "backup":
@@ -443,6 +522,16 @@ func Conflicts(r *Report, selected []string, v Vars) error {
 		return false
 	}
 	switch {
+	case !r.Apt && r.Dnf && has("apache"):
+		return fmt.Errorf("Apache is installed only on Debian/Ubuntu: use nginx (web_server: nginx) on this server")
+	case !r.Apt && r.Dnf && has("ufw"):
+		return fmt.Errorf("UFW is for Debian/Ubuntu: this server uses firewalld (the nginx step opens 80/443)")
+	case has("redis") && has("dragonfly"):
+		return fmt.Errorf("Redis and Dragonfly both use port 6379: pick one")
+	case has("dragonfly") && r.Get("redis").Status != Absent:
+		return fmt.Errorf("Redis is already installed on this server: use it instead of Dragonfly")
+	case has("redis") && r.Get("dragonfly").Status != Absent:
+		return fmt.Errorf("Dragonfly is already installed on this server: use it instead of Redis")
 	case has("nginx") && r.Get("apache").Status != Absent:
 		return fmt.Errorf("Apache is already installed on this server: use it instead of nginx")
 	case has("apache") && r.Get("nginx").Status != Absent:

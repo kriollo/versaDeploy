@@ -160,8 +160,8 @@ TraceEnable Off
 {{- template "site" .}}
 
     SSLEngine on
-    SSLCertificateFile /etc/letsencrypt/live/{{.Domain}}/fullchain.pem
-    SSLCertificateKeyFile /etc/letsencrypt/live/{{.Domain}}/privkey.pem
+    SSLCertificateFile {{.CertDir}}/fullchain.pem
+    SSLCertificateKeyFile {{.CertDir}}/privkey.pem
     Include /etc/letsencrypt/options-ssl-apache.conf
 </VirtualHost>
 {{- else}}

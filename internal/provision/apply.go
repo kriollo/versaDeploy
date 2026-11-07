@@ -19,7 +19,8 @@ func (v Vars) Apply(p config.ProvisionConfig, selected []string, backends []Back
 	if v.Backend == "php" || v.ProxyPort == 0 {
 		p.PHPVersion = v.PHPVersion
 	}
-	p.Redis = p.Redis || has("redis")
+	p.Redis = (p.Redis || has("redis")) && !has("dragonfly")
+	p.Dragonfly = (p.Dragonfly || has("dragonfly")) && !has("redis")
 	p.SSL = p.SSL || has("ssl")
 	p.UFW = p.UFW || has("ufw")
 	p.Backup = p.Backup || has("backup")

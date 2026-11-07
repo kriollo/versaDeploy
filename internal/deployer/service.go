@@ -338,10 +338,12 @@ esac
 				if svc != nil && svc.StartWait > 0 {
 					wait = svc.StartWait
 				}
-				// Confirm it is still up after start_wait seconds (crash loops show up as inactive)
+				// Confirm it is still up after start_wait seconds (crash loops show up as inactive).
+				// Unprivileged first: older sudoers lack the is-active rule; sudo covers servers
+				// where the deploy user can't reach systemd's bus.
 				fmt.Fprintf(&b, `sleep %d
 case $I in
-systemd) systemctl is-active --quiet "$N" || { echo "$N is not running:"; systemctl status "$N" --no-pager -n 20 2>&1; rc=1; } ;;
+systemd) { systemctl is-active --quiet "$N" 2>/dev/null || $S $(P systemctl) is-active --quiet "$N" 2>/dev/null; } || { echo "$N is not running:"; systemctl status "$N" --no-pager -n 20 2>&1; rc=1; } ;;
 openrc) $S $(P rc-service) "$N" status >/dev/null 2>&1 || { echo "$N is not running:"; tail -n 20 %[2]s; rc=1; } ;;
 sysv) $S "$ETC/init.d/$N" status >/dev/null 2>&1 || { echo "$N is not running:"; tail -n 20 %[2]s; rc=1; } ;;
 esac
@@ -426,7 +428,7 @@ else echo "# versa services for %[1]s. This server has no /etc/sudoers.d: add th
 		b.WriteString(`RM=$(P rm)
 case $I in
 systemd) SC=$(P systemctl); JC=$(P journalctl)
-	echo "$U ALL=(root) NOPASSWD: $SC start $N, $SC stop $N, $SC restart $N, $SC enable $N, $SC disable $N, $SC daemon-reload, $JC -u $N -n 200 -f --no-pager, $RM -f /etc/systemd/system/$N.service" ;;
+	echo "$U ALL=(root) NOPASSWD: $SC start $N, $SC stop $N, $SC restart $N, $SC enable $N, $SC disable $N, $SC is-active --quiet $N, $SC daemon-reload, $JC -u $N -n 200 -f --no-pager, $RM -f /etc/systemd/system/$N.service" ;;
 openrc) RS=$(P rc-service); RU=$(P rc-update)
 	echo "$U ALL=(root) NOPASSWD: $RS $N start, $RS $N stop, $RS $N restart, $RS $N status, $RU add $N default, $RU del $N default, $RM -f /etc/init.d/$N" ;;
 sysv)

@@ -3,7 +3,7 @@
 ARG BASE=ubuntu:24.04
 FROM ${BASE}
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update -qq && apt-get install -y -qq systemd systemd-sysv openssh-server sudo ca-certificates \
+RUN apt-get update -qq && apt-get install -y -qq systemd systemd-sysv openssh-server sudo ca-certificates iproute2 \
     && rm -rf /var/lib/apt/lists/* \
     && systemctl enable ssh \
     && mkdir -p /root/.ssh && chmod 700 /root/.ssh

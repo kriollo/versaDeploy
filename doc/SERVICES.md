@@ -3,7 +3,7 @@
 The **Services** view of the TUI (`versa`, tab *Services*) turns versaDeploy into a small, agentless server panel: it detects what the server runs, installs the stack your app needs, applies updates, warns about security issues, shows logs and schedules database backups. Everything goes over SSH — nothing is installed permanently on the server besides the services you pick.
 
 > [!NOTE]
-> Detection works on any Linux server. **Installing, upgrading and backups need a Debian/Ubuntu (apt) server**; on other systems the view is read-only.
+> Detection works on any Linux server. **Installing and backups need Debian/Ubuntu (apt) or RHEL/Rocky/Alma 8+ (dnf)**; upgrades from the view (`U`/`S`/`Ctrl+R`) are apt only. On other systems the view is read-only. RHEL family specifics: [§5.1](#51-rhel-family-rockyalma).
 
 ---
 
@@ -92,20 +92,56 @@ Services that are already active are never preselected.
 
 | Service | What it does |
 | :------ | :----------- |
-| Base packages | curl, git, unzip, build-essential, ufw, cron (for app schedulers)… (no system upgrade: use `U`/`S`) |
+| Base packages | curl, git, unzip, build-essential, ufw, cron (for app schedulers)…, plus `provision.packages` (no system upgrade: use `U`/`S`) |
 | PHP-FPM + OPCache | PHP from ondrej (Ubuntu) or sury (Debian), extensions for your DB and Redis, production `php.ini` and OPCache tuned for symlink deploys (`revalidate_path=1`) |
-| Apache2 / Nginx | Web server + the project's vhost (from the versaWYS templates): security headers, rate limiting (nginx), caching, sensitive files blocked, `$realpath_root` for PHP |
-| SSL | `certbot certonly` for the domain and the aliases that resolve to the server, then the SSL vhost. Skipped with a hint when DNS doesn't point here |
+| Apache2 / Nginx | Web server + the project's vhost (from the versaWYS templates): security headers, rate limiting (nginx: 10 req/s per IP, burst 50, only on requests that reach the app — static files are never limited), caching, sensitive files blocked, `$realpath_root` for PHP. Re-running the step regenerates the vhost (with a backup) without touching the web server |
+| SSL | `certbot certonly` for the domain and the aliases that resolve to the server, then the SSL vhost. Skipped with a hint when DNS doesn't point here. With `ssl_self_signed: true` (staging, LAN, Docker): a self-signed certificate in `/etc/ssl/versa/<domain>/`, trusted by the server itself |
 | PostgreSQL | Server + database + user, `pg_hba.conf` rule for 127.0.0.1 |
 | MariaDB / MySQL | MariaDB, or the MySQL already on the server; database (utf8mb4) + user |
 | Redis | Bound to 127.0.0.1, protected mode, `maxmemory 256mb` |
+| Dragonfly | Redis-compatible alternative (same protocol and port, multi-threaded): the official release package (pinned version, sha256 checked), bound to 127.0.0.1, `maxmemory 256mb`, `cache_mode` (evicts like `allkeys-lru`), 1 thread (Dragonfly needs 256 MB per thread: raise both together in `/etc/dragonfly/dragonfly.conf`), no version phone-home. x86_64 and arm64 (Debian/Ubuntu); x86_64 on RHEL. Apps keep using phpredis or any Redis client |
 | Python 3 | System Python, or another version next to it (Ubuntu: deadsnakes) |
 | Node.js | NodeSource LTS |
 | Deploy user + SSH key | Creates the user, adds it to `www-data`, installs your public key |
 | Sudoers | `reload`/`restart` of the web server and PHP-FPM, plus the rules for the environment's `services`, validated with `visudo -c`. One file per project |
-| Project directory | `remote_path` owned by the deploy user, group `www-data`, setgid |
+| Project directory | `remote_path` owned by the deploy user, group `www-data`, setgid. Releases are extracted with `umask 002`, and a new PHP-FPM gets `UMask=0002` (systemd drop-in), so the deploy user (hooks, cron) and PHP-FPM can write each other's files on every distro |
 | DB backups | Daily systemd timer dumping the database to `remote_path/backups` (§8) |
+| Cron jobs | `provision.cron` in `/etc/cron.d/versa-<project>`: each job runs as the deploy user in `current/app` (e.g. versaWYS `app:schedule:run`). Rewritten whole on every run |
 | UFW firewall | Allows SSH (the port in use), 80 and 443 |
+
+### Distro support
+
+| Service | Debian / Ubuntu (apt) | RHEL / Rocky / Alma 8+ (dnf) | e2e |
+| :------ | :-------------------- | :--------------------------- | :-- |
+| Base packages, `provision.packages` | ✅ | ✅ (+ EPEL) | all |
+| PHP-FPM + OPCache | ✅ ondrej (Ubuntu) / sury (Debian) | ✅ AppStream, or Remi for other versions and phpredis | Ubuntu, Debian 8.4 · Rocky 8.3 · Alma 8.4 |
+| Nginx | ✅ | ✅ | Ubuntu, Rocky, Alma |
+| Apache2 | ✅ | ❌ refused: use nginx | Debian |
+| SSL — Let's Encrypt | ✅ | ✅ (certbot from EPEL) | — (needs public DNS) |
+| SSL — self-signed | ✅ | ✅ | manual (AlmaLinux) |
+| PostgreSQL | ✅ | ✅ | Ubuntu, Rocky |
+| MariaDB / MySQL | ✅ | ✅ | Debian, Alma |
+| Redis | ✅ | ✅ | Ubuntu, Rocky |
+| Dragonfly | ✅ x86_64 + arm64 (.deb) | ✅ x86_64 (.rpm) | Debian, Alma |
+| Python 3 + venv | ✅ system, or deadsnakes (Ubuntu) | ✅ system, or AppStream `python3.X` | Ubuntu, Rocky, Alma |
+| Node.js | ✅ NodeSource | ✅ AppStream module | Ubuntu, Rocky, Alma |
+| Deploy user, sudoers, project dir, backups, cron jobs | ✅ | ✅ (+ SELinux labels) | all |
+| UFW | ✅ | ❌ refused: firewalld (nginx opens 80/443) | — |
+| Upgrades `U` / `S` / `ctrl+r` | ✅ | ❌ `dnf upgrade` by hand | Ubuntu, Debian |
+
+Deploys (builds, releases, hooks, `services`, rollback) are the same on both: they only need SSH and
+POSIX tools on the server.
+
+### 5.1 RHEL family (Rocky/Alma)
+
+Same steps over `dnf`, with these differences:
+
+- **Web server: nginx only.** Apache is provisioned on Debian/Ubuntu only (the vhost goes to `/etc/nginx/conf.d/<project>.conf`). UFW is refused: the nginx step opens `http`/`https` in firewalld when it's active.
+- **PHP and Node.js come from AppStream module streams** (`php:8.3`, `nodejs:22`): the step checks the repos offer the requested version before installing, and never switches the stream of an installed one. When AppStream lacks the PHP version (EL9 stops at 8.3) or the app needs Redis/Dragonfly (phpredis), **Remi's repository** is added (`php:remi-8.4`, like ondrej/sury on Debian). `php-process` (posix/pcntl) and `php-sodium` are installed too: on RHEL they don't ship in `php-common`.
+- PHP-FPM listens on `/run/php/php<v>-fpm.sock` and answers to `php<v>-fpm` like on Debian (tmpfiles.d keeps `/run/php` across reboots). The pool keeps running as `apache:apache` (its sessions dir is group `apache`) and `apache` joins `www-data`.
+- **EPEL** is enabled for nginx's headers-more module, certbot and htop (Rocky/Alma ship it; on RHEL enable it by hand).
+- **SELinux**: `remote_path` is labeled `httpd_sys_rw_content_t`, `/run/php` `httpd_var_run_t`, `~/.ssh` restored, and `httpd_can_network_connect` is set for apps behind a proxy. The e2e runs in Docker without SELinux, so check `ausearch -m avc` on a first enforcing server.
+- Upgrades: `dnf upgrade` by hand (the view's `U`/`S` are apt only).
 
 ### Versions
 
@@ -113,7 +149,7 @@ Version parameters cycle with `Enter` through the **supported** releases, newest
 
 - **PHP** — e.g. `8.5 8.4 8.3 8.2`
 - **Node.js** — LTS majors only, e.g. `26 24 22`
-- **Python** — `system` plus e.g. `3.15 3.14 3.13 3.12 3.11` (other than the system one: Ubuntu only)
+- **Python** — `system` plus e.g. `3.15 3.14 3.13 3.12 3.11` (other than the system one: Ubuntu via deadsnakes, RHEL family when AppStream packages it, e.g. `python3.12`)
 
 The list comes from [endoflife.date](https://endoflife.date) (once per session, 4 s timeout) and falls back to a built-in list offline. When the app uses another Python version, set `builds.python.python_command: python3.13` too.
 
@@ -123,7 +159,7 @@ The list comes from [endoflife.date](https://endoflife.date) (once per session, 
 
 The scripts are written to be re-run on production servers:
 
-- **Never an alternative**: Apache installed → nginx is refused (and the opposite); MySQL installed → it is reused, MariaDB is never installed over it; a PHP-FPM or Node.js version installed → another one is refused. The TUI blocks the selection and the server script aborts before `apt-get`.
+- **Never an alternative**: Apache installed → nginx is refused (and the opposite); Redis installed → Dragonfly is refused (and the opposite: both want port 6379); MySQL installed → it is reused, MariaDB is never installed over it; a PHP-FPM or Node.js version installed → another one is refused. The TUI blocks the selection and the server script aborts before `apt-get`.
 - **No surprise upgrades**: packages that are already installed are skipped, never upgraded. Upgrades only happen with `U` / `S`.
 - **Existing services keep their config and keep running**: no changes to `php.ini`, OPCache, `postgresql.conf`, MySQL/MariaDB or Redis config, no restarts. Only what's missing is added (a PHP extension, an Apache module), followed by a graceful reload when needed.
 - **Existing database users keep their password** — other apps may use them. The database and privileges are ensured. Changing the password is an explicit action: **`X`** (then update every `.env` that uses it).
@@ -167,8 +203,11 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 | `database` | detected | `postgres`, `mariadb` or `none` |
 | `db_name` / `db_user` | from `project` | Database and user names (letters, digits, `_`) |
 | `db_password` | - | Password for a **new** user (use `${VAR}`; never written by the TUI) |
-| `redis` / `ssl` / `ufw` / `backup` | `false` | Preselect these services |
+| `redis` / `dragonfly` / `ssl` / `ufw` / `backup` | `false` | Preselect these services (`redis` and `dragonfly` exclude each other) |
 | `backup_keep` | `7` | Dumps kept |
+| `ssl_self_signed` | `false` | SSL step makes a self-signed certificate instead of asking Let's Encrypt |
+| `packages` | `[]` | Extra system packages the app needs (OCR, image tools…), installed by the base step, never upgraded |
+| `cron` | `[]` | `"<min> <hour> <day> <month> <weekday> <command>"` or `"@daily <command>"`, run as `deploy_user` in `current/app`; write `%` as `\%` |
 | `deploy_user` | `ssh.user` | User that owns the releases |
 | `backends` | detected | Written by the TUI for reference |
 | `proxy_port` | builds / per backend | Port of a Python/Go/Node app behind the web server (passed to its service as `PORT`) |
@@ -183,4 +222,4 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 go test -tags e2e -v -timeout 60m ./test/e2e/
 ```
 
-It provisions **Ubuntu 24.04** (nginx + PostgreSQL) hosting four sample apps — PHP, Python, Go and Node, each with its own domain — and **Debian 12** (Apache + MariaDB) with versaTodo (`../versaTodo`, skipped when missing), deploys them and checks HTTP, aliases, backups, logs, the sites listing, that re-running keeps passwords/configs/processes untouched, and that an alternative web server is refused. `VERSA_E2E_KEEP=1` keeps the containers.
+It provisions four servers in parallel: **Ubuntu 24.04** (nginx + PostgreSQL + Redis), **Rocky Linux 9** (nginx + PostgreSQL + Redis over dnf, PHP 8.3 from Remi) and **AlmaLinux 9** (nginx + MariaDB + Dragonfly, PHP 8.4 from Remi), each hosting four sample apps — PHP, Python, Go and Node, each with its own domain — and **Debian 12** (Apache + MariaDB + Dragonfly) with versaTodo (`../versaTodo`, skipped when missing), deploys them and checks HTTP and PHP sessions, aliases, backups, cron jobs and extra packages, phpredis against the cache server (and that it only listens on 127.0.0.1), group-writable releases and PHP-FPM's umask, logs, the sites listing, that re-running keeps passwords/configs/processes untouched, and that an alternative web server is refused. `VERSA_E2E_KEEP=1` keeps the containers; `VERSA_E2E_SERVERS=rocky` runs only those servers.

@@ -114,8 +114,12 @@ func Defaults(env *config.Environment, project string, backends []Backend, r *Re
 		NodeMajor:     p.NodeMajor,
 		PythonVersion: p.PythonVersion,
 		Redis:         p.Redis,
+		Dragonfly:     p.Dragonfly,
 		Aliases:       p.Aliases,
 		BackupKeep:    p.BackupKeep,
+		SSLSelfSigned: p.SSLSelfSigned,
+		Packages:      p.Packages,
+		Cron:          p.Cron,
 	}
 	if v.DeployUser == "" {
 		v.DeployUser = env.SSH.User
@@ -225,6 +229,9 @@ func Preselect(backends []Backend, v Vars, env *config.Environment, r *Report) [
 	if env.Provision.Redis {
 		want = append(want, "redis")
 	}
+	if env.Provision.Dragonfly {
+		want = append(want, "dragonfly")
+	}
 	if env.Provision.SSL {
 		want = append(want, "ssl")
 	}
@@ -233,6 +240,9 @@ func Preselect(backends []Backend, v Vars, env *config.Environment, r *Report) [
 	}
 	if env.Provision.Backup {
 		want = append(want, "backup")
+	}
+	if len(env.Provision.Cron) > 0 {
+		want = append(want, "cron")
 	}
 	var out []string
 	for _, id := range want {

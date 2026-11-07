@@ -64,6 +64,8 @@ post_deploy:
   - "awk '{print $1}' file"        # unchanged: $1, $@, $?, $# … are never replaced
 ```
 
+A `$name` that isn't set on your machine prints a warning when the file is loaded (`$x is not set here, so it becomes empty`): it's almost always a server-side variable that needs `$$`, e.g. `php -r '$$c = 1;'`.
+
 Only names that start with a letter or `_` are replaced, so positional and special shell variables (`$1`, `$@`, `$?`, `$#`) pass through untouched.
 
 ---

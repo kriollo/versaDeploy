@@ -812,3 +812,14 @@ func TestValidateServices(t *testing.T) {
 		t.Errorf("services in local mode must be rejected, got %v", err)
 	}
 }
+
+func TestUnsetBareVars(t *testing.T) {
+	t.Setenv("VERSA_SET", "1")
+	got := unsetBareVars(`post_deploy:
+  - "php -r '$f=1; echo $f;' $VERSA_SET $$KEEP ${DB_PASS_UNSET}"
+  # $COMMENTED is ignored
+`)
+	if len(got) != 1 || got[0] != "f" {
+		t.Errorf("unsetBareVars = %v, want [f]", got)
+	}
+}

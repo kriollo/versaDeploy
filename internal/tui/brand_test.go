@@ -1,11 +1,14 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/user/versaDeploy/internal/config"
 	versassh "github.com/user/versaDeploy/internal/ssh"
 )
 
@@ -127,5 +130,26 @@ func TestTerminalTypingOnlyAfterEnter(t *testing.T) {
 	}
 	if got := press(m, tea.KeyMsg{Type: tea.KeyEsc}).currentView; got != viewDashboard {
 		t.Fatalf("second Esc goes back, got %v", got)
+	}
+}
+
+// --config wins over the picker; an auto-discovered default keeps it when the
+// directory has other configs.
+func TestExplicitConfigSkipsPicker(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{"deploy.yml", "deploy_other.yml"} {
+		os.WriteFile(filepath.Join(dir, f), []byte("project: x\n"), 0o644)
+	}
+	t.Chdir(dir)
+	for _, explicit := range []bool{true, false} {
+		m := newAppModel(&config.Config{Project: "x"}, dir)
+		m.discoverConfigs()
+		m.useConfig("deploy.yml", explicit)
+		if got := m.currentView == viewConfigSelector; got == explicit {
+			t.Errorf("explicit=%v: picker shown=%v", explicit, got)
+		}
+		if m.config.configPath != filepath.Join(dir, "deploy.yml") {
+			t.Errorf("configPath = %q", m.config.configPath)
+		}
 	}
 }

@@ -11,4 +11,7 @@ mkdir -p "$REMOTE_PATH"
     # 2755: www-data (PHP-FPM) reads but can't rename .versa/, current or backups/
     chmod 2755 .
 )
+# SELinux: the web server and PHP-FPM read the releases and write logs, cache and
+# uploads (same as the group-writable dirs below it); files created later inherit it
+selinux_label httpd_sys_rw_content_t "${REMOTE_PATH}(/.*)?" "$REMOTE_PATH"
 ok "${REMOTE_PATH} ready (${DEPLOY_USER}:www-data, 2755)"

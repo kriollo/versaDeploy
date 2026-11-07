@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 
 	verserrors "github.com/user/versaDeploy/internal/errors"
@@ -78,7 +79,9 @@ type ProvisionConfig struct {
 	DBUser        string             `yaml:"db_user,omitempty"`
 	DBPassword    string             `yaml:"db_password,omitempty"` // use ${VAR}; the TUI never writes it
 	Redis         bool               `yaml:"redis,omitempty"`
+	Dragonfly     bool               `yaml:"dragonfly,omitempty"` // Redis-compatible alternative (never both)
 	SSL           bool               `yaml:"ssl,omitempty"`
+	SSLSelfSigned bool               `yaml:"ssl_self_signed,omitempty"` // staging/LAN without public DNS: no Let's Encrypt
 	AdminEmail    string             `yaml:"admin_email,omitempty"`
 	UFW           bool               `yaml:"ufw,omitempty"`
 	DeployUser    string             `yaml:"deploy_user,omitempty"` // default: ssh.user
@@ -89,6 +92,8 @@ type ProvisionConfig struct {
 	Aliases       []string           `yaml:"aliases,omitempty"`        // extra domains served by the vhost
 	Backup        bool               `yaml:"backup,omitempty"`         // daily DB dump timer
 	BackupKeep    int                `yaml:"backup_keep,omitempty"`    // dumps kept (default 7)
+	Packages      []string           `yaml:"packages,omitempty"`       // extra system packages, installed by the base step
+	Cron          []string           `yaml:"cron,omitempty"`           // "<schedule> <command>", run as deploy_user in current/app
 }
 
 // ProvisionSSHConfig overrides the environment's SSH settings for the admin (root)
@@ -228,6 +233,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Interpolate environment variables
+	for _, name := range unsetBareVars(string(data)) {
+		fmt.Printf("[WARN] %s: $%s is not set here, so it becomes empty. For a variable of the server's shell write $$%s\n", path, name, name)
+	}
 	content := interpolateEnvVars(string(data))
 
 	var cfg Config
@@ -675,6 +683,25 @@ func interpolateEnvVars(content string) string {
 		}
 		return os.Getenv(strings.Trim(m, "${}"))
 	})
+}
+
+// unsetBareVars lists the unset $NAME (no braces) outside comments: almost always a
+// variable meant for the server's shell ($HOME, php -r '$x'), which needs $$NAME.
+func unsetBareVars(content string) []string {
+	var out []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		for _, m := range envVarRef.FindAllStringSubmatch(line, -1) {
+			if name := m[2]; name != "" && !slices.Contains(out, name) {
+				if _, ok := os.LookupEnv(name); !ok {
+					out = append(out, name)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func hasControl(s string) bool {

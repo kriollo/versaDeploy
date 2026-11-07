@@ -199,7 +199,7 @@ It is a dry-run deploy that also skips the dirty check (uncommitted changes don'
 Points `current` back to an earlier release that is still on the server.
 
 ```bash
-versa rollback production                       # to the most recent release other than the active one
+versa rollback production                       # to the newest release older than the active one
 versa rollback production --to 20261001-183807  # to a specific release
 ```
 
@@ -209,7 +209,8 @@ versa rollback production --to 20261001-183807  # to a specific release
 
 - Rollback only switches the symlink: nothing is rebuilt and `post_deploy` hooks are **not** run. Database migrations are not reverted.
 - `services_reload` runs and [`services`](DEPLOY.md#services-services) are restarted after switching, so PHP-FPM and your Go/Python processes serve the restored release right away.
-- Only releases still on the server can be restored (see `releases_to_keep`).
+- Only releases still on the server can be restored (see `releases_to_keep`). A deploy that fails after the switch (`post_deploy`, services or health check) rolls back and deletes its own release, so it can't be restored by mistake.
+- Without `--to`, a second rollback goes further back, never forward to a newer release.
 - `deploy.lock` is not changed. If you then want to redeploy the same commit, use `versa deploy <env> --force`.
 
 ---

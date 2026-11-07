@@ -29,6 +29,7 @@ die() { echo "[ERROR] $*"; exit 1; }
 ok() { echo "[OK] $*"; }
 chown() { echo "chown $(pwd -P) $*" >> "$LOG"; }
 chmod() { echo "chmod $(pwd -P) $*" >> "$LOG"; }
+selinux_label() { :; }
 ` + string(body)
 	cmd := exec.Command(bash, "-c", script)
 	cmd.Env = append(os.Environ(), "LOG="+log, "DEPLOY_USER="+u.Username, "REMOTE_PATH="+remotePath)

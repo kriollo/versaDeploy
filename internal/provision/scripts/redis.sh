@@ -1,12 +1,15 @@
+# Never next to Dragonfly: both want 127.0.0.1:6379
+package_installed dragonfly && die "Dragonfly is already installed — Redis not installed (both use port 6379). Keep Dragonfly (dragonfly: true)"
+if [ "$PKG_MGR" = apt ]; then redis_pkg=redis-server; redis_svc=redis-server; else redis_pkg=redis; redis_svc=redis; fi
 conf=/etc/redis/redis.conf
-if package_installed redis-server; then
+if package_installed "$redis_pkg"; then
     # an existing Redis keeps its config (maxmemory/eviction may matter to other apps)
     maxmem="$(redis-cli CONFIG GET maxmemory 2>/dev/null | tail -1)"
     ok "Redis already installed — config untouched, no restart (maxmemory=${maxmem:-?})"
-    service_active redis-server || warn "redis-server is not running — journalctl -u redis-server -n 30"
+    service_active $redis_svc || warn "$redis_svc is not running — journalctl -u $redis_svc -n 30"
     return 0
 fi
-apt_install redis-server
+pkg_install "$redis_pkg"
 bind_line="bind 127.0.0.1 -::1"
 if [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" = 1 ]; then
     bind_line="bind 127.0.0.1"
@@ -27,10 +30,10 @@ loglevel notice
 REDIS_OVERRIDE
 fi
 systemctl daemon-reload
-systemctl enable redis-server >/dev/null 2>&1
-if systemctl restart redis-server && service_active redis-server; then
+systemctl enable $redis_svc >/dev/null 2>&1
+if systemctl restart $redis_svc && service_active $redis_svc; then
     ok "Redis installed (127.0.0.1, maxmemory 256mb, allkeys-lru)"
 else
-    journalctl -u redis-server -n 20 --no-pager || true
-    warn "redis-server did not start — check: journalctl -xeu redis-server"
+    journalctl -u $redis_svc -n 20 --no-pager || true
+    warn "$redis_svc did not start — check: journalctl -xeu $redis_svc"
 fi
