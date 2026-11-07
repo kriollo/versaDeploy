@@ -94,7 +94,7 @@ Services that are already active are never preselected.
 | :------ | :----------- |
 | Base packages | curl, git, unzip, build-essential, ufw, cron (for app schedulers)…, plus `provision.packages` (no system upgrade: use `U`/`S`) |
 | PHP-FPM + OPCache | PHP from ondrej (Ubuntu) or sury (Debian), extensions for your DB and Redis, production `php.ini` and OPCache tuned for symlink deploys (`revalidate_path=1`) |
-| Apache2 / Nginx | Web server + the project's vhost (from the versaWYS templates): security headers, rate limiting (nginx: 10 req/s per IP, burst 50, only on requests that reach the app — static files are never limited), caching, sensitive files blocked, `$realpath_root` for PHP. Re-running the step regenerates the vhost (with a backup) without touching the web server |
+| Apache2 / Nginx | Web server + the project's vhost (from the versaWYS templates): security headers, rate limiting (nginx: 10 req/s per IP, burst 50, only on requests that reach the app — static files are never limited, also behind a proxy: Next/Nuxt chunks), caching, sensitive files blocked, `$realpath_root` for PHP. Re-running the step regenerates the vhost (with a backup) without touching the web server |
 | SSL | `certbot certonly` for the domain and the aliases that resolve to the server, then the SSL vhost. Skipped with a hint when DNS doesn't point here. With `ssl_self_signed: true` (staging, LAN, Docker): a self-signed certificate in `/etc/ssl/versa/<domain>/`, trusted by the server itself |
 | PostgreSQL | Server + database + user, `pg_hba.conf` rule for 127.0.0.1 |
 | MariaDB / MySQL | MariaDB, or the MySQL already on the server; database (utf8mb4) + user |

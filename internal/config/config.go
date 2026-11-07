@@ -174,6 +174,10 @@ type FrontendBuildConfig struct {
 	CleanupDevDeps    bool     `yaml:"cleanup_dev_deps"`   // Remove dev deps after build
 	ProductionCommand string   `yaml:"production_command"` // Command for production-only install
 	ReusablePaths     []string `yaml:"reusable_paths"`     // Paths to recover from previous release (e.g. node_modules, dist)
+	// ServerInstall installs node_modules on the server (e.g. "npm ci --omit=dev") instead
+	// of shipping the local ones: native modules (sharp, bcrypt…) built on Windows/macOS
+	// don't run on Linux. Reused from the previous release when the lockfile didn't change.
+	ServerInstall string `yaml:"server_install"`
 }
 
 // PythonBuildConfig holds Python build settings

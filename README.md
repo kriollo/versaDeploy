@@ -30,7 +30,7 @@ versa deploy production
 
 - **Atomic releases and instant rollback.** Each deploy is a new directory; `versa rollback` switches `current` back in one step.
 - **Safe by default.** Deploys only committed code, one deploy at a time (remote lock), and verifies the SSH host key. Build artifacts and secrets stay private on both ends, root never runs a file the deploy user can write, and self-update only installs a checksum-verified GitHub release.
-- **Go and Python services.** The binary or Python server runs through systemd, or OpenRC / SysV init on old servers. It starts at boot, restarts on every deploy and rollback, and the release rolls back if it does not stay up. Python virtualenvs are built on the server.
+- **Go, Python and Node services (Next.js, Nuxt and other SSR apps).** The binary, Python or Node server runs through systemd, or OpenRC / SysV init on old servers. It starts at boot, restarts on every deploy and rollback, and the release rolls back if it does not stay up. Python virtualenvs (and, with `server_install`, `node_modules`) are built on the server.
 - **Hooks, reloads and checks.** Local and remote hooks, service reloads (PHP-FPM, Nginx…), HTTP or command health checks, Slack/Teams/Discord webhooks.
 - **Old servers included.** POSIX-only remote commands, and legacy SSH algorithms for OpenSSH &lt; 7 (CentOS 5/6).
 - **Local mode** for hosting without SSH: a complete release folder you can upload by FTP.

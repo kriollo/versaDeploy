@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.13.1] - 2026-11-07
+
+### Added
+
+- **`builds.frontend.server_install`** (e.g. `npm ci --omit=dev`): `node_modules` is installed on the server, for its OS and CPU, instead of shipping yours — native modules built on Windows/macOS don't run on Linux. Runs before the switch (a failure stops the deploy) and is reused when the lockfile didn't change, like Python's virtualenv.
+- **SSR apps documented and tested**: Next.js 16 and Nuxt 4 deploy end to end on Ubuntu 24.04 and AlmaLinux 9 (e2e), as a `services` entry behind nginx (`doc/DEPLOY.md` → *SSR apps*).
+
+### Fixed
+
+- **nginx 429 on proxied apps' static files**: behind a proxy (Next, Nuxt, Node, Go, Python) the app serves its own chunks, and they went through the rate-limited location. JS, CSS, images and fonts now go to the app without the limit. **Existing servers: re-run the Nginx step.**
+- `compile_command`/`npm_command` starting with `VAR=value` (e.g. `NEXT_TELEMETRY_DISABLED=1 npm run build`) were refused as "build tool not found".
+
 ## [1.13.0] - 2026-11-07
 
 ### Added

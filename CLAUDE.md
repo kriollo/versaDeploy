@@ -99,6 +99,10 @@ Scripts must be idempotent and safe on servers in use: `apt_install` skips insta
 
 E2E (Docker with systemd, not in CI): `go test -tags e2e -v -timeout 60m ./test/e2e/` — Ubuntu 24.04 (nginx+PostgreSQL+Redis), Rocky 9 (nginx+PostgreSQL+Redis) and Alma 9 (nginx+MariaDB+Dragonfly; both `Dockerfile.rhel`) each hosting fixture apps `test/e2e/apps/{php,python,go,node}`, and Debian 12 (Apache+MariaDB+Dragonfly) with `../versaTodo` (`VERSA_E2E_SERVERS=rocky,alma` limits the servers); checks HTTP, aliases, backups, logs, sites, re-runs that change nothing, and refused alternatives.
 
+### Node / SSR apps
+
+`builds.frontend` builds locally; `server_install` (`ensureNodeDeps`, `internal/deployer/node.go`) drops `node_modules` from the artifact and installs it on the server before the switch, reused via `reuseDependencies` when the lockfile didn't change. SSR apps (Next, Nuxt) run as `services` behind the proxy; the nginx proxy template rate-limits `location /` but proxies static extensions without limit. E2E fixtures `test/e2e/apps/{next,nuxt}` on Ubuntu and Alma.
+
 ### Go Builder
 
 Supports configurable `deploy_path` for binary isolation (enables multiple services in one repo). Cross-compiles for `target_os`/`target_arch` with `CGO_ENABLED=0` (static binary) unless `go.cgo: true`. Before building, `checkGoTarget` (`internal/deployer/gotarget.go`) validates the target against the server's `uname -srm` and the Go toolchain's minimum kernel.

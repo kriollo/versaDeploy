@@ -176,6 +176,34 @@ Before building, versa compares the target with the server (`uname`) and with th
 | `cleanup_dev_deps`   | bool   | `false`                       | After building, delete `node_modules` and run `production_command`.                                              |
 | `production_command` | string | `pnpm install --production`   | Production-only install used by `cleanup_dev_deps`.                                                               |
 | `reusable_paths`     | list   | `node_modules`                | Reused from the previous release when `package.json` and its lockfile didn't change. `node_modules` is always included.           |
+| `server_install`     | string | —                             | Install `node_modules` **on the server** with this command (e.g. `npm ci --omit=dev`) instead of shipping yours: native modules (sharp, bcrypt, better-sqlite3…) built on Windows or macOS don't run on Linux. Runs before the switch (a failure stops the deploy); reused when the lockfile didn't change. Ship the lockfile (don't ignore it) and install Node on the server (Services → Node.js). Replaces `cleanup_dev_deps`. |
+
+#### SSR apps (Next.js, Nuxt, SvelteKit, Remix, Astro…)
+
+They build on your machine like any frontend and run on the server as a [`services`](#services-services) entry behind the web server ([`provision.proxy_port`](SERVICES.md#9-provision-reference)). nginx rate-limits the app's pages, never its static chunks.
+
+```yaml
+builds:
+  frontend:
+    enabled: true
+    npm_command: "npm ci"
+    compile_command: "npm run build"
+    server_install: "npm ci --omit=dev"     # Next: node_modules for the server's OS
+services:
+  - name: myshop
+    exec: "npm start"                       # next start / node .output/server/index.mjs (Nuxt)
+    environment: { PORT: "3000", NODE_ENV: production }
+provision:
+  proxy_port: 3000
+  node_major: "22"
+```
+
+- **Nuxt / Nitro, SvelteKit (adapter-node), Astro (node adapter)** bundle their dependencies into the build output: skip `server_install` and leave `node_modules` out, e.g. `compile_command: "npm run build && rm -rf node_modules"`, `exec: "node .output/server/index.mjs"`.
+- **Next.js** needs `node_modules` (or `output: "standalone"` with `exec: "node .next/standalone/server.js"`, plus copying `public/` and `.next/static` into it).
+- Build-time variables (`NEXT_PUBLIC_*`, `NUXT_PUBLIC_*`) come from your machine; runtime ones from `environment` or `env_file`.
+- Each deploy restarts the service: a few seconds of downtime, like Go and Python services.
+
+Tested end to end with Next.js 16 and Nuxt 4 on Ubuntu 24.04 and AlmaLinux 9.
 
 ### Python (`python`)
 

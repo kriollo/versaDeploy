@@ -72,6 +72,15 @@ func (f *FrontendBuilder) Build(ctx *BuilderContext) (int, bool, error) {
 		}
 	}
 
+	// server_install: the server installs node_modules for its own OS and CPU
+	if ctx.Config.Builds.Frontend.ServerInstall != "" {
+		if err := os.RemoveAll(nmPath); err != nil {
+			return filesCompiled, isUpdated, fmt.Errorf("failed to remove node_modules from artifact: %w", err)
+		}
+		ctx.Log.Info("node_modules left out of the release: the server installs them (server_install)")
+		return filesCompiled, isUpdated, nil
+	}
+
 	// Cleanup dev dependencies if enabled
 	if err := f.cleanupDevDependencies(ctx); err != nil {
 		return filesCompiled, isUpdated, err

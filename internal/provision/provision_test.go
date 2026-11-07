@@ -474,5 +474,9 @@ func TestNginxRateLimitOnlyDynamic(t *testing.T) {
 		if len(where) != 1 || where[0] != want {
 			t.Errorf("proxy %d: limit_req in %q, want only in %q", proxy, where, want)
 		}
+		// behind a proxy the app serves its own chunks: they get a proxy location with no limit
+		if proxy != 0 && (strings.Count(out, "proxy_pass http://127.0.0.1:8000;") != 2 || !strings.Contains(out, `location ~* \.(js|mjs|css`)) {
+			t.Errorf("proxy: static files must be proxied without limit_req:\n%s", out)
+		}
 	}
 }

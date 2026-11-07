@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -60,6 +61,7 @@ type app struct {
 	tweak    func(v *provision.Vars)
 	steps    []string // per-app steps
 	expect   string   // body marker; "" = versaTodo installer rules
+	chunks   string   // regexp of the page's JS chunks: fetched in a burst, never 429
 }
 
 var (
@@ -76,6 +78,27 @@ var (
 		stack:      []string{"base", "php", "nginx", "mariadb", "dragonfly", "python", "node", "deploy_user"},
 		dockerfile: "Dockerfile.rhel", php: "8.4", phpIni: "/etc/php.ini", cache: "dragonfly"}
 )
+
+// ssrApps are real SSR frameworks behind the proxy: Next installs node_modules on the
+// server (server_install), Nuxt ships its self-contained .output.
+func ssrApps(srv *server, prefix string) []app {
+	node := func(port int) func(v *provision.Vars) {
+		return func(v *provision.Vars) { v.Backend, v.ProxyPort, v.NodeMajor = "node", port, "22" }
+	}
+	return []app{
+		{name: prefix + "next", fixture: "next", server: srv, expect: "versa-e2e next ssr", chunks: `/_next/static/[^"\\]+\.js`,
+			builds:   `frontend: { enabled: true, npm_command: 'npm install --no-audit --no-fund', compile_command: 'NEXT_TELEMETRY_DISABLED=1 npm run build', server_install: 'npm ci --omit=dev --no-audit --no-fund' }`,
+			tweak:    node(3001),
+			services: `[{ name: ` + prefix + `next, exec: "npm start", environment: { PORT: "3001", NODE_ENV: production, NEXT_TELEMETRY_DISABLED: "1" } }]`,
+			steps:    []string{"nginx", "sudoers", "dirs"}},
+		{name: prefix + "nuxt", fixture: "nuxt", server: srv, expect: "versa-e2e nuxt ssr", chunks: `/_nuxt/[^"]+\.js`,
+			// .output carries its own dependencies: node_modules stays out of the release
+			builds:   `frontend: { enabled: true, npm_command: 'npm install --no-audit --no-fund', compile_command: 'npm run build && rm -rf node_modules' }`,
+			tweak:    node(3002),
+			services: `[{ name: ` + prefix + `nuxt, exec: "node .output/server/index.mjs", environment: { PORT: "3002", NODE_ENV: production } }]`,
+			steps:    []string{"nginx", "sudoers", "dirs"}},
+	}
+}
 
 // fixtureApps are the four backend fixtures hosted on srv, prefixed so names stay unique.
 func fixtureApps(srv *server, prefix string) []app {
@@ -111,7 +134,7 @@ var apps = append(append(fixtureApps(ubuntu, "e2e"), app{name: "versatodo", serv
 	builds: `php: { enabled: true, root: '.', composer_command: 'composer install --no-dev --optimize-autoloader' }
             frontend: { enabled: true, npm_command: 'pnpm install --frozen-lockfile', compile_command: 'pnpm run compile', cleanup_dev_deps: true, production_command: 'pnpm install --production' }`,
 	steps: []string{"apache", "mariadb", "sudoers", "dirs", "backup"}}),
-	append(fixtureApps(rocky, "e2er"), fixtureApps(alma, "e2ea")...)...)
+	append(append(append(fixtureApps(rocky, "e2er"), fixtureApps(alma, "e2ea")...), ssrApps(ubuntu, "e2e")...), ssrApps(alma, "e2ea")...)...)
 
 func run(t *testing.T, name string, args ...string) string {
 	t.Helper()
@@ -463,6 +486,16 @@ func TestProvisionAndDeploy(t *testing.T) {
 				t.Errorf("%s: GET / = %d\n%s", a.name, status, body)
 			}
 		}
+		if a.chunks != "" {
+			// an SSR page loads dozens of chunks at once: the proxy must not rate limit them
+			page := fetch(t, a.server.httpPort, a.domain(), "/")
+			chunk := regexp.MustCompile(a.chunks).FindString(page)
+			if chunk == "" {
+				t.Errorf("%s: no chunk matching %s in the page", a.name, a.chunks)
+			} else if n := burst(a.server.httpPort, a.domain(), chunk, 100); n != 0 {
+				t.Errorf("%s: %d of 100 parallel requests to %s got 429", a.name, n, chunk)
+			}
+		}
 		if a.vars(pub).ProxyPort == 0 {
 			// what versaWYS's .htaccess blocks (the vhost has AllowOverride None)
 			for _, f := range []string{"/composer.json", "/versaCLI", "/pnpm-lock.yaml", "/README.md", "/tsconfig.json"} {
@@ -599,6 +632,45 @@ func TestProvisionAndDeploy(t *testing.T) {
 			t.Logf("%s: %s backup file(s) after backup-now", a.name, strings.TrimSpace(ls))
 		}
 	}
+}
+
+// fetch returns the whole body of GET path.
+func fetch(t *testing.T, port int, host, path string) string {
+	req, _ := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
+	req.Host = host
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s%s: %v", host, path, err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return string(b)
+}
+
+// burst sends n parallel GETs and returns how many got 429.
+func burst(port int, host, path string, n int) int {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	limited := 0
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req, _ := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
+			req.Host = host
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode == 429 {
+					mu.Lock()
+					limited++
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	return limited
 }
 
 func firstLine(s string) string {

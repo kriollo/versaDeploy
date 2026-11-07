@@ -51,6 +51,7 @@ environments:
         cleanup_dev_deps: true   # Remove node_modules after build and reinstall prod-only
         production_command: "pnpm install --prod"
         reusable_paths: ["node_modules", "dist"]
+        # server_install: "npm ci --omit=dev"   # SSR apps (Next…): node_modules installed on the server
 
       # Go / Binary Settings
       go:

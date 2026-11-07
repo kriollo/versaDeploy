@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -313,6 +314,9 @@ func (d *Deployer) ship(c *ssh.Client, a *PrebuiltArtifact, previousLock *state.
 		}
 	}
 	if err := d.ensurePythonVenv(c, finalDir); err != nil {
+		return err
+	}
+	if err := d.ensureNodeDeps(c, finalDir); err != nil {
 		return err
 	}
 
@@ -1148,20 +1152,11 @@ func (d *Deployer) validateLocalTools() error {
 	if d.env.Builds.Frontend.Enabled {
 		g.Go(func() error {
 			tools := []string{}
-			if d.env.Builds.Frontend.NPMCommand != "" {
-				parts := strings.Fields(d.env.Builds.Frontend.NPMCommand)
-				if len(parts) > 0 {
-					tools = append(tools, parts[0])
-				}
+			if t := commandTool(d.env.Builds.Frontend.NPMCommand); t != "" {
+				tools = append(tools, t)
 			}
-			if d.env.Builds.Frontend.CompileCommand != "" {
-				parts := strings.Fields(d.env.Builds.Frontend.CompileCommand)
-				if len(parts) > 0 {
-					cmd := parts[0]
-					if !strings.HasPrefix(cmd, "./") && !strings.HasPrefix(cmd, ".\\") {
-						tools = append(tools, cmd)
-					}
-				}
+			if t := commandTool(d.env.Builds.Frontend.CompileCommand); t != "" && !strings.HasPrefix(t, "./") && !strings.HasPrefix(t, ".\\") {
+				tools = append(tools, t)
 			}
 
 			for _, tool := range tools {
@@ -1176,6 +1171,19 @@ func (d *Deployer) validateLocalTools() error {
 	}
 
 	return g.Wait()
+}
+
+var envAssignRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// commandTool is the program a shell command runs: its first word after leading
+// VAR=value assignments ("NODE_ENV=production npm run build" → npm).
+func commandTool(cmd string) string {
+	for _, w := range strings.Fields(cmd) {
+		if !envAssignRe.MatchString(w) {
+			return w
+		}
+	}
+	return ""
 }
 
 // handleSharedPaths manages symbolic links for persistent directories
