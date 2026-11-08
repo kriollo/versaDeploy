@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.14.0] - 2026-11-08
+
+### Added
+
+- **`examples/`**: `deploy.yml` for Laravel, Next.js, Nuxt, Flask (gunicorn), FastAPI (uvicorn) and Gin, with their provisioning, `.env` handling, hooks and health check. Each one is deployed with the real framework by the e2e test on Ubuntu 24.04 and AlmaLinux 9; a unit test loads them and rejects unknown keys.
+- **Edit `.env` and `config.json` from the TUI**: the Shared view lists `preserved_paths` (e.g. versaWYS's `config.json`) and the `shared_paths` not created yet; `Enter` on a file opens it, `e` edits it, `Ctrl+S` saves it on the server keeping its mode. `.env.production`/`.env.local` open as text.
+
+### Changed
+
+- **A missing shared path is seeded instead of becoming an empty directory**: from the release (Laravel's `storage/`, a default config file), else from `<path>.example` (`.env.example`, mode 0640), else an empty `.env*` file (0640). A shared `.env` that wasn't created by hand used to become a *directory*. The deploy warns about each path it creates.
+
+### Fixed
+
+- **Two deploys started in the same second collided** (`failed to compress release: … .tar.gz.001: file exists`), even for different projects: the chunks were named after the release timestamp in `/tmp`. They now sit next to each build's private artifact dir. Found deploying six apps at once.
+- File viewer/editor: shows the "Saved" message (it was drawn below the screen), refreshes size and date after saving, and the editor starts at the first line. The Shared view shows a file's real size instead of its disk blocks.
+
+### Tested
+
+The six examples were deployed as a user would, one Ubuntu 24.04 container each: stack installed from the Services view (`I`), `versa deploy --initial-deploy`, `.env` edited in the Shared view, `versa service restart` / `deploy --force`, and a redeploy keeping the edited `.env`. Laravel with PostgreSQL sessions, Redis cache, migrations, cron and `storage:link`.
+
 ## [1.13.1] - 2026-11-07
 
 ### Added

@@ -59,9 +59,14 @@ type app struct {
 	builds   string // YAML for builds:
 	services string // YAML list for services: ("" = none)
 	tweak    func(v *provision.Vars)
-	steps    []string // per-app steps
-	expect   string   // body marker; "" = versaTodo installer rules
-	chunks   string   // regexp of the page's JS chunks: fetched in a burst, never 429
+	steps    []string                  // per-app steps
+	expect   string                    // body marker; "" = versaTodo installer rules
+	chunks   string                    // regexp of the page's JS chunks: fetched in a burst, never 429
+	shared   string                    // YAML list for shared_paths ("" = versaWYS logs and cache)
+	extra    string                    // more environment YAML (hooks), indented 8 spaces
+	src      func(t *testing.T) string // generates the app source (Laravel)
+	env      func(a app) string        // shared/.env written before the deploy, as the TUI editor does
+	greet    bool                      // APP_GREETING: seeded from .env.example, then edited + restart
 }
 
 var (
@@ -100,6 +105,84 @@ func ssrApps(srv *server, prefix string) []app {
 	}
 }
 
+// frameworkApps deploy the configs of examples/ with the real frameworks: Flask
+// (gunicorn), FastAPI (uvicorn), Gin and Laravel (generated with composer).
+func frameworkApps(srv *server, prefix string) []app {
+	proxy := func(backend string, port int) func(v *provision.Vars) {
+		return func(v *provision.Vars) { v.Backend, v.ProxyPort = backend, port }
+	}
+	svc := func(name, extra string) string {
+		return `[{ name: ` + prefix + name + `, env_file: .env` + extra + ` }]`
+	}
+	return []app{
+		{name: prefix + "flask", fixture: "flask", server: srv, expect: "versa-e2e flask seeded", greet: true, shared: "['.env']",
+			builds:   `python: { enabled: true, web_server: true, web_framework: gunicorn, entry_point: app.py, web_host: 127.0.0.1, web_port: 8001, web_workers: 2 }`,
+			tweak:    proxy("python", 8001),
+			services: svc("flask", ""),
+			steps:    []string{"nginx", "sudoers", "dirs"}},
+		{name: prefix + "fastapi", fixture: "fastapi", server: srv, expect: "versa-e2e fastapi seeded", greet: true, shared: "['.env']",
+			builds:   `python: { enabled: true, web_server: true, web_framework: fastapi, entry_point: main.py, web_host: 127.0.0.1, web_port: 8002, web_workers: 2 }`,
+			tweak:    proxy("python", 8002),
+			services: svc("fastapi", ""),
+			steps:    []string{"nginx", "sudoers", "dirs"}},
+		{name: prefix + "gin", fixture: "gin", server: srv, expect: "versa-e2e gin seeded", greet: true, shared: "['.env']",
+			builds:   `go: { enabled: true, target_os: linux, target_arch: amd64, binary_name: api, deploy_path: bin }`,
+			tweak:    proxy("go", 8095),
+			services: svc("gin", `, environment: { PORT: "8095", GIN_MODE: release }`),
+			steps:    []string{"nginx", "sudoers", "dirs"}},
+		{name: prefix + "laravel", fixture: "laravel", server: srv, expect: "<title>Laravel</title>", src: laravelSource, shared: "['.env', 'storage']",
+			builds: `php: { enabled: true, root: '.', composer_command: 'composer install --no-dev --optimize-autoloader' }
+            frontend: { enabled: true, npm_command: 'npm install --no-audit --no-fund', compile_command: 'npm run build && rm -rf node_modules' }`,
+			extra: `        post_deploy:
+            - 'php artisan migrate --force'
+            - 'php artisan optimize'
+            - 'php artisan storage:link --force'
+`,
+			tweak: func(v *provision.Vars) { v.DocRoot = "current/app/public" },
+			env:   laravelEnv,
+			steps: []string{"nginx", srv.db, "sudoers", "dirs"}},
+	}
+}
+
+var laravelOnce struct {
+	sync.Once
+	dir string
+	err error
+}
+
+// laravelSource creates a fresh Laravel project once per run (needs composer and network).
+func laravelSource(t *testing.T) string {
+	laravelOnce.Do(func() {
+		if _, err := exec.LookPath("composer"); err != nil {
+			laravelOnce.err = err
+			return
+		}
+		dir, _ := os.MkdirTemp("", "versa-e2e-laravel")
+		out, err := exec.Command("composer", "create-project", "--no-install", "--no-scripts", "-q", "laravel/laravel", dir+"/app").CombinedOutput()
+		if err != nil {
+			laravelOnce.err = fmt.Errorf("%v\n%s", err, out)
+		}
+		laravelOnce.dir = dir + "/app"
+	})
+	if laravelOnce.err != nil {
+		t.Skipf("laravel: %v", laravelOnce.err)
+	}
+	return laravelOnce.dir
+}
+
+// laravelEnv is the production .env a user writes in the Shared view.
+func laravelEnv(a app) string {
+	v := a.vars("")
+	db := map[string]string{
+		"postgres": "DB_CONNECTION=pgsql\nDB_HOST=127.0.0.1\nDB_PORT=5432\n",
+		"mariadb":  "DB_CONNECTION=mariadb\nDB_HOST=localhost\nDB_PORT=3306\n",
+	}[a.server.db]
+	return "APP_NAME=Laravel\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_URL=http://" + a.domain() + "\n" +
+		"APP_KEY=base64:dmVyc2EtZTJlLWxhcmF2ZWwta2V5LTMyLWJ5dGVzISE=\nLOG_CHANNEL=stack\nLOG_LEVEL=warning\n" + db +
+		"DB_DATABASE=" + v.DBName + "\nDB_USERNAME=" + v.DBUser + "\nDB_PASSWORD=\"" + v.DBPassword + "\"\n" +
+		"SESSION_DRIVER=database\nCACHE_STORE=database\nQUEUE_CONNECTION=database\n"
+}
+
 // fixtureApps are the four backend fixtures hosted on srv, prefixed so names stay unique.
 func fixtureApps(srv *server, prefix string) []app {
 	return []app{
@@ -130,11 +213,12 @@ func fixtureApps(srv *server, prefix string) []app {
 	}
 }
 
-var apps = append(append(fixtureApps(ubuntu, "e2e"), app{name: "versatodo", server: debian,
+var apps = slices.Concat(fixtureApps(ubuntu, "e2e"), []app{{name: "versatodo", server: debian,
 	builds: `php: { enabled: true, root: '.', composer_command: 'composer install --no-dev --optimize-autoloader' }
             frontend: { enabled: true, npm_command: 'pnpm install --frozen-lockfile', compile_command: 'pnpm run compile', cleanup_dev_deps: true, production_command: 'pnpm install --production' }`,
-	steps: []string{"apache", "mariadb", "sudoers", "dirs", "backup"}}),
-	append(append(append(fixtureApps(rocky, "e2er"), fixtureApps(alma, "e2ea")...), ssrApps(ubuntu, "e2e")...), ssrApps(alma, "e2ea")...)...)
+	steps: []string{"apache", "mariadb", "sudoers", "dirs", "backup"}}},
+	fixtureApps(rocky, "e2er"), fixtureApps(alma, "e2ea"), ssrApps(ubuntu, "e2e"), ssrApps(alma, "e2ea"),
+	frameworkApps(ubuntu, "e2e"), frameworkApps(alma, "e2ea"))
 
 func run(t *testing.T, name string, args ...string) string {
 	t.Helper()
@@ -236,7 +320,9 @@ func TestProvisionAndDeploy(t *testing.T) {
 		if only != "" && !contains(strings.Split(only, ","), a.server.name) {
 			continue
 		}
-		if a.fixture == "" {
+		if a.src != nil {
+			a.repo = gitRepo(t, a.src(t))
+		} else if a.fixture == "" {
 			if _, err := os.Stat(filepath.Join(todo, "composer.json")); err != nil {
 				t.Logf("versaTodo not found at %s: skipping it", todo)
 				continue
@@ -320,11 +406,11 @@ func TestProvisionAndDeploy(t *testing.T) {
         ssh: { host: 127.0.0.1, port: %d, user: versadeploy, key_path: %s, known_hosts_file: %s, strict_host_key: true }
         remote_path: %s
         ignored_paths: ['.git', 'node_modules/.cache', 'versaWYS/tests', 'documentacion', 'src']
-        shared_paths: ['versaWYS/logs', 'versaWYS/cache']
+        shared_paths: %s
         builds:
             %s
         services_reload:
-%s`, a.name, a.server.sshPort, key, knownHosts, v.RemotePath, a.builds, reload.String())
+%s%s`, a.name, a.server.sshPort, key, knownHosts, v.RemotePath, cmp.Or(a.shared, "['versaWYS/logs', 'versaWYS/cache']"), a.builds, reload.String(), a.extra)
 		if a.services != "" {
 			fmt.Fprintf(&y, "        services: %s\n", a.services)
 		}
@@ -462,6 +548,20 @@ func TestProvisionAndDeploy(t *testing.T) {
 
 	// 2. Deploy every app as the deploy user: services are installed by the deploy
 	for _, a := range selected {
+		if a.env != nil {
+			dcfg := sshCfg(a.server, "versadeploy")
+			dc, err := versassh.NewClient(&dcfg, log)
+			if err == nil {
+				shared := a.vars(pub).RemotePath + "/shared"
+				if err = dc.MkdirAll(shared); err == nil {
+					err = dc.WriteRemoteFileMode(shared+"/.env", []byte(a.env(a)), 0640)
+				}
+				dc.Close()
+			}
+			if err != nil {
+				t.Fatalf("%s: writing shared/.env: %v", a.name, err)
+			}
+		}
 		d, err := deployer.NewDeployer(cfg, a.name, a.repo, false, true, true, true, log)
 		if err != nil {
 			t.Fatal(err)
@@ -506,6 +606,44 @@ func TestProvisionAndDeploy(t *testing.T) {
 					t.Errorf("%s: %s = 200, want it blocked", a.name, f)
 				}
 			}
+		}
+	}
+
+	// 3b. .env: the deploy seeded shared/.env from .env.example (0640) and the service
+	// loaded it; editing it (what the Shared view's editor saves) + restart applies it
+	for _, a := range selected {
+		if !a.greet {
+			continue
+		}
+		dcfg := sshCfg(a.server, "versadeploy")
+		dc, err := versassh.NewClient(&dcfg, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		envPath := a.vars(pub).RemotePath + "/shared/.env"
+		if mode, _ := dc.ExecuteCommand("stat -c %a " + envPath); strings.TrimSpace(mode) != "640" {
+			t.Errorf("%s: seeded .env mode %q, want 640", a.name, strings.TrimSpace(mode))
+		}
+		err = dc.WriteRemoteBytes(envPath, []byte("APP_GREETING=edited\n"))
+		if err == nil {
+			var out string
+			out, err = dc.ExecuteCommand("sudo -n systemctl restart " + a.name)
+			if err != nil {
+				err = fmt.Errorf("%v: %s", err, out)
+			}
+		}
+		dc.Close()
+		if err != nil {
+			t.Fatalf("%s: edit .env: %v", a.name, err)
+		}
+		marker := strings.Replace(a.expect, "seeded", "edited", 1)
+		var body string
+		for i := 0; i < 15 && !strings.Contains(body, marker); i++ {
+			time.Sleep(time.Second)
+			_, body = get(t, a.server.httpPort, a.domain(), "/")
+		}
+		if !strings.Contains(body, marker) {
+			t.Errorf("%s: after editing .env got %q, want %q", a.name, firstLine(body), marker)
 		}
 	}
 

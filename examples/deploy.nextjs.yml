@@ -1,0 +1,57 @@
+# Next.js (SSR) as a service behind nginx. Tested end to end with Next.js 16 on
+# Ubuntu 24.04 and AlmaLinux 9. package.json needs "start": "next start".
+#
+# Runtime variables (server only): shared/.env, edited in versa → Shared → Enter → e,
+# then `versa service production restart`. NEXT_PUBLIC_* are build-time: they come
+# from your machine when versa builds.
+project: "myshop"                        # change
+
+environments:
+  production:
+    ssh:
+      host: "myshop.com"                 # change
+      user: "deploy"
+      key_path: "~/.ssh/id_ed25519"
+
+    remote_path: "/var/www/myshop"
+
+    provision:
+      ssh: { user: root }
+      domain: "myshop.com"               # change
+      aliases: ["www.myshop.com"]
+      web_server: nginx
+      node_major: "22"
+      proxy_port: 3000                   # nginx → the service
+      database: none                     # or postgres / mariadb
+      ssl: true
+      deploy_user: deploy
+
+    ignored_paths:
+      - ".git"
+      - ".github"
+      - "node_modules/.cache"
+      - ".next/cache"
+
+    shared_paths:
+      - ".env"                            # created from .env.example on the first deploy
+
+    builds:
+      frontend:
+        enabled: true
+        npm_command: "npm ci"
+        compile_command: "NEXT_TELEMETRY_DISABLED=1 npm run build"
+        # node_modules installed on the server: native modules (sharp…) for Linux.
+        # Reused while package-lock.json doesn't change. Ship the lockfile.
+        server_install: "npm ci --omit=dev"
+
+    services:
+      - name: "myshop"
+        exec: "npm start"
+        env_file: ".env"                 # <remote_path>/shared/.env
+        environment:
+          PORT: "3000"
+          NODE_ENV: "production"
+          NEXT_TELEMETRY_DISABLED: "1"
+
+    health_check:
+      url: "https://myshop.com/"

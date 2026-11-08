@@ -246,6 +246,9 @@ func listDir(client *versassh.Client, path string) tea.Cmd {
 func loadFileContent(client *versassh.Client, path string, info os.FileInfo) tea.Cmd {
 	return func() tea.Msg {
 		const maxRead = 512 * 1024
+		if fi, err := client.Stat(path); err == nil {
+			info = fi // fresh size and time, also after a save
+		}
 		data, err := client.ReadRemoteBytes(path, maxRead)
 		return msgFileContent{path: path, content: data, info: info, err: err}
 	}
@@ -568,7 +571,8 @@ var imageExts = map[string]bool{
 
 func detectKind(name string) fileKind {
 	ext := strings.ToLower(filepath.Ext(name))
-	if textExts[ext] {
+	// .env.production, .env.local…: Ext would be ".production"
+	if textExts[ext] || strings.HasPrefix(name, ".env") {
 		return kindText
 	}
 	if imageExts[ext] {
@@ -1103,8 +1107,9 @@ func (b browserModel) viewFileView(width int) string {
 	if detectKind(name) == kindText && utf8.Valid(b.viewContent) && int64(len(b.viewContent)) < maxRead {
 		editHint = "  e:edit"
 	}
+	// the status (e.g. Saved + how to apply it) shares the last line: the viewport fills the rest
 	rows = append(rows, "", sep,
-		StyleMuted.Render(fmt.Sprintf("  Esc:back  ⌫:back  ↑/↓:scroll  d:download%s  %d%%", editHint, pct)),
+		StyleMuted.Render(fmt.Sprintf("  Esc:back  ⌫:back  ↑/↓:scroll  d:download%s  %d%%", editHint, pct))+"   "+b.statusMsg,
 	)
 	return strings.Join(rows, "\n")
 }

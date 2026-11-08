@@ -512,7 +512,9 @@ func (d *Deployer) uploadDelta(c *ssh.Client, a *PrebuiltArtifact, prevVersion s
 			extracted += fi.Size()
 		}
 	}
-	base := filepath.Join(os.TempDir(), fmt.Sprintf("%s-%s.delta.tar.gz", a.ReleaseVersion, d.envName))
+	// next to the private artifact dir (random suffix): two deploys started in the same
+	// second, of other projects too, never share a chunk name
+	base := fmt.Sprintf("%s-%s.delta.tar.gz", a.artifactDir, d.envName)
 	chunks, err := artifact.NewGenerator(a.artifactDir, a.ReleaseVersion, a.CommitHash).CompressChunkedFiltered(base, d.chunkSize(), keep)
 	defer func() {
 		for _, p := range chunks {
@@ -646,7 +648,7 @@ func (d *Deployer) reclaimableBytes(c *ssh.Client) int64 {
 type PrebuiltArtifact struct {
 	ReleaseVersion string
 	CommitHash     string
-	ChunkPaths     []string             // local /tmp/*.tar.gz.001, .002, … chunk files (created on first full upload)
+	ChunkPaths     []string             // local <artifactDir>.tar.gz.001, .002, … chunk files (created on first full upload)
 	ChangeSet      *changeset.ChangeSet // used for dependency reuse and deploy.lock
 	artifactDir    string               // owned by Cleanup
 	tmpRepo        string               // owned by Cleanup
@@ -672,7 +674,7 @@ func (a *PrebuiltArtifact) chunks(chunkSize int64, log *logger.Logger) ([]string
 		return a.ChunkPaths, nil
 	}
 	log.Info("Compressing release into chunks...")
-	base := filepath.Join(os.TempDir(), a.ReleaseVersion+".tar.gz")
+	base := a.artifactDir + ".tar.gz" // unique: see the delta's base
 	paths, err := artifact.NewGenerator(a.artifactDir, a.ReleaseVersion, a.CommitHash).CompressChunked(base, chunkSize)
 	if err != nil {
 		for _, p := range paths {
@@ -1199,11 +1201,17 @@ func (d *Deployer) handleSharedPaths(sshClient *ssh.Client, releaseDir string) e
 	if script == "" {
 		return nil
 	}
-	if out, err := sshClient.ExecuteCommand(script); err != nil {
+	out, err := sshClient.ExecuteCommand(script)
+	if err != nil {
 		return fmt.Errorf("failed to link shared paths: %w (output: %s)", err, out)
 	}
 	for _, path := range d.env.SharedPaths {
 		d.log.Info("  Linked: %s", path)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if p, ok := strings.CutPrefix(strings.TrimSpace(line), "new shared file: "); ok {
+			d.log.Warn("  Created shared/%s (from the release, %s.example or empty): review it — versa → Shared → Enter → e", p, p)
+		}
 	}
 	return nil
 }
@@ -1215,7 +1223,9 @@ func insideApp(clean string) bool {
 
 // sharedLinkScript replaces each shared path in releaseDir/app with a symlink into
 // sharedBase, in one script; any failing step aborts it. Existing shared targets
-// (files like .env included) are left untouched; missing ones become directories.
+// (files like .env included) are left untouched. A missing one is seeded once: from the
+// release (Laravel's storage/, a default config.json), else from <path>.example
+// (.env.example), else an empty .env* file; anything else becomes an empty directory.
 func sharedLinkScript(releaseDir, sharedBase string, paths []string) string {
 	var script []string
 	for _, path := range paths {
@@ -1224,12 +1234,19 @@ func sharedLinkScript(releaseDir, sharedBase string, paths []string) string {
 		if !insideApp(cleanPath) {
 			continue // Security: don't allow escaping (or replacing) the app dir
 		}
+		sharedPath := filepath.ToSlash(filepath.Join(sharedBase, cleanPath))
 		releasePath := filepath.ToSlash(filepath.Join(releaseDir, "app", cleanPath))
-		// A new shared dir (uploads, logs, cache) is group-writable: the web server
-		// writes there through the project's setgid group (www-data)
-		script = append(script, fmt.Sprintf("{ [ -e %[1]s ] || { mkdir -p %[1]s && chmod g+w %[1]s; }; } && rm -rf -- %[2]s && mkdir -p %[3]s && ln -sfn %[1]s %[2]s",
-			ssh.ShellQuote(filepath.ToSlash(filepath.Join(sharedBase, cleanPath))),
-			ssh.ShellQuote(releasePath), ssh.ShellQuote(filepath.ToSlash(filepath.Dir(releasePath)))))
+		// New shared dirs (uploads, logs, cache) are group-writable: the web server
+		// writes there through the project's setgid group (www-data). Seeded secrets
+		// files are 0640: the deploy user writes them, the web server only reads.
+		fallback := fmt.Sprintf("mkdir %[1]s && chmod g+w %[1]s", ssh.ShellQuote(sharedPath))
+		if strings.HasPrefix(filepath.Base(cleanPath), ".env") {
+			fallback = fmt.Sprintf(": > %[1]s && chmod 640 %[1]s", ssh.ShellQuote(sharedPath))
+		}
+		seed := fmt.Sprintf(`mkdir -p %[3]s && if [ -e %[2]s ] && [ ! -L %[2]s ]; then cp -a %[2]s %[1]s && { [ -f %[1]s ] || chmod -R g+w %[1]s; }; elif [ -f %[2]s.example ]; then cp %[2]s.example %[1]s && chmod 640 %[1]s; else %[4]s; fi && { [ ! -f %[1]s ] || echo "new shared file: "%[5]s; }`,
+			ssh.ShellQuote(sharedPath), ssh.ShellQuote(releasePath), ssh.ShellQuote(filepath.ToSlash(filepath.Dir(sharedPath))), fallback, ssh.ShellQuote(cleanPath))
+		script = append(script, fmt.Sprintf("{ [ -e %[1]s ] || [ -L %[1]s ] || { %[4]s; }; } && rm -rf -- %[2]s && mkdir -p %[3]s && ln -sfn %[1]s %[2]s",
+			ssh.ShellQuote(sharedPath), ssh.ShellQuote(releasePath), ssh.ShellQuote(filepath.ToSlash(filepath.Dir(releasePath))), seed))
 	}
 	return strings.Join(script, " &&\n")
 }

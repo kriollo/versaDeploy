@@ -1,0 +1,55 @@
+# Go with Gin behind nginx. Tested end to end on Ubuntu 24.04 and AlmaLinux 9.
+# The binary is cross-compiled on your machine (static, CGO_ENABLED=0): the server
+# needs no Go. main.go listens on 127.0.0.1:$PORT.
+#
+# Secrets: shared/.env (created from .env.example on the first deploy); edit it in
+# versa → Shared → Enter → e, then `versa service production restart`.
+project: "myapi"                         # change
+
+environments:
+  production:
+    ssh:
+      host: "api.example.com"            # change
+      user: "deploy"
+      key_path: "~/.ssh/id_ed25519"
+
+    remote_path: "/var/www/myapi"
+
+    provision:
+      ssh: { user: root }
+      domain: "api.example.com"          # change
+      web_server: nginx
+      proxy_port: 8080
+      database: postgres
+      db_name: myapi
+      db_user: myapi_user
+      db_password: "${DB_PASS}"
+      ssl: true
+      backup: true
+      deploy_user: deploy
+
+    ignored_paths:
+      - ".git"
+      - ".github"
+
+    shared_paths:
+      - ".env"
+
+    builds:
+      go:
+        enabled: true
+        target_os: linux
+        target_arch: amd64               # arm64 for Graviton/Ampere servers
+        binary_name: "api"
+        deploy_path: "bin"               # → current/bin/api
+        build_flags: "-trimpath -ldflags=-s"
+
+    services:
+      - name: "myapi"                    # exec: current/bin/api
+        env_file: ".env"
+        environment:
+          PORT: "8080"
+          GIN_MODE: "release"
+
+    health_check:
+      url: "https://api.example.com/"

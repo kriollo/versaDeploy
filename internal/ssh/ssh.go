@@ -693,6 +693,11 @@ func (c *Client) AcquireLock(lockPath string) error {
 }
 
 // ReadDir lists the contents of a remote directory via SFTP.
+// Stat follows symlinks (current → the release).
+func (c *Client) Stat(path string) (os.FileInfo, error) {
+	return c.sftpClient.Stat(path)
+}
+
 func (c *Client) ReadDir(path string) ([]os.FileInfo, error) {
 	return c.sftpClient.ReadDir(path)
 }

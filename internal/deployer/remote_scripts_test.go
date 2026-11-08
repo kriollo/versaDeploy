@@ -38,10 +38,16 @@ func TestSharedLinkScript(t *testing.T) {
 		os.MkdirAll(filepath.Join(root, "shared"), 0755)
 		os.WriteFile(filepath.Join(root, "shared/.env"), []byte("KEEP"), 0644)
 		os.WriteFile(filepath.Join(root, "rel/app/.env"), []byte("artifact"), 0644)
+		os.WriteFile(filepath.Join(root, "rel/app/storage/logs/.gitignore"), []byte("*"), 0644)
+		os.MkdirAll(filepath.Join(root, "rel/app/conf"), 0755)
+		os.WriteFile(filepath.Join(root, "rel/app/conf/config.json"), []byte("{}"), 0644)
+		os.MkdirAll(filepath.Join(root, "rel/app/api"), 0755)
+		os.WriteFile(filepath.Join(root, "rel/app/api/.env.example"), []byte("APP_KEY="), 0644)
 	}, func(root string) string {
-		return sharedLinkScript(root+"/rel", root+"/shared", []string{"storage", ".env", "public/up loads", "../escape"})
-	}, func(root, _ string) {
-		for _, p := range []string{"storage", ".env", "public/up loads"} {
+		// web/ isn't in the release: its .env has neither a release copy nor an example
+		return sharedLinkScript(root+"/rel", root+"/shared", []string{"storage", ".env", "public/up loads", "../escape", "conf/config.json", "api/.env", "web/.env.production"})
+	}, func(root, out string) {
+		for _, p := range []string{"storage", ".env", "public/up loads", "conf/config.json", "api/.env", "web/.env.production"} {
 			if target, err := os.Readlink(filepath.Join(root, "rel/app", p)); err != nil || target != root+"/shared/"+p {
 				t.Errorf("%s -> %q, %v", p, target, err)
 			}
@@ -52,6 +58,23 @@ func TestSharedLinkScript(t *testing.T) {
 		// new shared dirs are group-writable: the web server writes logs/uploads there
 		if fi, err := os.Stat(filepath.Join(root, "shared/storage")); runtime.GOOS != "windows" && (err != nil || fi.Mode().Perm()&0o020 == 0) {
 			t.Errorf("new shared dir not group-writable: %v %v", fi.Mode(), err)
+		}
+		// missing shared paths are seeded once: release content, then .example, then empty .env*
+		read := func(p string) string { b, _ := os.ReadFile(filepath.Join(root, "shared", p)); return string(b) }
+		if read("storage/logs/.gitignore") != "*" || read("conf/config.json") != "{}" || read("api/.env") != "APP_KEY=" {
+			t.Errorf("not seeded: logs=%q config=%q env=%q", read("storage/logs/.gitignore"), read("conf/config.json"), read("api/.env"))
+		}
+		for _, p := range []string{"api/.env", "web/.env.production"} {
+			if fi, err := os.Stat(filepath.Join(root, "shared", p)); err != nil || !fi.Mode().IsRegular() || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o640) {
+				t.Errorf("%s: want a 0640 file, got %v %v", p, fi, err)
+			}
+		}
+		if fi, err := os.Stat(filepath.Join(root, "shared/public/up loads")); err != nil || !fi.IsDir() {
+			t.Errorf("new shared dir: %v %v", fi, err)
+		}
+		// only new files are reported (to review them), never an existing one or a dir
+		if strings.Contains(out, "new shared file: .env\n") || strings.Contains(out, "storage") || !strings.Contains(out, "new shared file: api/.env\n") {
+			t.Errorf("output: %q", out)
 		}
 	})
 }

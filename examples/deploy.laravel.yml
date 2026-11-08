@@ -1,0 +1,78 @@
+# Laravel (PHP-FPM behind nginx). Copy to your project as deploy.yml and edit the
+# values marked "change". Tested end to end with a fresh Laravel on Ubuntu 24.04
+# (PostgreSQL) and AlmaLinux 9 (MariaDB).
+#
+# First deploy:
+#   1. versa → Services: install the stack (I), then w (save provision) and a (services_reload)
+#   2. versa deploy production --initial-deploy   → answer N to the post_deploy hooks
+#   3. versa → Shared → .env → Enter → e: set APP_KEY (php artisan key:generate --show
+#      on your machine), DB_*, MAIL_*… Ctrl+S saves it on the server
+#   4. versa deploy production --force   (runs the migrations and caches)
+project: "myapp"                         # change
+
+environments:
+  production:
+    ssh:
+      host: "myapp.com"                  # change
+      user: "deploy"
+      key_path: "~/.ssh/id_ed25519"
+
+    remote_path: "/var/www/myapp"
+
+    provision:                           # read only by the Services view
+      ssh: { user: root }
+      domain: "myapp.com"                # change
+      aliases: ["www.myapp.com"]
+      web_server: nginx
+      php_version: "8.4"
+      doc_root: "current/app/public"     # Laravel serves public/
+      database: postgres                 # or mariadb (DB_CONNECTION=mariadb, DB_HOST=localhost)
+      db_name: myapp
+      db_user: myapp_user
+      db_password: "${DB_PASS}"          # only used to create the user: DB_PASS=… versa
+      redis: true                        # CACHE_STORE=redis / SESSION_DRIVER=redis (or dragonfly: true)
+      ssl: true
+      backup: true
+      deploy_user: deploy
+      cron:
+        - "* * * * * php artisan schedule:run >> /dev/null 2>&1"
+
+    ignored_paths:
+      - ".git"
+      - ".github"
+      - "tests"
+      - "node_modules"                   # assets are built into public/build
+      - "vendor/bin"
+
+    # .env lives in shared/: the first deploy creates it from .env.example.
+    # storage/ too (logs, sessions, uploads): seeded once from the release.
+    shared_paths:
+      - ".env"
+      - "storage"
+
+    builds:
+      php:
+        enabled: true
+        composer_command: "composer install --no-dev --optimize-autoloader"
+      frontend:                          # Vite: public/build
+        enabled: true
+        npm_command: "npm ci"
+        compile_command: "npm run build"
+
+    services_reload:                     # PHP-FPM must reload: OPcache keeps the old release
+      - "sudo systemctl reload php8.4-fpm"
+      - "sudo systemctl reload nginx"
+
+    post_deploy:
+      - "php artisan migrate --force"
+      - "php artisan optimize"            # config, routes, views, events cache (reads .env)
+      - "php artisan storage:link --force"
+      # - "php artisan queue:restart"     # with the queue service below
+
+    # Queue worker (QUEUE_CONNECTION=database/redis): restarted on every deploy.
+    # services:
+    #   - name: "myapp-queue"
+    #     exec: "php artisan queue:work --sleep=3 --tries=3 --max-time=3600"
+
+    health_check:
+      url: "https://myapp.com/up"        # Laravel's health route

@@ -1,0 +1,53 @@
+# Nuxt (Nitro node-server) as a service behind nginx. Tested end to end with Nuxt 4
+# on Ubuntu 24.04 and AlmaLinux 9. .output/ bundles its own dependencies, so no
+# node_modules goes to the server.
+#
+# Runtime config: NUXT_* variables in shared/.env (versa → Shared → Enter → e), then
+# `versa service production restart`. NUXT_PUBLIC_* also work at runtime.
+project: "mysite"                        # change
+
+environments:
+  production:
+    ssh:
+      host: "mysite.com"                 # change
+      user: "deploy"
+      key_path: "~/.ssh/id_ed25519"
+
+    remote_path: "/var/www/mysite"
+
+    provision:
+      ssh: { user: root }
+      domain: "mysite.com"               # change
+      aliases: ["www.mysite.com"]
+      web_server: nginx
+      node_major: "22"
+      proxy_port: 3000
+      database: none
+      ssl: true
+      deploy_user: deploy
+
+    ignored_paths:
+      - ".git"
+      - ".github"
+      - ".nuxt"
+      - "node_modules"
+
+    shared_paths:
+      - ".env"
+
+    builds:
+      frontend:
+        enabled: true
+        npm_command: "npm ci"
+        compile_command: "npm run build"
+
+    services:
+      - name: "mysite"
+        exec: "node .output/server/index.mjs"
+        env_file: ".env"
+        environment:
+          PORT: "3000"
+          NODE_ENV: "production"
+
+    health_check:
+      url: "https://mysite.com/"

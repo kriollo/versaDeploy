@@ -1,13 +1,13 @@
 # ⚙️ Configuration Reference (`deploy.yml`)
 
-Every option of the versaDeploy configuration file, with defaults and behavior. For a commented example see [deploy.example.yml](../deploy.example.yml); to generate a starter file run `versa init`. Check a file anytime with `versa config validate [env]`.
+Every option of the versaDeploy configuration file, with defaults and behavior. For a commented example see [deploy.example.yml](../deploy.example.yml), and per framework (Laravel, Next.js, Nuxt, Flask, FastAPI, Gin) [examples/](../examples/); to generate a starter file run `versa init`. Check a file anytime with `versa config validate [env]`.
 
 - [File structure](#file-structure)
 - [Environment variables in the config](#environment-variables-in-the-config)
 - [SSH connection (`ssh`)](#ssh-connection-ssh)
 - [Environment settings](#environment-settings)
 - [Builds (`builds`)](#builds-builds): [PHP](#php-php) · [Go](#go-go) · [Frontend](#frontend-frontend) · [Python](#python-python)
-- [Files between releases: shared, preserved, reusable](#files-between-releases-shared-preserved-reusable)
+- [Files between releases: shared, preserved, reusable](#files-between-releases-shared-preserved-reusable) · [`.env` and secrets](#environment-variables-and-secrets-env-configjson)
 - [Hooks](#hooks)
 - [Service reload (`services_reload`)](#service-reload-services_reload)
 - [Services (`services`)](#services-services): run a Go/Python process at boot and restart it on deploy
@@ -268,12 +268,50 @@ Each deploy creates a fresh release directory. Three mechanisms carry things ove
 
 All paths are relative to the app directory (the repository root).
 
-> [!IMPORTANT]
-> If a shared path doesn't exist yet in `shared/`, versa creates it **as a directory**. For a shared **file** such as `.env`, create it on the server before the first deploy:
->
-> ```bash
-> mkdir -p /var/www/app/shared && nano /var/www/app/shared/.env
-> ```
+A shared path that doesn't exist yet in `shared/` is created **once**, on the deploy that first needs it:
+
+| The release has…                      | `shared/<path>` becomes                                   |
+| :------------------------------------ | :-------------------------------------------------------- |
+| the path itself (Laravel's `storage/`, a default `config.json`) | a copy of it                    |
+| `<path>.example` (`.env.example`)     | a copy of the example, mode `0640`                        |
+| neither, and the name starts with `.env` | an empty file, mode `0640`                             |
+| neither                               | an empty, group-writable directory                        |
+
+The deploy warns about each path it created. After that, `shared/` is never overwritten by a deploy.
+
+### Environment variables and secrets (`.env`, `config.json`)
+
+Your local `.env` is never uploaded: releases are built from a clone of the repository, where `.env` is ignored. The server keeps its own.
+
+**Where it lives.** A `shared_paths` entry is a path relative to the repository root, the same place the framework looks for it on your machine. With `- ".env"`:
+
+```
+/var/www/myapp/
+├── shared/.env                         ← the real file (one per server, survives deploys)
+└── current → releases/20261108_1200/
+    └── app/.env → /var/www/myapp/shared/.env   (symlink made by each deploy)
+```
+
+- **PHP apps** (Laravel, versaWYS) read `app/.env` as on your machine; the symlink leads them to `shared/.env`.
+- **Services** (`env_file: ".env"`, relative to `shared/`): the init system loads `shared/.env` into the process environment before starting it, so `os.Getenv`, `process.env` and `os.environ` see the variables without reading any file (Nuxt's `.output` and Go binaries rely on this; `next start` also reads `app/.env` itself).
+- **Monorepo** with the app in a subdirectory: `shared_paths: ["backend/.env"]` and `env_file: "backend/.env"`.
+
+To set it up and change it:
+
+1. Put the file in `shared_paths` (`- ".env"`). The first deploy creates `shared/.env` from `.env.example`.
+2. Edit it from the TUI: **Shared** view → the file → `Enter` → `e` → `Ctrl+S` saves it on the server (the file keeps its mode). Files kept with `preserved_paths` (such as versaWYS's `config.json`) are listed there too. You can also edit any file from the **Files** view (`Enter`, `e`), or upload one with `u`.
+3. Apply it: services read it when they start (`versa service <env> restart`); PHP frameworks that cache their config need their cache command again (`php artisan optimize`): **Operations → h** re-runs the `post_deploy` hooks.
+
+| Where a variable comes from                     | Use                                                                 |
+| :---------------------------------------------- | :------------------------------------------------------------------ |
+| `shared/.env` on the server                     | Secrets and per-server settings. PHP apps read it; services load it with [`env_file`](#services-services). |
+| `services[].environment`                        | Non-secret settings of a service (`PORT`, `NODE_ENV`).              |
+| Your machine, at build time                     | Values compiled into the frontend (`NEXT_PUBLIC_*`, `VITE_*`): the build runs locally. |
+| `${VAR}` in `deploy.yml`                        | Values for versa itself (`provision.db_password`), expanded locally. Don't put them in remote hooks (see [Hooks](#hooks)). |
+
+Ready-made configs per framework are in [`examples/`](../examples/).
+
+---
 
 ---
 
@@ -304,7 +342,7 @@ post_deploy:
 
 - Remote hooks run in the SSH user's login shell, with a limit of `hook_timeout` seconds each.
 - Local hooks (`pre_deploy_local`, and `post_deploy` in local mode) run with `sh -c`. **On Windows, `sh` must be in `PATH`** (it comes with Git for Windows: add `C:\Program Files\Git\bin`).
-- On the first deploy (`--initial-deploy`), versa asks before running `post_deploy`, so you can set up `.env` first.
+- On the first deploy (`--initial-deploy`), versa asks before running `post_deploy`, so you can set up `.env` first ([how](#environment-variables-and-secrets-env-configjson)).
 - Re-run `post_deploy` without deploying: `versa hooks <env> [indices...]`.
 - `$NAME` is [expanded locally](#environment-variables-in-the-config); write `$$NAME` for a variable of the server's shell.
 - Don't put `${SECRET}` in remote hooks: the expanded command line is visible to other users of the server (`ps`). Read secrets on the server instead, e.g. `$$DB_PASS` from the app's `.env` in `shared/`.

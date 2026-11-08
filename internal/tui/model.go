@@ -354,6 +354,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		contentW := m.width - sidebarWidth - 6
 		contentH := m.height - 3
 		m.browser.applyFileContent(msg, contentW, contentH)
+		if msg.path == m.browser.viewPath {
+			m.browser.viewing = true // opened from the Shared view: after its dir listing
+		}
 		m.statusMsg = "Viewing: " + msg.path
 
 	case msgXferLine:
@@ -380,6 +383,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.browser.editing = false
 			m.browser.statusMsg = StyleSuccess.Render("\U000F012C Saved: " + msg.path)
+			if strings.Contains(msg.path, "/shared/") || strings.HasPrefix(filepath.Base(msg.path), ".env") || strings.HasSuffix(msg.path, ".json") {
+				// config is read at start (services) or cached (php artisan config:cache)
+				m.browser.statusMsg += StyleMuted.Render("  — apply it: Operations → h (post_deploy) or versa service <env> restart")
+			}
 			// Reload file content to reflect saved changes
 			if client := m.activeClient(); client != nil {
 				m.browser.viewLoading = true
@@ -782,6 +789,7 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 					cmds = append(cmds, listDir(client, dirPath))
 				}
 			case filePath != "" && client != nil:
+				m.browser.statusMsg = "" // a previous file's "Saved"
 				m.browser.viewing = true
 				m.browser.viewPath = filePath
 				m.browser.viewLoading = true
@@ -848,6 +856,7 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 						ta.SetHeight(taH)
 						ta.SetValue(string(m.browser.viewContent))
 						ta.Focus()
+						ta, _ = ta.Update(tea.KeyMsg{Type: tea.KeyCtrlHome}) // start at the first line
 						m.browser.editTextarea = ta
 						m.browser.editPath = m.browser.viewPath
 						m.browser.editSaving = false
@@ -864,15 +873,24 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 		case key.Matches(msg, Keys.Down):
 			m.shared.moveDown()
 		case key.Matches(msg, Keys.Enter):
-			if entry := m.shared.selectedEntry(); entry != nil && entry.isDir {
-				if env := m.activeEnvCfg(); env != nil {
-					dirPath := filepath.ToSlash(filepath.Join(env.RemotePath, "shared", entry.name))
-					m.currentView = viewBrowser
-					m.browser.init(dirPath)
-					if client := m.activeClient(); client != nil {
-						cmds = append(cmds, listDir(client, dirPath))
+			// a directory opens in Files; a file opens in its viewer there (e edits it)
+			if entry := m.shared.selectedEntry(); entry != nil && entry.path != "" {
+				client := m.activeClient()
+				m.currentView = viewBrowser
+				if entry.isDir {
+					m.browser.init(entry.path)
+					if client != nil {
+						cmds = append(cmds, listDir(client, entry.path))
+					}
+				} else {
+					m.browser.init(filepath.ToSlash(filepath.Dir(entry.path)))
+					m.browser.viewPath, m.browser.viewLoading = entry.path, true
+					if client != nil {
+						cmds = append(cmds, tea.Sequence(listDir(client, m.browser.currentPath()), loadFileContent(client, entry.path, entry.info)))
 					}
 				}
+			} else if entry != nil {
+				m.statusMsg = entry.name + " doesn't exist yet: the next deploy creates it (from the release, " + entry.name + ".example or empty)"
 			}
 		}
 
@@ -1289,7 +1307,7 @@ func (m appModel) loadCurrentViewCmds() []tea.Cmd {
 		// init must have been called on the real model before this
 		return []tea.Cmd{listDir(client, m.browser.currentPath())}
 	case viewShared:
-		return []tea.Cmd{loadShared(client, env.RemotePath)}
+		return []tea.Cmd{loadShared(client, env.RemotePath, env.SharedPaths, env.PreservedPaths)}
 	}
 	return nil
 }

@@ -1,0 +1,59 @@
+# FastAPI behind uvicorn and nginx. Tested end to end on Ubuntu 24.04 and AlmaLinux 9.
+# requirements.txt must include fastapi and uvicorn; main.py defines `app = FastAPI()`.
+#
+# Secrets: shared/.env (created from .env.example on the first deploy); edit it in
+# versa → Shared → Enter → e, then `versa service production restart`.
+project: "myapi"                         # change
+
+environments:
+  production:
+    ssh:
+      host: "api.example.com"            # change
+      user: "deploy"
+      key_path: "~/.ssh/id_ed25519"
+
+    remote_path: "/var/www/myapi"
+
+    provision:
+      ssh: { user: root }
+      domain: "api.example.com"          # change
+      web_server: nginx
+      proxy_port: 8000
+      database: postgres
+      db_name: myapi
+      db_user: myapi_user
+      db_password: "${DB_PASS}"
+      ssl: true
+      backup: true
+      deploy_user: deploy
+
+    ignored_paths:
+      - ".git"
+      - ".github"
+      - "tests"
+      - "__pycache__"
+      - ".venv"
+
+    shared_paths:
+      - ".env"
+
+    builds:
+      python:
+        enabled: true
+        requirements_file: "requirements.txt"
+        web_server: true
+        web_framework: fastapi           # run_server.sh: uvicorn main:app
+        entry_point: "main.py"           # api/main.py → uvicorn api.main:app
+        web_host: "127.0.0.1"
+        web_port: 8000
+        web_workers: 2
+
+    services:
+      - name: "myapi"
+        env_file: ".env"
+
+    # post_deploy:
+    #   - ".venv/bin/alembic upgrade head"
+
+    health_check:
+      url: "https://api.example.com/docs"
