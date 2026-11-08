@@ -18,6 +18,7 @@ func TestExamples(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	os.MkdirAll(filepath.Join(home, ".ssh"), 0700)
 	os.WriteFile(filepath.Join(home, ".ssh/id_ed25519"), []byte("key"), 0600)
 	for _, f := range files {
