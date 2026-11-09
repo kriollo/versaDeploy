@@ -107,7 +107,7 @@ flowchart LR
     T[git tag v1.2.0<br>git push --tags] --> PR[GitHub Actions<br>versa deploy production]
     PR --> TG{¿El commit tiene<br>un tag v*?}
     TG -- Sí --> OK[✅ Deploy]
-    TG -- No --> NO[⛔ Rechazado<br><small>deploy_tags: "v*"</small>]
+    TG -- No --> NO[⛔ Rechazado<br><small>deploy_tags: v*</small>]
 ```
 
 Cada entorno tiene su propio servidor (o su propio `remote_path`) y su propio `.env`. Con `deploy_tags: "v*"`, producción solo acepta versiones con tag, aunque alguien lo intente desde su computador. El workflow de ejemplo está en [examples/github-actions.yml](https://github.com/kriollo/versaDeploy/blob/main/examples/github-actions.yml).

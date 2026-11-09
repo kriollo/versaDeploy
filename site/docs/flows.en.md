@@ -107,7 +107,7 @@ flowchart LR
     T[git tag v1.2.0<br>git push --tags] --> PR[GitHub Actions<br>versa deploy production]
     PR --> TG{Does the commit have<br>a v* tag?}
     TG -- Yes --> OK[✅ Deploy]
-    TG -- No --> NO[⛔ Refused<br><small>deploy_tags: "v*"</small>]
+    TG -- No --> NO[⛔ Refused<br><small>deploy_tags: v*</small>]
 ```
 
 Each environment has its own server (or its own `remote_path`) and its own `.env`. With `deploy_tags: "v*"`, production only accepts tagged versions, even from someone's laptop. The example workflow is [examples/github-actions.yml](https://github.com/kriollo/versaDeploy/blob/main/examples/github-actions.yml).

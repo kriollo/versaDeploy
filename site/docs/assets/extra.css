@@ -1,6 +1,79 @@
+/* The logo's palette: navy and blues (the server), green and orange/gold (the arrows) */
+:root {
+  --vd-navy: #254b62;
+  --vd-blue: #376d95;
+  --vd-sky: #53a1cf;
+  --vd-green: #62a34e;
+  --vd-orange: #e08a2e;
+  --vd-gold: #cdb248;
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: var(--vd-navy);
+  --md-primary-fg-color--light: var(--vd-blue);
+  --md-primary-fg-color--dark: #1a3647;
+  --md-accent-fg-color: var(--vd-orange);
+  --md-accent-fg-color--transparent: #e08a2e1a;
+  --md-typeset-a-color: var(--vd-blue);
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 205;
+  --md-primary-fg-color: #1d3d51;
+  --md-primary-fg-color--light: var(--vd-blue);
+  --md-primary-fg-color--dark: #142c3b;
+  --md-accent-fg-color: #f0a23b;
+  --md-accent-fg-color--transparent: #f0a23b1a;
+  --md-typeset-a-color: var(--vd-sky);
+}
+
+/* header: navy with a thin strip of the arrows' colors */
+.md-header { box-shadow: inset 0 -3px 0 0 transparent; }
+.md-header::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: linear-gradient(90deg, var(--vd-sky), var(--vd-green), var(--vd-gold), var(--vd-orange));
+}
+.md-tabs { background-color: var(--md-primary-fg-color); }
+
+/* home */
 .hero { text-align: center; margin: 1rem 0 2rem; }
 .hero img { width: 140px; border-radius: 28px; box-shadow: 0 10px 30px #0006; }
-.hero h1 { font-size: 2.6rem; margin: .6rem 0 .2rem; font-weight: 800; }
+.hero h1 {
+  display: inline-block; font-size: 2.8rem; margin: .6rem 0 .2rem; font-weight: 800;
+  background: linear-gradient(90deg, var(--vd-sky), var(--vd-green) 55%, var(--vd-orange));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
 .hero p { font-size: 1.15rem; opacity: .85; }
+.hero .headerlink { display: none; }
+
+/* diagrams in the server's blues (Material colors Mermaid with these) */
+[data-md-color-scheme="default"] {
+  --md-mermaid-node-bg-color: #53a1cf1f;
+  --md-mermaid-node-fg-color: var(--vd-blue);
+  --md-mermaid-edge-color: #4a5b66;
+  --md-mermaid-label-bg-color: #ffffff;
+}
+[data-md-color-scheme="slate"] {
+  --md-mermaid-node-bg-color: #53a1cf26;
+  --md-mermaid-node-fg-color: var(--vd-sky);
+  --md-mermaid-edge-color: #9fb3bf;
+  --md-mermaid-label-bg-color: var(--md-default-bg-color);
+}
+
+.md-typeset .md-button { border-radius: 10px; }
+.md-typeset .md-button--primary { background-color: var(--vd-orange); border-color: var(--vd-orange); color: #fff; }
+.md-typeset .md-button--primary:hover { background-color: var(--vd-green); border-color: var(--vd-green); }
+.md-typeset .md-button:not(.md-button--primary):hover { background-color: var(--vd-blue); border-color: var(--vd-blue); color: #fff; }
+
+/* feature cards take the arrows' colors in turn */
+.md-typeset .grid.cards > ul > li { border-radius: 12px; border-top: 4px solid var(--vd-sky); }
+.md-typeset .grid.cards > ul > li:nth-child(3n+2) { border-top-color: var(--vd-green); }
+.md-typeset .grid.cards > ul > li:nth-child(3n) { border-top-color: var(--vd-orange); }
+.md-typeset .grid.cards > ul > li:nth-child(3n+1) .twemoji { color: var(--vd-sky); }
+.md-typeset .grid.cards > ul > li:nth-child(3n+2) .twemoji { color: var(--vd-green); }
+.md-typeset .grid.cards > ul > li:nth-child(3n) .twemoji { color: var(--vd-orange); }
+
 video { width: 100%; border-radius: 12px; box-shadow: 0 10px 30px #0005; margin: .5rem 0 1rem; }
-.md-typeset .grid.cards > ul > li { border-radius: 12px; }
+
+/* tables: navy header like the logo's server */
+.md-typeset table:not([class]) th { background-color: var(--vd-navy); color: #fff; }
