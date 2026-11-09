@@ -2,9 +2,11 @@ package provision
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -517,5 +519,47 @@ func TestFrankenPHP(t *testing.T) {
 	env := &config.Environment{Provision: config.ProvisionConfig{FrankenPHP: true}}
 	if s := ProposedServices(env, v); len(s) != 1 || s[0].Exec != "/usr/local/bin/frankenphp run --config /etc/frankenphp/versatodo.Caddyfile" || s[0].Reload != "curl -fsS --unix-socket /var/www/versatodo/.frankenphp-opcache.sock http://localhost/" {
 		t.Errorf("proposed services: %+v", s)
+	}
+}
+
+// The versa-scan filter bans scanners, never an app's normal traffic: versaSTORE's API
+// errors and rate limits, payment webhooks, logins, its own 404s, and real paths that
+// happen to look like scanner targets but exist (200/30x).
+func TestFail2banScanFilter(t *testing.T) {
+	script, _ := assets.ReadFile("scripts/fail2ban.sh")
+	m := regexp.MustCompile(`(?m)^failregex = (.*)$`).FindSubmatch(script)
+	if m == nil {
+		t.Fatal("no failregex in fail2ban.sh")
+	}
+	re := regexp.MustCompile(strings.Replace(strings.TrimRight(string(m[1]), " "), "<HOST>", `(?P<host>\S+)`, 1) + " ")
+	line := func(req string, status int) string {
+		return fmt.Sprintf(`203.0.113.7 - - [09/Nov/2026:10:00:00 -0300] "%s HTTP/1.1" %d 162 "-" "Mozilla/5.0"`, req, status) + "\n"
+	}
+	legit := []string{
+		line("GET /api/customers/42", 401), line("POST /api/orders/", 403), line("POST /api/coupons/validate", 422),
+		line("GET /api/products/search?q=env", 429), line("GET /api/analytics", 429),
+		line("POST /orders/webpay/confirm/3", 400), line("POST /orders/mercadopago/webhook/3", 404), line("POST /orders/flow/confirm/3", 403),
+		line("POST /login/autentication", 401), line("POST /storefront/login", 401),
+		line("GET /productos/zapatilla-env", 404), line("GET /build/assets/app-x.js", 404), line("GET /environment/settings", 404),
+		line("GET /wp-login.php", 200), line("GET /phpmyadmin/", 302), line("GET /blog/wp-admin/", 301), // they exist here
+		line("GET /admin/", 404), line("GET /administracion/sql-reports", 404), line("GET /docs/mysql-guide", 404),
+	}
+	for _, l := range legit {
+		if re.MatchString(l) {
+			t.Errorf("legit request would count as a scan: %s", l)
+		}
+	}
+	scans := []string{
+		line("GET /.env", 404), line("GET /api/.env.production", 404), line("GET /.git/config", 403), line("GET /wp-login.php", 404),
+		line("POST /xmlrpc.php", 404), line("GET /phpMyAdmin/index.php", 404), line("GET /vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php", 404),
+		line("GET /cgi-bin/luci", 404), line("GET /backup.sql", 404), line("GET /db.sql.gz", 444), line("GET /.aws/credentials", 404),
+	}
+	for _, l := range scans {
+		if sm := re.FindStringSubmatch(l); sm == nil || sm[1] != "203.0.113.7" {
+			t.Errorf("scan not caught: %s", l)
+		}
+	}
+	if _, err := Build([]string{"fail2ban"}, Vars{Project: "x", SSHPort: 22, Fail2banIgnore: []string{"10.0.0.0/8", "nope"}}); err == nil {
+		t.Error("an invalid fail2ban_ignore entry must be refused")
 	}
 }

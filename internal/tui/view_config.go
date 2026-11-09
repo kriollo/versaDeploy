@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -17,8 +18,8 @@ type configModel struct {
 	err        error
 
 	isEditing  bool
+	editor     textarea.Model // the same editor as Files/Shared (runes, paste, ctrl+k…)
 	cursorLine int
-	cursorCol  int
 	hasChanges bool
 	viewStart  int
 	contentH   int // actual available content height, set from WindowSizeMsg
@@ -75,7 +76,6 @@ func (m *configModel) applyLoaded(msg msgConfigLoaded) {
 	m.err = nil
 	m.viewStart = 0
 	m.cursorLine = 0
-	m.cursorCol = 0
 }
 
 func (m *configModel) applySaved(msg msgConfigSaved) {
@@ -100,7 +100,7 @@ func (m *configModel) view(width int) string {
 
 	var status string
 	if m.isEditing {
-		status = StyleWarning.Render(" [EDIT: arrows/move  type/insert  Ctrl+S/save  Esc/cancel] ")
+		status = StyleWarning.Render(" [EDIT: Ctrl+S save · Esc cancel · Ctrl+K cut to line end · Ctrl+Home/End top/bottom] ")
 	} else if m.hasChanges {
 		status = StyleWarning.Render(" [modified — unsaved changes] ")
 	} else if m.err != nil {
@@ -110,6 +110,15 @@ func (m *configModel) view(width int) string {
 	}
 
 	header := StyleHeader.Width(width).Render("Config: "+m.configPath) + "\n"
+	if m.isEditing {
+		h := m.contentH - 3
+		if h < 5 {
+			h = 20
+		}
+		m.editor.SetWidth(width - 4)
+		m.editor.SetHeight(h)
+		return header + m.editor.View() + "\n" + StyleSurface.Width(width).Render(status)
+	}
 
 	contentW := width - 10
 	if contentW < 20 {
@@ -132,12 +141,6 @@ func (m *configModel) view(width int) string {
 	}
 	if m.cursorLine < 0 {
 		m.cursorLine = 0
-	}
-	if m.cursorCol < 0 {
-		m.cursorCol = 0
-	}
-	if m.cursorCol > len(lines[m.cursorLine]) {
-		m.cursorCol = len(lines[m.cursorLine])
 	}
 
 	maxViewStart := len(lines) - contentH
@@ -186,23 +189,7 @@ func (m *configModel) view(width int) string {
 		lineNum := fmt.Sprintf("%4d ", i+1)
 		lineContent := lines[i]
 
-		if m.isEditing && i == m.cursorLine {
-			col := m.cursorCol
-			if col > len(lineContent) {
-				col = len(lineContent)
-			}
-			if col < 0 {
-				col = 0
-			}
-			before := lineContent[:col]
-			char := lineContent[col:]
-			if len(char) > 0 {
-				lineContent = before + StyleSelected.Render(string(char[0])) + char[1:]
-			} else {
-				lineContent = before + StyleSelected.Render(" ")
-			}
-		} else if !m.isEditing && i == m.cursorLine {
-			// Highlight current line in read-only mode too
+		if i == m.cursorLine {
 			lineContent = StyleActive.Render(lineContent)
 		}
 
@@ -244,20 +231,24 @@ func (m *configModel) handleKey(msg tea.Msg) ([]tea.Cmd, bool) {
 		switch msg.String() {
 		case "e":
 			if m.loaded && !m.isEditing {
+				m.editor = textarea.New()
+				m.editor.ShowLineNumbers = true
+				m.editor.SetValue(m.content)
+				m.editor.Focus()
+				m.editor, _ = m.editor.Update(tea.KeyMsg{Type: tea.KeyCtrlHome}) // start at the first line
 				m.isEditing = true
 				return cmds, true
 			}
 		case "ctrl+s":
 			if m.isEditing {
 				m.isEditing = false
+				m.content = m.editor.Value()
 				cmds = append(cmds, m.save())
 				return cmds, true
 			}
 		case "esc":
 			if m.isEditing {
-				m.isEditing = false
-				m.cursorLine = 0
-				m.cursorCol = 0
+				m.isEditing = false // discard the edit
 				return cmds, true
 			}
 		case "r":
@@ -268,8 +259,10 @@ func (m *configModel) handleKey(msg tea.Msg) ([]tea.Cmd, bool) {
 		}
 
 		if m.isEditing {
-			m.handleEditKey(msg)
-			return cmds, true
+			var cmd tea.Cmd
+			m.editor, cmd = m.editor.Update(msg)
+			m.hasChanges = m.editor.Value() != m.content
+			return append(cmds, cmd), true
 		}
 
 		switch msg.String() {
@@ -306,103 +299,4 @@ func (m *configModel) handleKey(msg tea.Msg) ([]tea.Cmd, bool) {
 	}
 
 	return cmds, false
-}
-
-func (m *configModel) handleEditKey(msg tea.KeyMsg) {
-	lines := strings.Split(m.content, "\n")
-	if m.cursorLine >= len(lines) {
-		m.cursorLine = len(lines) - 1
-	}
-	if m.cursorLine < 0 {
-		m.cursorLine = 0
-	}
-
-	currentLine := lines[m.cursorLine]
-	if m.cursorCol > len(currentLine) {
-		m.cursorCol = len(currentLine)
-	}
-	if m.cursorCol < 0 {
-		m.cursorCol = 0
-	}
-
-	switch msg.String() {
-	case "up", "ctrl+p":
-		if m.cursorLine > 0 {
-			m.cursorLine--
-			if m.cursorCol > len(lines[m.cursorLine]) {
-				m.cursorCol = len(lines[m.cursorLine])
-			}
-		}
-	case "down", "ctrl+n":
-		if m.cursorLine < len(lines)-1 {
-			m.cursorLine++
-			if m.cursorCol > len(lines[m.cursorLine]) {
-				m.cursorCol = len(lines[m.cursorLine])
-			}
-		}
-	case "left", "ctrl+b":
-		if m.cursorCol > 0 {
-			m.cursorCol--
-		} else if m.cursorLine > 0 {
-			m.cursorLine--
-			m.cursorCol = len(lines[m.cursorLine])
-		}
-	case "right", "ctrl+f":
-		if m.cursorCol < len(currentLine) {
-			m.cursorCol++
-		} else if m.cursorLine < len(lines)-1 {
-			m.cursorLine++
-			m.cursorCol = 0
-		}
-	case "home", "ctrl+a":
-		m.cursorCol = 0
-	case "end", "ctrl+e":
-		m.cursorCol = len(currentLine)
-	case "backspace":
-		if m.cursorCol > 0 {
-			currentLine = currentLine[:m.cursorCol-1] + currentLine[m.cursorCol:]
-			lines[m.cursorLine] = currentLine
-			m.cursorCol--
-			m.hasChanges = true
-		} else if m.cursorLine > 0 {
-			prevLen := len(lines[m.cursorLine-1])
-			lines[m.cursorLine-1] = lines[m.cursorLine-1] + currentLine
-			lines = append(lines[:m.cursorLine], lines[m.cursorLine+1:]...)
-			m.cursorLine--
-			m.cursorCol = prevLen
-			m.hasChanges = true
-		}
-	case "del":
-		if m.cursorCol < len(currentLine) {
-			currentLine = currentLine[:m.cursorCol] + currentLine[m.cursorCol+1:]
-			lines[m.cursorLine] = currentLine
-			m.hasChanges = true
-		} else if m.cursorLine < len(lines)-1 {
-			lines[m.cursorLine] = currentLine + lines[m.cursorLine+1]
-			lines = append(lines[:m.cursorLine+1], lines[m.cursorLine+2:]...)
-			m.hasChanges = true
-		}
-	case "enter":
-		lines = append(lines[:m.cursorLine], append([]string{"", currentLine[m.cursorCol:]}, lines[m.cursorLine+1:]...)...)
-		lines[m.cursorLine] = currentLine[:m.cursorCol]
-		m.cursorLine++
-		m.cursorCol = 0
-		m.hasChanges = true
-	case "tab":
-		spaces := "  "
-		currentLine = currentLine[:m.cursorCol] + spaces + currentLine[m.cursorCol:]
-		lines[m.cursorLine] = currentLine
-		m.cursorCol += len(spaces)
-		m.hasChanges = true
-	default:
-		ch := msg.String()
-		if len(ch) == 1 && ch >= " " && ch <= "~" {
-			currentLine = currentLine[:m.cursorCol] + ch + currentLine[m.cursorCol:]
-			lines[m.cursorLine] = currentLine
-			m.cursorCol++
-			m.hasChanges = true
-		}
-	}
-
-	m.content = strings.Join(lines, "\n")
 }

@@ -109,6 +109,7 @@ Services that are already active are never preselected.
 | DB backups | Daily systemd timer dumping the database to `remote_path/backups` (§8) |
 | Cron jobs | `provision.cron` in `/etc/cron.d/versa-<project>`: each job runs as the deploy user in `current/app` (e.g. versaWYS `app:schedule:run`). Rewritten whole on every run |
 | UFW firewall | Allows SSH (the port in use), 80 and 443 |
+| Fail2ban | Bans only unambiguous abuse, never an app's normal traffic (§6.1): failed SSH logins (`sshd` jail on the systemd journal, the SSH port in use, 5 tries in 10 min) and vulnerability scanners (`versa-scan`: 3 requests in 10 min for `.env`, `.git/`, phpMyAdmin, `vendor/phpunit`, `wp-login.php`… **that answered 404/403/444** — a path an app really serves never counts). Bans start at 1 h (scanners 1 day) and grow up to a week for repeat offenders. Bans through UFW, firewalld or nftables, whichever the server uses. Never banned: localhost, the admin's IP while provisioning, `provision.fail2ban_ignore`. One config per server (`/etc/fail2ban/jail.d/versa.conf`); a fail2ban set up by hand is left untouched |
 
 ### Distro support
 
@@ -129,6 +130,7 @@ Services that are already active are never preselected.
 | Node.js | ✅ NodeSource | ✅ AppStream module | Ubuntu, Rocky, Alma |
 | Deploy user, sudoers, project dir, backups, cron jobs | ✅ | ✅ (+ SELinux labels) | all |
 | UFW | ✅ | ❌ refused: firewalld (nginx opens 80/443) | — |
+| Fail2ban | ✅ (UFW or nftables) | ✅ EPEL (firewalld or nftables) | all (a real scanner is banned) |
 | Upgrades `U` / `S` / `ctrl+r` | ✅ | ❌ `dnf upgrade` by hand | Ubuntu, Debian |
 
 Deploys (builds, releases, hooks, `services`, rollback) are the same on both: they only need SSH and
@@ -167,6 +169,7 @@ The scripts are written to be re-run on production servers:
 - **Existing database users keep their password** — other apps may use them. The database and privileges are ensured. Changing the password is an explicit action: **`X`** (then update every `.env` that uses it).
 - **One vhost per domain**: if another vhost already serves the domain, the install stops and names it. Vhosts are backed up before being replaced and restored when the new one fails `nginx -t` / `apachectl configtest`. The stock default site is only removed on a web server installed in the same run.
 - **Firewall**: an active UFW keeps its policy and rules; only SSH, 80 and 443 are allowed.
+- **Fail2ban never bans normal traffic**: no jail counts 429 (nginx's rate limit), the 401/403/422 of APIs and dashboards, logins, or payment webhooks (Transbank, Mercado Pago, Flow…), so a busy dashboard or customers behind one NAT IP are never locked out. Only failed SSH logins and requests for scanner paths that don't exist on the server count. An existing fail2ban configured by hand keeps its jails.
 - **`current/` is never created by hand**: it stays a symlink created by the first deploy.
 - **Secrets**: the DB password travels in a file inside a private (0700) temp dir that is removed after the run — never on a command line. `w` never writes `db_password` to `deploy.yml`: keep it as `${DB_PASS}`.
 
@@ -206,7 +209,8 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 | `database` | detected | `postgres`, `mariadb` or `none` |
 | `db_name` / `db_user` | from `project` | Database and user names (letters, digits, `_`) |
 | `db_password` | - | Password for a **new** user (use `${VAR}`; never written by the TUI) |
-| `redis` / `dragonfly` / `ssl` / `ufw` / `backup` | `false` | Preselect these services (`redis` and `dragonfly` exclude each other) |
+| `redis` / `dragonfly` / `ssl` / `ufw` / `fail2ban` / `backup` | `false` | Preselect these services (`redis` and `dragonfly` exclude each other) |
+| `fail2ban_ignore` | `[]` | IPs or CIDRs fail2ban never bans (office, monitoring, CI), besides localhost and the admin's IP |
 | `backup_keep` | `7` | Dumps kept |
 | `ssl_self_signed` | `false` | SSL step makes a self-signed certificate instead of asking Let's Encrypt |
 | `packages` | `[]` | Extra system packages the app needs (OCR, image tools…), installed by the base step, never upgraded |

@@ -39,6 +39,7 @@ var Catalog = []Service{
 	{ID: "backup", Label: "DB backups (daily timer)"},
 	{ID: "cron", Label: "Cron jobs (provision.cron)"},
 	{ID: "ufw", Label: "UFW firewall", Packages: []string{"ufw"}},
+	{ID: "fail2ban", Label: "Fail2ban (SSH + scanners)", Packages: []string{"fail2ban", "fail2ban-*"}, Units: []string{"fail2ban"}},
 }
 
 // Lookup returns the catalog entry for id.

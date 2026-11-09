@@ -97,30 +97,31 @@ var majorRe = regexp.MustCompile(`\d+`)
 func Defaults(env *config.Environment, project string, backends []Backend, r *Report) Vars {
 	p := env.Provision
 	v := Vars{
-		Project:       project,
-		Domain:        p.Domain,
-		WebServer:     p.WebServer,
-		PHPVersion:    p.PHPVersion,
-		RemotePath:    env.RemotePath,
-		DocRoot:       p.DocRoot,
-		DeployUser:    p.DeployUser,
-		Database:      p.Database,
-		DBName:        p.DBName,
-		DBUser:        p.DBUser,
-		DBPassword:    p.DBPassword,
-		AdminEmail:    p.AdminEmail,
-		SSHPort:       env.ProvisionSSH().Port,
-		ProxyPort:     p.ProxyPort,
-		NodeMajor:     p.NodeMajor,
-		PythonVersion: p.PythonVersion,
-		Redis:         p.Redis,
-		Dragonfly:     p.Dragonfly,
-		FrankenPHP:    p.FrankenPHP,
-		Aliases:       p.Aliases,
-		BackupKeep:    p.BackupKeep,
-		SSLSelfSigned: p.SSLSelfSigned,
-		Packages:      p.Packages,
-		Cron:          p.Cron,
+		Project:        project,
+		Domain:         p.Domain,
+		WebServer:      p.WebServer,
+		PHPVersion:     p.PHPVersion,
+		RemotePath:     env.RemotePath,
+		DocRoot:        p.DocRoot,
+		DeployUser:     p.DeployUser,
+		Database:       p.Database,
+		DBName:         p.DBName,
+		DBUser:         p.DBUser,
+		DBPassword:     p.DBPassword,
+		AdminEmail:     p.AdminEmail,
+		SSHPort:        env.ProvisionSSH().Port,
+		ProxyPort:      p.ProxyPort,
+		NodeMajor:      p.NodeMajor,
+		PythonVersion:  p.PythonVersion,
+		Redis:          p.Redis,
+		Dragonfly:      p.Dragonfly,
+		FrankenPHP:     p.FrankenPHP,
+		Aliases:        p.Aliases,
+		BackupKeep:     p.BackupKeep,
+		SSLSelfSigned:  p.SSLSelfSigned,
+		Packages:       p.Packages,
+		Cron:           p.Cron,
+		Fail2banIgnore: p.Fail2banIgnore,
 	}
 	if v.DeployUser == "" {
 		v.DeployUser = env.SSH.User
@@ -248,6 +249,9 @@ func Preselect(backends []Backend, v Vars, env *config.Environment, r *Report) [
 	}
 	if env.Provision.UFW {
 		want = append(want, "ufw")
+	}
+	if env.Provision.Fail2ban {
+		want = append(want, "fail2ban")
 	}
 	if env.Provision.Backup {
 		want = append(want, "backup")

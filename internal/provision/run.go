@@ -5,6 +5,8 @@ import (
 	"embed"
 	"fmt"
 	"io"
+	"maps"
+	"net"
 	"path"
 	"regexp"
 	"slices"
@@ -79,6 +81,7 @@ type Vars struct {
 	ResetDBPassword bool
 	BackupKeep      int      // daily DB backups kept (default 7)
 	SSLSelfSigned   bool     // ssl step: self-signed certificate instead of Let's Encrypt
+	Fail2banIgnore  []string // IPs/CIDRs fail2ban never bans (besides localhost and the admin)
 	Packages        []string // extra system packages (base step)
 	Cron            []string // "<schedule> <command>" lines (cron step)
 }
@@ -264,6 +267,13 @@ func (v Vars) Validate(steps []string) error {
 			return fmt.Errorf("invalid package name %q in provision.packages", p)
 		}
 	}
+	for _, ip := range v.Fail2banIgnore {
+		if net.ParseIP(ip) == nil {
+			if _, _, err := net.ParseCIDR(ip); err != nil {
+				return fmt.Errorf("provision.fail2ban_ignore: %q is not an IP or CIDR", ip)
+			}
+		}
+	}
 	for _, l := range v.Cron {
 		if _, _, err := cronLine(l); err != nil {
 			return fmt.Errorf("provision.cron %q: %w", l, err)
@@ -422,6 +432,14 @@ func Run(client *versassh.Client, user string, b Bundle, w io.Writer) error {
 	if _, err := client.ExecuteCommand("umask 077 && mkdir " + dir); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
+	// the admin's address as the server sees it (fail2ban never bans it); read before
+	// sudo, which drops SSH_CLIENT
+	if out, err := client.ExecuteCommand(`echo "${SSH_CLIENT%% *}"`); err == nil && b["env"] != nil {
+		if ip := net.ParseIP(strings.TrimSpace(out)); ip != nil {
+			b = maps.Clone(b)
+			b["env"] = append(slices.Clone(b["env"]), []byte("ADMIN_IP="+ip.String()+"\n")...)
+		}
+	}
 	for name, data := range b {
 		// 0600: env holds the DB password (the dir is 0700 too)
 		if err := client.WriteRemoteFileMode(dir+"/"+name, data, 0600); err != nil {
@@ -463,6 +481,7 @@ func (v Vars) env() string {
 		{"PYTHON_VERSION", v.PythonVersion},
 		{"PACKAGES", strings.Join(v.Packages, " ")}, {"SSL_SELF_SIGNED", strconv.FormatBool(v.SSLSelfSigned)}, {"CERT_DIR", v.CertDir()},
 		{"CRON_PATH", CronFile(v.Project)}, {"CRON_FILE", v.cronTab()},
+		{"FAIL2BAN_IGNORE", strings.Join(v.Fail2banIgnore, " ")},
 	}
 	var s strings.Builder
 	for _, p := range kv {
@@ -527,6 +546,8 @@ func LogsCommand(id string, v Vars, phpVersion string) string {
 		files = []string{"/var/log/letsencrypt/letsencrypt.log"}
 	case "ufw":
 		files = []string{"/var/log/ufw.log"}
+	case "fail2ban":
+		files = []string{"/var/log/fail2ban.log"}
 	}
 	q := versassh.ShellQuote
 	var s strings.Builder

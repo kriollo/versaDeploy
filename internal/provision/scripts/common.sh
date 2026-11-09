@@ -133,6 +133,10 @@ install_vhost() {
             die "apache2ctl configtest failed — previous config restored"
         fi
         systemctl reload apache2 2>/dev/null || systemctl restart apache2
+        # each Apache site logs apart: fail2ban picks the new log up on reload
+        if [ -f /etc/fail2ban/jail.d/versa.conf ] && grep -q '^\[versa-scan\]' /etc/fail2ban/jail.d/versa.conf && service_active fail2ban; then
+            sleep 1; fail2ban-client reload versa-scan >/dev/null 2>&1 || true
+        fi
     fi
     ok "Vhost installed: $dst ($src)"
 }

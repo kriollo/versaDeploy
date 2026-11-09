@@ -107,6 +107,7 @@ if [ -n "$app" ] && [ -f "/etc/systemd/system/$app.service" ]; then svc app_serv
 if [ -n "$user" ] && { ls /etc/sudoers.d/"$user"* >/dev/null 2>&1 || { [ "$(id -un)" = "$user" ] && sudo -n -l 2>/dev/null | grep -q systemctl; }; }; then echo "svc_sudoers=installed"; fi
 [ -d "$p" ] && echo "svc_dirs=installed $p"
 has ufw && svc ufw ufw "" 1
+has fail2ban-client && svc fail2ban fail2ban "$(fail2ban-client --version 2>/dev/null | head -1 | sed 's/^[^0-9]*//')" 1
 if [ -n "$proj" ] && [ -f "/etc/cron.d/versa-$(echo "$proj" | tr . _)" ]; then echo "svc_cron=installed $(grep -c "^[@0-9*]" "/etc/cron.d/versa-$(echo "$proj" | tr . _)") job(s)"; fi
 if [ -n "$proj" ] && [ -f "/etc/systemd/system/versa-backup-$proj.timer" ]; then svc backup "versa-backup-$proj.timer" "" 1; fi
 if [ -d "$p/backups" ]; then b=$(ls -1t "$p/backups" 2>/dev/null | head -1); [ -n "$b" ] && echo "backup_last=$b $(du -h "$p/backups/$b" 2>/dev/null | cut -f1)"; fi

@@ -74,20 +74,20 @@ type app struct {
 
 var (
 	ubuntu = &server{name: "ubuntu", image: "ubuntu:24.04", sshPort: 2222, httpPort: 8080, web: "nginx", db: "postgres",
-		stack: []string{"base", "php", "nginx", "postgres", "redis", "python", "node", "deploy_user"},
+		stack: []string{"base", "php", "nginx", "postgres", "redis", "python", "node", "deploy_user", "fail2ban"},
 		php:   "8.4", phpIni: "/etc/php/8.4/fpm/php.ini", cache: "redis"}
 	debian = &server{name: "debian", image: "debian:12", sshPort: 2223, httpPort: 8081, web: "apache", db: "mariadb",
-		stack: []string{"base", "php", "apache", "mariadb", "dragonfly", "deploy_user"},
+		stack: []string{"base", "php", "apache", "mariadb", "dragonfly", "deploy_user", "fail2ban"},
 		php:   "8.4", phpIni: "/etc/php/8.4/fpm/php.ini", cache: "dragonfly"}
 	rocky = &server{name: "rocky", image: "rockylinux:9", sshPort: 2226, httpPort: 8088, web: "nginx", db: "postgres",
-		stack:      []string{"base", "php", "nginx", "postgres", "redis", "python", "node", "deploy_user"},
+		stack:      []string{"base", "php", "nginx", "postgres", "redis", "python", "node", "deploy_user", "fail2ban"},
 		dockerfile: "Dockerfile.rhel", php: "8.3", phpIni: "/etc/php.ini", cache: "redis"}
 	alma = &server{name: "alma", image: "almalinux:9", sshPort: 2228, httpPort: 8091, web: "nginx", db: "mariadb",
-		stack:      []string{"base", "php", "nginx", "mariadb", "dragonfly", "python", "node", "deploy_user"},
+		stack:      []string{"base", "php", "nginx", "mariadb", "dragonfly", "python", "node", "deploy_user", "fail2ban"},
 		dockerfile: "Dockerfile.rhel", php: "8.4", phpIni: "/etc/php.ini", cache: "dragonfly"}
 	// franken: PHP apps on FrankenPHP (no PHP-FPM); php is FrankenPHP's CLI
 	franken = &server{name: "franken", image: "ubuntu:24.04", sshPort: 2230, httpPort: 8097, web: "nginx", db: "postgres",
-		stack: []string{"base", "nginx", "postgres", "redis", "deploy_user"}, cache: "redis", franken: true}
+		stack: []string{"base", "nginx", "postgres", "redis", "deploy_user", "fail2ban"}, cache: "redis", franken: true}
 )
 
 // frankenApps are versaWYS (versaTodo) and Laravel served by FrankenPHP behind nginx:
@@ -814,6 +814,8 @@ func TestProvisionAndDeploy(t *testing.T) {
 			t.Logf("%s: %s ok, listening on %s", s.name, s.cache, strings.TrimPrefix(out, "ok"))
 		}
 
+		testFail2ban(t, s, c)
+
 		var logs bytes.Buffer
 		if err := provision.Exec(c, "root", provision.LogsCommand(s.web, provision.Vars{Domain: hosted[0].domain()}, s.php), &logs); err != nil || !strings.Contains(logs.String(), "journalctl -u") {
 			t.Errorf("%s logs: %v\n%s", s.name, err, logs.String())
@@ -844,6 +846,48 @@ func TestProvisionAndDeploy(t *testing.T) {
 		dc.Close()
 		break
 	}
+}
+
+// testFail2ban: the jails run; the whole e2e's traffic (pages, assets, 429 bursts,
+// blocked files, deploys) never counted as a scan; a scanner from another container is
+// banned, can't connect any more, and is unbanned.
+func testFail2ban(t *testing.T, s *server, c *versassh.Client) {
+	t.Helper()
+	sh := func(cmd string) string { out, _ := c.ExecuteCommand(cmd + " 2>&1"); return strings.TrimSpace(out) }
+	if st := sh("fail2ban-client status"); !strings.Contains(st, "sshd") || !strings.Contains(st, "versa-scan") {
+		t.Errorf("%s: fail2ban jails: %q", s.name, st)
+		return
+	}
+	for _, l := range strings.Split(sh(`for f in /var/log/nginx/access.log /var/log/apache2/*access.log; do [ -f "$f" ] && echo "$f $(fail2ban-regex "$f" /etc/fail2ban/filter.d/versa-scan.conf | grep '^Lines:')"; done`), "\n") {
+		if !regexp.MustCompile(`lines, \d+ ignored, 0 matched`).MatchString(l) {
+			t.Errorf("%s: the e2e's own traffic counted as a scan: %s", s.name, l)
+		} else {
+			t.Logf("%s: fail2ban-regex %s", s.name, l)
+		}
+	}
+	ip := strings.Fields(run(t, "docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", "versa-e2e-"+s.name))[0]
+	// the scanner requests four dotfiles, then keeps trying to connect until the ban
+	// blocks it (from the same container: same IP)
+	scan := `for p in /.env /.git/config /.aws/credentials /.env.production; do
+	exec 3<>/dev/tcp/` + ip + `/80 || exit 1
+	printf 'GET %s HTTP/1.0\r\nHost: scanner\r\n\r\n' "$p" >&3; cat <&3 >/dev/null; exec 3>&-
+done
+echo "ip $(hostname -I)"
+for i in $(seq 1 30); do
+	timeout 2 bash -c 'exec 3<>/dev/tcp/` + ip + `/80' 2>/dev/null || { echo "blocked after ${i}s"; exit 0; }
+	sleep 1
+done
+echo "never blocked"`
+	out := run(t, "docker", "run", "--rm", "--entrypoint", "bash", "versa-e2e-"+s.name, "-c", scan)
+	scanner := ""
+	if m := regexp.MustCompile(`ip (\S+)`).FindStringSubmatch(out); m != nil {
+		scanner = m[1]
+	}
+	if !strings.Contains(out, "blocked after") || scanner == "" || !strings.Contains(sh("fail2ban-client status versa-scan"), scanner) {
+		t.Errorf("%s: scanner not banned: %s\n%s\n%s", s.name, out, sh("fail2ban-client status versa-scan"), sh("tail -5 /var/log/fail2ban.log"))
+	}
+	sh("fail2ban-client unban --all")
+	t.Logf("%s: fail2ban banned the scanner %s (%s), unbanned", s.name, scanner, regexp.MustCompile(`blocked after \d+s`).FindString(out))
 }
 
 // testHistory: a failed deploy runs on_failure and is recorded with its log; deploy_tags

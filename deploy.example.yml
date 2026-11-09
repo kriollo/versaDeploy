@@ -152,6 +152,8 @@ environments:
     #   ssl: true                    # certbot certonly + SSL vhost (needs DNS pointing here)
     #   # ssl_self_signed: true      # staging/LAN without public DNS: self-signed certificate
     #   ufw: true
+    #   fail2ban: true               # bans SSH brute force and scanners, never app traffic (429, API errors, webhooks)
+    #   # fail2ban_ignore: ["203.0.113.10", "10.0.0.0/8"]
     #   backup: true                 # daily dump to remote_path/backups; B = backup now
     #   backup_keep: 7
     #   # packages: [tesseract-ocr, poppler-utils]   # extra OS packages the app needs (base step)

@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.16.0] - 2026-11-09
+
+### Added
+
+- **Fail2ban** in the Services view (`provision.fail2ban`), on Debian/Ubuntu and RHEL/Rocky/Alma: bans failed SSH logins and vulnerability scanners (requests for `.env`, `.git/`, phpMyAdmin, `vendor/phpunit`… that answered 404/403/444), with bans that grow for repeat offenders, through UFW, firewalld or nftables. It never counts an app's normal traffic: nginx's 429, API and dashboard 401/403/422, logins, payment webhooks. Localhost, the admin's IP and `provision.fail2ban_ignore` are never banned; a fail2ban configured by hand is left untouched.
+
+### Fixed
+
+- **Config view editor**: it dropped accented letters and `ñ`, ignored pasted text, and its cursor counted bytes, so editing a line with `→` or `ñ` (like the comments of the examples) scrambled it. It now uses the same editor as the Files and Shared views (`Ctrl+K`, `Ctrl+Home`/`Ctrl+End`, paste, any character).
+
+### Tested
+
+Every e2e server installs fail2ban: the whole e2e's traffic (pages, assets, 429 bursts, deploys) never matches the scanner filter, and a real scanner from another container is banned and blocked. A unit test runs the filter against versaSTORE-like traffic (API errors, rate limits, Transbank/Mercado Pago/Flow webhooks, logins) and scanner requests.
+
 ## [1.15.0] - 2026-11-09
 
 ### Added
