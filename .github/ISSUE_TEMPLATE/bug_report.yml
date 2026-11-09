@@ -1,0 +1,48 @@
+name: Bug report / Reporte de error
+description: Something doesn't work as documented / Algo no funciona como dice la documentación
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Spanish or English are fine. **Security issues: don't post them here**, see [SECURITY.md](https://github.com/kriollo/versaDeploy/blob/main/SECURITY.md).
+        ¡Gracias por reportar! Puedes escribir en español o inglés.
+  - type: input
+    id: version
+    attributes:
+      label: versa version
+      description: Output of `versa version`
+      placeholder: versaDeploy v1.16.0
+    validations:
+      required: true
+  - type: input
+    id: local
+    attributes:
+      label: Your OS / Tu sistema
+      placeholder: Ubuntu 24.04, macOS 15, Windows 11…
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: Server distro / Distro del servidor
+      description: "`cat /etc/os-release` on the server"
+      placeholder: Ubuntu 24.04, Debian 12, Rocky 9…
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / Qué pasó
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output with --debug / Salida con --debug
+      description: e.g. `versa deploy production --debug`. Remove hosts, passwords and tokens.
+      render: text
+  - type: textarea
+    id: config
+    attributes:
+      label: deploy.yml (relevant part, without secrets / sin secretos)
+      render: yaml

@@ -78,6 +78,11 @@ versa deploy production                     # every deploy after that
 | [Services view](doc/SERVICES.md) | You want versa to set up and maintain the server. |
 | [Troubleshooting](doc/TROUBLESHOOTING.md) | Something failed. |
 | [Changelog](CHANGELOG.md) | You want to know what changed between versions. |
+| [Contributing](CONTRIBUTING.md) | You want to report a bug, propose a feature or send a pull request. |
+
+## Contributing
+
+Bug reports, examples for more frameworks and pull requests are welcome, in Spanish or English: see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues go privately through [SECURITY.md](SECURITY.md). This project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

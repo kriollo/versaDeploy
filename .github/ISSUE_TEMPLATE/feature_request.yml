@@ -1,0 +1,21 @@
+name: Feature request / Propuesta
+description: A new feature, framework, service or distro / Una funcionalidad, framework, servicio o distro nueva
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem / El problema
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal / Propuesta
+      description: How you imagine it working (a deploy.yml option, a command, a TUI key…).
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / Alternativas
+      description: Workarounds you use today (hooks, scripts…).

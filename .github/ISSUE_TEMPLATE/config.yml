@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation / Documentación
+    url: https://github.com/kriollo/versaDeploy/tree/main/doc
+    about: Configuration reference, CLI, Services view and troubleshooting.
+  - name: Security vulnerability / Vulnerabilidad
+    url: https://github.com/kriollo/versaDeploy/security/advisories/new
+    about: Report it privately, never in a public issue.
