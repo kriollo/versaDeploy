@@ -157,7 +157,9 @@ func TestBuildBundle(t *testing.T) {
 	v.ServicesSudoers = "echo 'versadeploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart todo-api'"
 	all := make([]string, 0, len(Catalog))
 	for _, s := range Catalog {
-		all = append(all, s.ID)
+		if s.ID != "frankenphp" { // the alternative to php (TestFrankenPHP)
+			all = append(all, s.ID)
+		}
 	}
 	b, err := Build(all, v)
 	if err != nil {
@@ -478,5 +480,42 @@ func TestNginxRateLimitOnlyDynamic(t *testing.T) {
 		if proxy != 0 && (strings.Count(out, "proxy_pass http://127.0.0.1:8000;") != 2 || !strings.Contains(out, `location ~* \.(js|mjs|css`)) {
 			t.Errorf("proxy: static files must be proxied without limit_req:\n%s", out)
 		}
+	}
+}
+
+// FrankenPHP: nginx keeps the FPM vhost's rules and proxies only index.php, with the
+// original URI; the Caddyfile listens on localhost and runs index.php for everything.
+func TestFrankenPHP(t *testing.T) {
+	v := testVars()
+	v.FrankenPHP, v.ProxyPort, v.AppService, v.DocRoot = true, 8000, "versatodo", "current/app/public"
+	b, err := Build([]string{"frankenphp", "nginx"}, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vh := string(b["vhost-ssl.conf"])
+	for _, want := range []string{"location = /index.php", "proxy_pass http://127.0.0.1:8000$request_uri;", "location ~ ^/(vendor|node_modules)/", "try_files $uri $uri/ /index.php?$query_string"} {
+		if !strings.Contains(vh, want) {
+			t.Errorf("vhost misses %q", want)
+		}
+	}
+	if strings.Contains(vh, "fpm.sock") || strings.Count(vh, "proxy_pass") != 1 {
+		t.Errorf("vhost: want one proxy_pass and no FPM:\n%s", vh)
+	}
+	cf := string(b["Caddyfile"])
+	for _, want := range []string{"http://:8000 {", "bind 127.0.0.1", "root * /var/www/versatodo/current/app/public", "rewrite * /index.php", "admin off", "opcache.revalidate_path 1", "bind unix//var/www/versatodo/.frankenphp-opcache.sock|0600"} {
+		if !strings.Contains(cf, want) {
+			t.Errorf("Caddyfile misses %q:\n%s", want, cf)
+		}
+	}
+	if _, err := Build([]string{"frankenphp"}, Vars{Project: "x", WebServer: "apache", SSHPort: 22, FrankenPHP: true, ProxyPort: 8000, AppService: "x"}); err == nil {
+		t.Error("FrankenPHP behind Apache must be refused")
+	}
+	r := &Report{Services: map[string]State{"php": {Status: Active}}}
+	if err := Conflicts(r, []string{"frankenphp"}, v); err == nil {
+		t.Error("FrankenPHP next to PHP-FPM must be refused")
+	}
+	env := &config.Environment{Provision: config.ProvisionConfig{FrankenPHP: true}}
+	if s := ProposedServices(env, v); len(s) != 1 || s[0].Exec != "/usr/local/bin/frankenphp run --config /etc/frankenphp/versatodo.Caddyfile" || s[0].Reload != "curl -fsS --unix-socket /var/www/versatodo/.frankenphp-opcache.sock http://localhost/" {
+		t.Errorf("proposed services: %+v", s)
 	}
 }

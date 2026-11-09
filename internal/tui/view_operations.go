@@ -425,6 +425,14 @@ func doStatus(client *versassh.Client, remotePath string, ch chan string) tea.Cm
 			} else {
 				ch <- fmt.Sprintf("[INFO] Total releases: %d\n", len(releases))
 			}
+			if h, err := deployer.ReadHistory(client, remotePath); err != nil {
+				ch <- fmt.Sprintf("[WARN] Could not read the deploy history: %v\n", err)
+			} else if len(h) > 0 {
+				ch <- "\n[INFO] Last deploys (logs: Files → history/<ID>.log):\n"
+				for _, l := range deployer.FormatHistory(h, 10) {
+					ch <- "  " + l + "\n"
+				}
+			}
 			close(ch)
 		}()
 		return waitForLogLine(ch)()
@@ -647,7 +655,7 @@ func (o operationsModel) viewIdle(width int, currentRelease string) string {
 		"",
 		fmt.Sprintf("  %s SSH connection test", StyleCmd.Render("[s]")),
 		fmt.Sprintf("  %s Check for updates", StyleCmd.Render("[u]")),
-		fmt.Sprintf("  %s Show deployment status", StyleCmd.Render("[t]")),
+		fmt.Sprintf("  %s Show deployment status and history", StyleCmd.Render("[t]")),
 		fmt.Sprintf("  %s Re-execute post_deploy hooks", StyleCmd.Render("[h]")),
 		fmt.Sprintf("  %s Re-execute services_reload", StyleCmd.Render("[l]")),
 	)

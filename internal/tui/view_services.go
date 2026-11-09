@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -226,6 +227,15 @@ func (s *servicesModel) toggle() {
 		s.vars.WebServer = svc.ID
 	case "db":
 		s.vars.Database = svc.ID
+	case "php":
+		s.vars.FrankenPHP = svc.ID == "frankenphp"
+		s.vars.ProxyPort = 0 // FPM; FrankenPHP is a service on a local port
+		if s.vars.FrankenPHP {
+			s.vars.ProxyPort = 8000
+			if s.vars.AppService == "" {
+				s.vars.AppService = regexp.MustCompile(`[^A-Za-z0-9_]`).ReplaceAllString(s.vars.Project, "_")
+			}
+		}
 	}
 }
 

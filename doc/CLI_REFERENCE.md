@@ -236,6 +236,26 @@ versa status production
 
 ---
 
+## `versa history`
+
+Lists the deploys recorded on the server, newest first — failed ones too — or prints one deploy's full log.
+
+```bash
+versa history production                     # last 20 (--limit N)
+versa history production 20261108-150140     # the log of that deploy
+```
+
+```
+ID               STATUS   TIME    COMMIT    TAG           BY
+20261108-153012  success     48s  a41f09c3  v1.2.0        ana@laptop
+20261108-150140  FAILED      31s  c93a11f0                ana@laptop
+                 └ post-deploy hook failed (rolled back to 20261107-101203): …
+```
+
+The server keeps the last 100 deploys and the logs of the last 20 in `<remote_path>/history/` ([details](DEPLOY.md#deploy-history)). Deploys made before versa 1.15.0 aren't listed.
+
+---
+
 ## `versa exec`
 
 Runs a command on the server over SSH and prints its output.
@@ -313,6 +333,7 @@ versa service production setup | ssh root@SERVER sh   # once, as root: install t
 | `start`     | Start, wait `start_wait` seconds and check it's still running.                                     |
 | `stop`      | Stop.                                                                                              |
 | `restart`   | Restart and check it stays up.                                                                     |
+| `reload`    | Run the service's `reload` command if it is up (no dropped requests), else restart; then check it stays up. What deploys and rollbacks do. |
 | `logs`      | Follow the log: `journalctl -u <name>` on systemd, `/var/log/<name>.log` otherwise.                 |
 | `install`   | Rewrite the service files and enable them at boot, without deploying. As a non-root SSH user it only checks that root installed the current version (else: *needs root setup*). |
 | `uninstall` | Stop, disable at boot and remove from the init system.                                             |
@@ -372,7 +393,7 @@ Running `versa` with no command opens a full-screen interface (`versa --no-gui` 
 | **Releases**      | Releases on the server, active one marked        | `Enter` browse its files · `R` roll back to it (asks `y`/`n`; runs `services_reload` and restarts `services`)                                                                |
 | **Files**         | Remote file browser (follows symlinks)           | `Enter` open dir / view file · `e` edit the viewed text file (`Ctrl+S` save, keeps its mode; `Esc` cancel) · `Backspace` up · `d` download · `u` upload (`Space` select files, `Enter` open dir) · `Delete` delete · `Esc` close |
 | **Shared**        | Contents of `<remote_path>/shared`, the `preserved_paths` (e.g. `config.json`) and `shared_paths` not created yet | `Enter` open dir / file (then `e` edits `.env`, `config.json`…; [applying it](DEPLOY.md#environment-variables-and-secrets-env-configjson)) |
-| **Operations**    | Deploy options and live log                      | `↑`/`↓` + `Enter` toggle Dry run, Force, Initial deploy, Skip dirty check, Debug, log file · `D` deploy · `R` rollback · `s` SSH test · `t` status · `h` re-run hooks · `l` services reload · `u` self-update · `Esc` close log |
+| **Operations**    | Deploy options and live log                      | `↑`/`↓` + `Enter` toggle Dry run, Force, Initial deploy, Skip dirty check, Debug, log file · `D` deploy · `R` rollback · `s` SSH test · `t` status and the last 10 deploys · `h` re-run hooks · `l` services reload · `u` self-update · `Esc` close log |
 | **Terminal**      | Remote shell on the server                       | `Enter` start typing (until then ←/→ pass through) · `Tab` completion · `Esc` stop typing, again to leave                    |
 | **Services**      | Server stack: installed services, versions, updates, security, sites, SSL ([SERVICES.md](SERVICES.md)) | `Space` select · `Enter` edit / next version · `I` install · `P` prepare for deploy · `U` upgrade · `S` security updates · `Ctrl+R` apt update · `L` logs · `B` backup now · `X` reset DB password · `w` save `provision` · `a` add `services_reload` |
 | **Config**        | The loaded config file                           | `e` edit · `Ctrl+S` save · `Esc` cancel                                                                                      |
@@ -388,7 +409,7 @@ Environments with `local: true` have no server, so only these commands apply to 
 | :----------------------------- | :--------------------------------------------- |
 | `deploy`                       | ✅ Builds and writes the release to `local_path` |
 | `config validate`              | ✅                                             |
-| `diff`, `rollback`, `status`, `exec`, `hooks`, `services-reload`, `service`, `logs`, `ssh-test`/`info` | ❌ SSH environments only |
+| `diff`, `rollback`, `status`, `history`, `exec`, `hooks`, `services-reload`, `service`, `logs`, `ssh-test`/`info` | ❌ SSH environments only |
 
 ---
 

@@ -1,3 +1,5 @@
+# One PHP per server: FrankenPHP (frankenphp.sh) is the other one
+[ -x /usr/local/bin/frankenphp ] && die "FrankenPHP is already installed — PHP-FPM not installed (one PHP per server). Keep FrankenPHP (frankenphp: true)"
 # RHEL family: PHP from the AppStream module stream php:X.Y, one php-fpm unit
 if [ "$PKG_MGR" != apt ]; then
     if package_installed php-fpm; then

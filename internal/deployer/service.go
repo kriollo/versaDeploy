@@ -48,7 +48,7 @@ const pathFnSh = `P() { for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/b
 `
 
 // serviceActions are the actions `versa service` accepts.
-var serviceActions = []string{"status", "start", "stop", "restart", "logs", "install", "uninstall", "sudoers", "setup"}
+var serviceActions = []string{"status", "start", "stop", "restart", "reload", "logs", "install", "uninstall", "sudoers", "setup"}
 
 func q(s string) string { return ssh.ShellQuote(s) }
 
@@ -326,13 +326,32 @@ sysv)
 	;;
 esac
 `)
-		case "start", "stop", "restart":
+		case "start", "stop", "restart", "reload":
+			verb := action
+			if action == "reload" {
+				verb = "restart"
+				if svc != nil && svc.Reload != "" {
+					// a running service reloads gracefully (no dropped requests); a stopped
+					// one, or a failed reload, falls back to the restart below
+					fmt.Fprintf(&b, `up=
+case $I in
+systemd) { systemctl is-active --quiet "$N" 2>/dev/null || $S $(P systemctl) is-active --quiet "$N" 2>/dev/null; } && up=1 ;;
+openrc) $S $(P rc-service) "$N" status >/dev/null 2>&1 && up=1 ;;
+sysv) $S "$ETC/init.d/$N" status >/dev/null 2>&1 && up=1 ;;
+esac
+if [ -n "$up" ] && ( %s ) >/dev/null 2>&1; then echo "reloaded $N"; else
+`, svc.Reload)
+				}
+			}
 			fmt.Fprintf(&b, `case $I in
 systemd) $S $(P systemctl) %[1]s "$N" || rc=1 ;;
 openrc) $S $(P rc-service) "$N" %[1]s || rc=1 ;;
 sysv) $S "$ETC/init.d/$N" %[1]s || rc=1 ;;
 esac
-`, action)
+`, verb)
+			if action == "reload" && svc != nil && svc.Reload != "" {
+				b.WriteString("fi\n")
+			}
 			if action != "stop" {
 				wait := 3
 				if svc != nil && svc.StartWait > 0 {
@@ -559,7 +578,7 @@ func ServiceRestartCommands(env *config.Environment) []string {
 	if len(env.Services) == 0 {
 		return nil
 	}
-	return []string{shCmd(serviceScript(env, "restart", nil, 0, serverLayout, initDetectSh))}
+	return []string{shCmd(serviceScript(env, "reload", nil, 0, serverLayout, initDetectSh))}
 }
 
 // ServiceSudoCheck reports the services the deploy user can't restart with
@@ -665,7 +684,7 @@ func (d *Deployer) activateServices(c *ssh.Client) error {
 		return err
 	}
 	d.log.Info("Restarting services...")
-	return d.runServiceAction(c, "restart", nil)
+	return d.runServiceAction(c, "reload", nil)
 }
 
 // afterRollback runs what a release switch needs once current points back to an older
@@ -676,7 +695,7 @@ func (d *Deployer) afterRollback(c *ssh.Client) {
 		return
 	}
 	d.log.Info("Restarting services...")
-	if err := d.runServiceAction(c, "restart", nil); err != nil {
+	if err := d.runServiceAction(c, "reload", nil); err != nil {
 		d.log.Warn("Service restart after rollback failed: %v", err)
 	}
 }

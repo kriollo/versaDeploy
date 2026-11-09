@@ -31,17 +31,24 @@ versa deploy production
 - **Atomic releases and instant rollback.** Each deploy is a new directory; `versa rollback` switches `current` back in one step.
 - **Safe by default.** Deploys only committed code, one deploy at a time (remote lock), and verifies the SSH host key. Build artifacts and secrets stay private on both ends, root never runs a file the deploy user can write, and self-update only installs a checksum-verified GitHub release.
 - **Go, Python and Node services (Next.js, Nuxt and other SSR apps).** The binary, Python or Node server runs through systemd, or OpenRC / SysV init on old servers. It starts at boot, restarts on every deploy and rollback, and the release rolls back if it does not stay up. Python virtualenvs (and, with `server_install`, `node_modules`) are built on the server.
-- **Ready-made configs** for Laravel, Next.js, Nuxt, Flask, FastAPI and Gin in [`examples/`](examples/), each deployed end to end on Ubuntu and AlmaLinux.
+- **Ready-made configs** for Laravel (PHP-FPM or FrankenPHP), Next.js, Nuxt, Flask, FastAPI and Gin in [`examples/`](examples/), each deployed end to end on Ubuntu and AlmaLinux, plus a GitHub Actions workflow.
+- **Deploy history on the server.** Who deployed which commit or tag, how long it took, and the full log of every deploy, failed ones included: `versa history`. Production can be limited to tagged versions (`deploy_tags: "v*"`), and `on_failure` hooks undo a half-done deploy (`php artisan up`).
 - **`.env` on the server, never from your machine.** `shared_paths: ['.env']` keeps one per server, created from `.env.example` on the first deploy and edited from the TUI (*Shared* view → `e`).
-- **Hooks, reloads and checks.** Local and remote hooks, service reloads (PHP-FPM, Nginx…), HTTP or command health checks, Slack/Teams/Discord webhooks.
+- **Hooks, reloads and checks.** Local and remote hooks, service reloads (PHP-FPM, Nginx…), HTTP or command health checks, Slack/Teams/Discord/Telegram notifications (only failures and recoveries, if you like, with the log's tail).
 - **Old servers included.** POSIX-only remote commands, and legacy SSH algorithms for OpenSSH &lt; 7 (CentOS 5/6).
 - **Local mode** for hosting without SSH: a complete release folder you can upload by FTP.
 - **Interactive TUI.** Run `versa` to browse releases and server files, deploy, roll back and open a remote terminal. Works with the keyboard and the mouse (tabs, environments, wheel).
-- **Server setup included.** The TUI *Services* view detects and installs the stack (nginx/Apache, PHP, PostgreSQL/MySQL, Redis or Dragonfly, Python, Node, SSL, firewall, cron jobs, deploy user) on **Debian/Ubuntu and RHEL/Rocky/Alma**, applies security updates, shows logs and schedules DB backups — agentless, over SSH, and safe on servers already in use.
+- **Server setup included.** The TUI *Services* view detects and installs the stack (nginx/Apache, PHP-FPM or FrankenPHP, PostgreSQL/MySQL, Redis or Dragonfly, Python, Node, SSL, firewall, cron jobs, deploy user) on **Debian/Ubuntu and RHEL/Rocky/Alma**, applies security updates, shows logs and schedules DB backups — agentless, over SSH, and safe on servers already in use.
 
 ## Install
 
-Download the binary for your OS from [Releases](https://github.com/kriollo/versaDeploy/releases/latest), put it in your `PATH`, and check:
+Linux and macOS (checks the binary's sha256):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kriollo/versaDeploy/main/install.sh | sh
+```
+
+Or download the binary for your OS from [Releases](https://github.com/kriollo/versaDeploy/releases/latest), put it in your `PATH`, and check:
 
 ```bash
 versa version

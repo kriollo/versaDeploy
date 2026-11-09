@@ -21,6 +21,7 @@ func (v Vars) Apply(p config.ProvisionConfig, selected []string, backends []Back
 	}
 	p.Redis = (p.Redis || has("redis")) && !has("dragonfly")
 	p.Dragonfly = (p.Dragonfly || has("dragonfly")) && !has("redis")
+	p.FrankenPHP = (p.FrankenPHP || has("frankenphp")) && !has("php")
 	p.SSL = p.SSL || has("ssl")
 	p.UFW = p.UFW || has("ufw")
 	p.Backup = p.Backup || has("backup")

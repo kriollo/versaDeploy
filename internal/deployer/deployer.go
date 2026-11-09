@@ -40,6 +40,12 @@ type Deployer struct {
 	log            *logger.Logger
 	server         *ssh.ServerInfo // set by preflight; nil if the probe failed
 
+	// this deploy attempt, for the server's history (history.go)
+	started    time.Time
+	logBuf     *bytes.Buffer
+	prevStatus string   // status of the attempt before this one
+	tags       []string // git tags at the deployed commit
+
 	// PostDeployConfirm is called before post_deploy hooks on an initial deploy.
 	// Return true to run hooks, false to skip them. If nil, hooks always run.
 	PostDeployConfirm func() bool
@@ -99,7 +105,7 @@ func (d *Deployer) Deploy() (returnErr error) {
 		return d.deployLocal()
 	}
 
-	startTime := time.Now()
+	d.beginAttempt()
 	d.log.Info("Starting deployment to %s", d.envName)
 	checkTimeout := d.deadline()
 
@@ -107,7 +113,7 @@ func (d *Deployer) Deploy() (returnErr error) {
 	var releaseVer, commitRef string
 	defer func() {
 		if !d.dryRun {
-			d.sendNotification(releaseVer, commitRef, returnErr, time.Since(startTime))
+			d.sendNotification(releaseVer, commitRef, returnErr, time.Since(d.started))
 		}
 	}()
 
@@ -117,12 +123,21 @@ func (d *Deployer) Deploy() (returnErr error) {
 	}
 	defer os.RemoveAll(tmpRepo)
 	commitRef = commitHash
+	if err := d.requireTag(); err != nil {
+		return err
+	}
 
 	sshClient, unlock, err := d.connectAndLock()
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	attempted := false // a no-change run or a dry run isn't a deploy: not in the history
+	defer func() {
+		if attempted || returnErr != nil {
+			d.endAttempt(sshClient, releaseVer, commitRef, returnErr)
+		}
+	}()
 
 	previousLock, err := d.fetchPreviousLock(sshClient)
 	if err != nil {
@@ -151,6 +166,7 @@ func (d *Deployer) Deploy() (returnErr error) {
 		d.printChanges(cs)
 		return nil
 	}
+	attempted = true
 
 	if err := d.preflight(sshClient); err != nil {
 		return err
@@ -648,6 +664,7 @@ func (d *Deployer) reclaimableBytes(c *ssh.Client) int64 {
 type PrebuiltArtifact struct {
 	ReleaseVersion string
 	CommitHash     string
+	Tags           []string             // git tags at CommitHash (deploy_tags is checked per server)
 	ChunkPaths     []string             // local <artifactDir>.tar.gz.001, .002, … chunk files (created on first full upload)
 	ChangeSet      *changeset.ChangeSet // used for dependency reuse and deploy.lock
 	artifactDir    string               // owned by Cleanup
@@ -726,6 +743,10 @@ func (d *Deployer) prepareRepo() (tmpRepo, commitHash string, err error) {
 		return "", "", err
 	}
 	d.log.Info("Commit: %s", commitHash[:8])
+	if d.tags, err = git.TagsAt(tmpRepo, commitHash); err != nil {
+		os.RemoveAll(tmpRepo)
+		return "", "", err
+	}
 	return
 }
 
@@ -796,6 +817,7 @@ func (d *Deployer) BuildArtifact() (*PrebuiltArtifact, error) {
 	return &PrebuiltArtifact{
 		ReleaseVersion: releaseVersion,
 		CommitHash:     commitHash,
+		Tags:           d.tags,
 		ChangeSet:      cs,
 		artifactDir:    artifactDir,
 		tmpRepo:        tmpRepo,
@@ -806,9 +828,13 @@ func (d *Deployer) BuildArtifact() (*PrebuiltArtifact, error) {
 // remote server, skipping the build phase. The artifact must have been produced by
 // BuildArtifact(). Safe to call concurrently on different Deployer instances.
 func (d *Deployer) DeployWithArtifact(a *PrebuiltArtifact) (returnErr error) {
-	startTime := time.Now()
+	d.beginAttempt()
 	d.log.Info("Deploying %s to %s...", a.ReleaseVersion, d.envName)
 	checkTimeout := d.deadline()
+	d.tags = a.Tags
+	if err := d.requireTag(); err != nil {
+		return err
+	}
 
 	if d.dryRun {
 		d.log.Info("DRY RUN — would deploy release %s to %s", a.ReleaseVersion, d.envName)
@@ -816,7 +842,7 @@ func (d *Deployer) DeployWithArtifact(a *PrebuiltArtifact) (returnErr error) {
 	}
 
 	defer func() {
-		d.sendNotification(a.ReleaseVersion, a.CommitHash, returnErr, time.Since(startTime))
+		d.sendNotification(a.ReleaseVersion, a.CommitHash, returnErr, time.Since(d.started))
 	}()
 
 	sshClient, unlock, err := d.connectAndLock()
@@ -824,6 +850,12 @@ func (d *Deployer) DeployWithArtifact(a *PrebuiltArtifact) (returnErr error) {
 		return err
 	}
 	defer unlock()
+	skipped := false
+	defer func() {
+		if !skipped || returnErr != nil {
+			d.endAttempt(sshClient, a.ReleaseVersion, a.CommitHash, returnErr)
+		}
+	}()
 
 	previousLock, err := d.fetchPreviousLock(sshClient)
 	if err != nil {
@@ -833,6 +865,7 @@ func (d *Deployer) DeployWithArtifact(a *PrebuiltArtifact) (returnErr error) {
 	// Skip if server already has this exact commit (unless --force)
 	if previousLock != nil && previousLock.LastDeploy.CommitHash == a.CommitHash && !d.force {
 		d.log.Info("Server already at commit %s — skipping", a.CommitHash[:8])
+		skipped = true
 		return nil
 	}
 	if err := d.preflight(sshClient); err != nil {
@@ -1655,30 +1688,50 @@ func (d *Deployer) sendNotification(releaseVersion, commit string, deployErr err
 		return
 	}
 
+	n := d.env.Notifications
 	isSuccess := deployErr == nil
-	if isSuccess && !d.env.Notifications.OnSuccess {
+	// with on_failure, the first success after a failure is sent too ("recovered")
+	recovered := isSuccess && d.prevStatus == "failure" && n.OnFailure
+	if isSuccess && !n.OnSuccess && !recovered {
 		return
 	}
-	if !isSuccess && !d.env.Notifications.OnFailure {
+	if !isSuccess && !n.OnFailure {
 		return
 	}
 
 	status := "success"
-	errorMsg := ""
+	errorMsg, logTail := "", ""
+	if recovered {
+		status = "recovered"
+	}
 	if !isSuccess {
 		status = "failure"
 		errorMsg = deployErr.Error()
+		logTail = d.logTail(20)
 	}
 
-	// "text" is rendered by Slack and Teams webhooks, "content" by Discord.
+	// "text" is rendered by Slack and Teams webhooks, "content" by Discord, Telegram.
 	text := fmt.Sprintf("[%s] %s → %s: %s (release %s, %.0fs)", strings.ToUpper(status), d.cfg.Project, d.envName, status, releaseVersion, duration.Seconds())
+	if len(d.tags) > 0 {
+		text += " " + strings.Join(d.tags, ", ")
+	}
 	if errorMsg != "" {
 		text += "\n" + errorMsg
+	}
+	if logTail != "" {
+		text += "\n```\n" + logTail + "\n```"
+	}
+	if r := []rune(text); len(r) > 3900 { // Telegram's limit is 4096, Discord's 2000 for content
+		text = string(r[:3900]) + "…"
+	}
+	content := text
+	if r := []rune(content); len(r) > 1900 {
+		content = string(r[:1900]) + "…"
 	}
 
 	payload := map[string]interface{}{
 		"text":        text,
-		"content":     text,
+		"content":     content,
 		"project":     d.cfg.Project,
 		"environment": d.envName,
 		"release":     releaseVersion,
@@ -1687,6 +1740,11 @@ func (d *Deployer) sendNotification(releaseVersion, commit string, deployErr err
 		"error":       errorMsg,
 		"duration_s":  duration.Seconds(),
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
+		"tags":        d.tags,
+		"log_tail":    logTail,
+	}
+	if n.ChatID != "" { // Telegram sendMessage; other fields are ignored there
+		payload["chat_id"] = n.ChatID
 	}
 
 	body, err := json.Marshal(payload)

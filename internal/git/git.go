@@ -110,3 +110,12 @@ func resolveGitPath() string {
 
 	return gitPath
 }
+
+// TagsAt returns the tags pointing at commit.
+func TagsAt(repoPath, commit string) ([]string, error) {
+	out, err := executeGitInternal(repoPath, "tag", "--points-at", commit)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(out), nil
+}

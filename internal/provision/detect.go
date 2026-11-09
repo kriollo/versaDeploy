@@ -88,7 +88,9 @@ fpm=""
 for v in 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do if has php-fpm$v; then fpm=$v; break; fi; done
 if [ -n "$fpm" ]; then echo "php_fpm=$fpm"; svc php "php$fpm-fpm" "$(php-fpm$fpm -v 2>/dev/null | head -1 | awk '{print $2}')" 1
 elif has php-fpm; then fv=$(php-fpm -v 2>/dev/null | head -1 | awk '{print $2}'); echo "php_fpm=$(echo "$fv" | cut -d. -f1,2)"; svc php php-fpm "$fv" 1
-elif has php; then echo "svc_php=absent $(php -v 2>/dev/null | head -1 | awk '{print $2}') (cli only)"; fi
+elif has php && ! grep -qs 'frankenphp php-cli' "$(command -v php)"; then echo "svc_php=absent $(php -v 2>/dev/null | head -1 | awk '{print $2}') (cli only)"; fi
+# FrankenPHP: running = the project's service is up
+[ -x /usr/local/bin/frankenphp ] && svc frankenphp "$app" "$(/usr/local/bin/frankenphp version 2>/dev/null | awk '{print $2, $3, $4}')" 1
 if has certbot; then echo "svc_ssl=installed $(certbot --version 2>&1 | awk '{print $2}')"
 elif ls /etc/ssl/versa/*/fullchain.pem >/dev/null 2>&1; then echo "svc_ssl=installed self-signed"; fi
 pgv=$(psql --version 2>/dev/null | awk '{print $3}')

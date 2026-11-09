@@ -1,0 +1,55 @@
+# Generado por versaDeploy — {{.Project}}: FrankenPHP detrás de nginx
+# nginx sirve los estáticos y aplica las reglas del vhost; aquí solo llega index.php.
+{
+	admin off
+	auto_https off
+	servers {
+		# the client's address comes from nginx (X-Forwarded-For)
+		trusted_proxies static 127.0.0.1/32 ::1/128
+		client_ip_headers X-Forwarded-For X-Real-IP
+	}
+	frankenphp {
+		php_ini date.timezone America/Santiago
+		php_ini memory_limit 256M
+		php_ini upload_max_filesize 200M
+		php_ini post_max_size 200M
+		php_ini max_execution_time 300
+		php_ini expose_php Off
+		php_ini opcache.enable 1
+		php_ini opcache.memory_consumption 128
+		php_ini opcache.interned_strings_buffer 16
+		php_ini opcache.max_accelerated_files 10000
+		# Zero-downtime deploys without restarting PHP (a restart or reload drops the
+		# requests in flight): OPcache keys scripts by their real path, so once current
+		# points to the new release (realpath cache: up to 2 s) requests run it, each one
+		# entirely in one release. The deploy then frees the old release's scripts
+		# through the opcache-reset socket below.
+		php_ini opcache.validate_timestamps 0
+		php_ini opcache.revalidate_path 1
+		php_ini realpath_cache_ttl 2
+	}
+}
+
+# any Host (nginx sends the domain); bind keeps it on localhost
+http://:{{.ProxyPort}} {
+	bind 127.0.0.1
+	root * {{.DocRootPath}}
+	map {header.X-Forwarded-Proto} {versa_https} {
+		https on
+		default ""
+	}
+	# only index.php runs, whatever the path (REQUEST_URI keeps the original)
+	rewrite * /index.php
+	php {
+		env HTTPS {versa_https}
+		env REMOTE_ADDR {client_ip}
+	}
+}
+
+# opcache_reset() for the deploy (services[].reload): owner-only unix socket
+http:// {
+	bind unix/{{.ResetSocket}}|0600
+	root * /etc/frankenphp/opcache-reset
+	rewrite * /index.php
+	php
+}

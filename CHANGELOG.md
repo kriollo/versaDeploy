@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.15.0] - 2026-11-09
+
+### Added
+
+- **FrankenPHP** as the PHP runtime instead of PHP-FPM (`provision.frankenphp: true`, Services view): the official static build (PHP 8.5 with the usual extensions, pinned version and sha256), a `php` CLI for hooks and cron, and a per-project config listening on 127.0.0.1. The app runs as a `services` entry that every deploy restarts and health-checks. nginx keeps the versaWYS/Laravel rules and serves the static files; only `index.php` reaches FrankenPHP, and FrankenPHP runs `index.php` for every request (no other `.php` file can be executed). One PHP per server: PHP-FPM and FrankenPHP refuse each other. Example: `examples/deploy.laravel-frankenphp.yml`.
+- **Deploy history on the server**: every deploy, failed ones included, is recorded in `<remote_path>/history/` with who ran it, commit, tag, duration, result and its full log (last 100 deploys, logs of the last 20). `versa history <env> [id]`; the TUI shows the last 10 under Operations → `t`.
+- **`deploy_tags`**: an environment only deploys commits with a matching tag (`deploy_tags: "v*"` for production), checked per server in multi-deploys.
+- **`on_failure` hooks**: run on the server after a failed deploy, in the release that is live (e.g. `php artisan up` after a failed migration).
+- **Notifications**: failures carry the last 20 lines of the deploy's log; with `on_failure`, the first success after a failure is sent as `recovered` (even with `on_success: false`); Telegram via `chat_id`. The payload adds `tags` and `log_tail`.
+- **`services[].reload`**: a command run instead of a restart on deploys and rollbacks while the service is up (`versa service <env> reload`); a stopped service or a failed reload is restarted. FrankenPHP uses it to free OPcache: its deploys never restart PHP and drop no requests (the new release runs by itself, keyed by real path like PHP-FPM).
+- **`install.sh`**: one-line install for Linux and macOS that checks the release's sha256 (`curl -fsSL https://raw.githubusercontent.com/kriollo/versaDeploy/main/install.sh | sh`).
+- **`examples/github-actions.yml`**: staging on every push to `main`, production on every `v*` tag.
+
+### Fixed
+
+- **Apps behind the nginx proxy got the Host without its port** (`$host`): on a non-standard port, an app that builds absolute URLs (Laravel's assets) pointed them to the wrong port and the page loaded without styles. The proxy now passes the Host as the client sent it, like PHP-FPM. **Existing servers: re-run the Nginx step.**
+
+### Tested
+
+The e2e now loads each page like a browser: follows redirects, checks the app's own content, and fetches every CSS, JS, font and image it references (200, non-empty, right content type, same host and port). A deploy under steady traffic must not fail a single request.
+
+New e2e server `franken` (Ubuntu 24.04, nginx + FrankenPHP + PostgreSQL + Redis): versaTodo (versaWYS) and a fresh Laravel with migrations, each on its own FrankenPHP service; versaWYS's blocked files stay blocked; PHP-FPM is refused next to FrankenPHP; a failing `post_deploy` runs `on_failure` and is recorded with its log; `deploy_tags` refuses an untagged commit and deploys the tagged one. Three Laravel deploys under steady traffic on FrankenPHP: 226/226 requests answered (a restart or `frankenphp reload` dropped some). All five e2e servers pass (27 apps, every page with its assets).
+
 ## [1.14.0] - 2026-11-08
 
 ### Added

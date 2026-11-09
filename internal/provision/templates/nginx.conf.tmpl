@@ -77,7 +77,7 @@ server {
         deny all;
         return 404;
     }
-{{if .ProxyPort}}
+{{if and .ProxyPort (not .FrankenPHP)}}
     # Aplicación ({{.Backend}}) detrás de reverse proxy
     location / {
         limit_req zone=general burst=50 nodelay;
@@ -204,6 +204,12 @@ server {
 
     location = /index.php {
         limit_req zone=general burst=50 nodelay;
+{{- if .FrankenPHP}}
+        # FrankenPHP ({{.AppService}} service) runs index.php for every request it gets
+{{- template "nginx-proxy" .}}
+        proxy_hide_header X-Powered-By;
+    }
+{{- else}}
         include snippets/fastcgi-php.conf;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         fastcgi_param DOCUMENT_ROOT $realpath_root;
@@ -215,6 +221,7 @@ server {
         fastcgi_hide_header X-Powered-By;
         fastcgi_pass unix:/run/php/php{{.PHPVersion}}-fpm.sock;
     }
+{{- end}}
 {{end}}
 {{- if .SSL}}
     # SSL/TLS
@@ -246,9 +253,10 @@ server {
 {{- end}}
 
 {{define "nginx-proxy"}}
-        proxy_pass http://127.0.0.1:{{.ProxyPort}};
+        proxy_pass http://127.0.0.1:{{.ProxyPort}}{{if .FrankenPHP}}$request_uri{{end}};
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        # $http_host keeps the port: the app builds its URLs (assets) from it, as with FPM
+        proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;

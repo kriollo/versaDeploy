@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -29,6 +30,8 @@ type Environment struct {
 	PreDeployLocal    []HookConfig       `yaml:"pre_deploy_local"`  // Local commands run before cloning; abort on error
 	PreDeployServer   []HookConfig       `yaml:"pre_deploy_server"` // Remote commands run before symlink switch; non-fatal
 	PostDeploy        []HookConfig       `yaml:"post_deploy"`
+	OnFailure         []HookConfig       `yaml:"on_failure"`      // Remote commands run in current/app after a failed deploy (e.g. php artisan up)
+	DeployTags        string             `yaml:"deploy_tags"`     // Only deploy commits with a tag matching this pattern (e.g. "v*")
 	ServicesReload    []string           `yaml:"services_reload"` // Commands to reload services after symlink switch (e.g. php-fpm, nginx, apache)
 	Ignored           []string           `yaml:"ignored_paths"`
 	SharedPaths       []string           `yaml:"shared_paths"`        // Paths to persist between releases (e.g. storage, uploads)
@@ -64,6 +67,9 @@ type ServiceConfig struct {
 	Environment map[string]string `yaml:"environment"`  // Extra environment variables
 	StartWait   int               `yaml:"start_wait"`   // Seconds to wait before checking it's running (default: 3)
 	StopTimeout int               `yaml:"stop_timeout"` // Seconds to wait for a graceful stop before SIGKILL (default: 30)
+	// Reload is run (as the deploy user) instead of a restart on deploys and rollbacks
+	// while the service is up, e.g. FrankenPHP's graceful reload; on failure it restarts
+	Reload string `yaml:"reload"`
 }
 
 // ProvisionConfig is the desired server stack for an environment. Only the Services
@@ -79,7 +85,8 @@ type ProvisionConfig struct {
 	DBUser        string             `yaml:"db_user,omitempty"`
 	DBPassword    string             `yaml:"db_password,omitempty"` // use ${VAR}; the TUI never writes it
 	Redis         bool               `yaml:"redis,omitempty"`
-	Dragonfly     bool               `yaml:"dragonfly,omitempty"` // Redis-compatible alternative (never both)
+	Dragonfly     bool               `yaml:"dragonfly,omitempty"`  // Redis-compatible alternative (never both)
+	FrankenPHP    bool               `yaml:"frankenphp,omitempty"` // PHP app on FrankenPHP (a service behind nginx) instead of PHP-FPM
 	SSL           bool               `yaml:"ssl,omitempty"`
 	SSLSelfSigned bool               `yaml:"ssl_self_signed,omitempty"` // staging/LAN without public DNS: no Let's Encrypt
 	AdminEmail    string             `yaml:"admin_email,omitempty"`
@@ -289,6 +296,9 @@ func (c *Config) Validate() error {
 
 // Validate validates a single environment configuration
 func (e *Environment) Validate(envName string) error {
+	if _, err := path.Match(e.DeployTags, ""); err != nil {
+		return verserrors.New(verserrors.CodeConfigInvalid, fmt.Sprintf("Environment %s: invalid deploy_tags pattern %q", envName, e.DeployTags), "Use a glob such as \"v*\" or \"release-*\".", err)
+	}
 	if e.Local {
 		if e.LocalPath == "" {
 			return verserrors.New(verserrors.CodeLocalPathInvalid, fmt.Sprintf("Environment %s: local_path is required when local is true", envName), "Add 'local_path: \"./dist/my-app\"' to your configuration.", nil)
@@ -644,7 +654,8 @@ type HealthCheckConfig struct {
 type NotificationConfig struct {
 	WebhookURL string `yaml:"webhook_url"` // URL to POST deploy events to
 	OnSuccess  bool   `yaml:"on_success"`  // Send notification on successful deploy
-	OnFailure  bool   `yaml:"on_failure"`  // Send notification on failed deploy
+	OnFailure  bool   `yaml:"on_failure"`  // Send notification on failed deploy (and "recovered" on the next success)
+	ChatID     string `yaml:"chat_id"`     // Telegram chat, with webhook_url https://api.telegram.org/bot<token>/sendMessage
 }
 
 // HookConfig represents a single post-deploy hook, which can be a simple string or a parallel block

@@ -25,6 +25,14 @@ versa is a single binary with no dependencies. Download it from the [latest rele
 > [!TIP]
 > If you use `pre_deploy_local` hooks, also add Git's `sh` to `PATH` (`C:\Program Files\Git\bin`).
 
+## 🐧 Linux and 🍎 macOS: one line
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kriollo/versaDeploy/main/install.sh | sh
+```
+
+Downloads the latest release for your OS and CPU, **checks its sha256** against the release and installs it in `/usr/local/bin` (as root or when writable) or `~/.local/bin`. `VERSA_VERSION=v1.15.0` picks a version, `VERSA_INSTALL_DIR=…` the folder. Or by hand:
+
 ## 🐧 Linux
 
 ```bash

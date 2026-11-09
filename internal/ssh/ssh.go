@@ -848,3 +848,9 @@ func (b *capBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// NewSFTPOnly wraps an SFTP connection without SSH (commands fail): tests use it
+// against an in-memory SFTP server.
+func NewSFTPOnly(s *sftp.Client) *Client {
+	return &Client{sftpClient: s, config: &config.SSHConfig{}}
+}

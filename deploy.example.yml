@@ -96,6 +96,14 @@ environments:
           - "php versaCLI cache:clear"
           - "php versaCLI route:cache"
 
+    # on_failure: remote commands run in current/app after a failed deploy (non-fatal),
+    # e.g. leave maintenance mode if an earlier hook entered it.
+    # on_failure:
+    #   - "php artisan up"
+
+    # Only deploy commits with a matching git tag (production from versions):
+    # deploy_tags: "v*"
+
     # SERVICES TO RELOAD after every deploy and rollback (critical for PHP-FPM OPcache!)
     # This runs AFTER the symlink switch but BEFORE post_deploy hooks.
     # For Apache + PHP-FPM: always include php-fpm reload to clear OPcache/realpath_cache.
@@ -140,6 +148,7 @@ environments:
     #   db_user: myapp_user
     #   db_password: ${DB_PASS}      # only for a new user: existing ones keep their password
     #   redis: true                  # or dragonfly: true (Redis-compatible; never both)
+    #   # frankenphp: true           # PHP on FrankenPHP (a service behind nginx) instead of PHP-FPM
     #   ssl: true                    # certbot certonly + SSL vhost (needs DNS pointing here)
     #   # ssl_self_signed: true      # staging/LAN without public DNS: self-signed certificate
     #   ufw: true
@@ -149,7 +158,7 @@ environments:
     #   # cron:                      # run as deploy_user in current/app (/etc/cron.d/versa-<project>)
     #   #   - "* * * * * php versaCLI app:schedule:run >> versaWYS/logs/cron.log 2>&1"
     #   deploy_user: deploy          # default: ssh.user
-    #   # proxy_port: 8000           # Python/Go/Node app behind the web server
+    #   # proxy_port: 8000           # Python/Go/Node (or FrankenPHP) app behind the web server
 
     # HEALTH CHECK: Verify the application is responding after deployment.
     # If the check fails after retries, automatic rollback is triggered.
@@ -161,11 +170,15 @@ environments:
     #   retries: 3             # Number of retry attempts (default: 3)
     #   retry_delay: 2         # Seconds between retries (default: 2)
 
-    # NOTIFICATIONS: Send webhook on deploy success/failure.
+    # NOTIFICATIONS: Send webhook on deploy success/failure (Slack, Teams, Discord, Telegram).
+    # With on_failure, failures carry the log's last lines and the next success is sent
+    # as "recovered" even with on_success: false.
     # notifications:
     #   webhook_url: "https://hooks.slack.com/services/xxx/yyy/zzz"
     #   on_success: true
     #   on_failure: true
+    #   # Telegram: webhook_url: "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage"
+    #   # chat_id: "-1001234567890"
 
     # LIMITS:
     hook_timeout: 300          # Kill hooks if they take more than 5 minutes

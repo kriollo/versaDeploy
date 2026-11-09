@@ -1,0 +1,63 @@
+# Deploy from GitHub Actions: copy to .github/workflows/deploy.yml.
+#
+# - every push to main deploys staging;
+# - a version tag (git tag v1.2.0 && git push --tags) deploys production. Add
+#   `deploy_tags: "v*"` to production in deploy.yml so versa refuses anything else,
+#   from CI or from a laptop.
+#
+# Repository secrets (Settings → Secrets and variables → Actions):
+#   DEPLOY_SSH_KEY      private key of the deploy user (ssh-keygen -t ed25519 -f ci_deploy)
+#   DEPLOY_KNOWN_HOSTS  output of `ssh-keyscan -t ed25519 your-server` (checked by versa)
+#
+# deploy.yml reads the key from ~/.ssh/id_ed25519, as in the examples; set
+# `strict_host_key: true` under ssh so CI never connects to an unknown host.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+# one deploy per environment at a time; a newer push waits for the running one
+concurrency:
+  group: deploy-${{ startsWith(github.ref, 'refs/tags/') && 'production' || 'staging' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ startsWith(github.ref, 'refs/tags/') && 'production' || 'staging' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags and full history: versa clones this checkout
+
+      # The toolchains your builds use (remove the ones you don't need)
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install versa
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/kriollo/versaDeploy/main/install.sh | VERSA_INSTALL_DIR="$HOME/.local/bin" sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: SSH key and known host
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: versa deploy ${{ startsWith(github.ref, 'refs/tags/') && 'production' || 'staging' }} --config deploy.yml

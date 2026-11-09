@@ -22,6 +22,26 @@ var assets embed.FS
 
 var templates = template.Must(template.ParseFS(assets, "templates/*.tmpl"))
 
+// FrankenPHPConfig is the project's FrankenPHP config, installed by the frankenphp step.
+func FrankenPHPConfig(project string) string { return "/etc/frankenphp/" + project + ".Caddyfile" }
+
+// FrankenPHPExec is the command line of the FrankenPHP service (deploy.yml services).
+func FrankenPHPExec(project string) string {
+	return "/usr/local/bin/frankenphp run --config " + FrankenPHPConfig(project)
+}
+
+// FrankenPHPResetSocket is the project's owner-only socket that runs opcache_reset().
+func FrankenPHPResetSocket(remotePath string) string {
+	return path.Join(remotePath, ".frankenphp-opcache.sock")
+}
+
+// FrankenPHPReload is what deploys run instead of restarting FrankenPHP (services[].reload):
+// opcache_reset(), which PHP applies once no script is running, so no request is
+// dropped. The new release already runs without it (opcache.revalidate_path).
+func FrankenPHPReload(remotePath string) string {
+	return "curl -fsS --unix-socket " + FrankenPHPResetSocket(remotePath) + " http://localhost/"
+}
+
 // Vars are the parameters of an install run. They reach the scripts as shell variables.
 type Vars struct {
 	Project    string
@@ -52,6 +72,7 @@ type Vars struct {
 	PythonVersion string
 	Redis         bool
 	Dragonfly     bool     // Redis-compatible server instead of Redis
+	FrankenPHP    bool     // PHP app runs on FrankenPHP (a service on ProxyPort) instead of PHP-FPM
 	Aliases       []string // extra server names (www.example.com, other.com)
 	// ResetDBPassword sets DBPassword on an existing DB user; by default an existing
 	// user keeps its password, so other apps using it don't lose access.
@@ -165,6 +186,14 @@ func (v Vars) Validate(steps []string) error {
 		switch s {
 		case "php":
 			err = need(v.PHPVersion != "", "php_version is required (e.g. 8.4)")
+		case "frankenphp":
+			if err = need(v.WebServer == "nginx", "FrankenPHP is served behind nginx (web_server: nginx)"); err == nil {
+				err = need(v.ProxyPort > 0 && v.AppService != "", "proxy_port and the app service are required")
+			}
+			if err == nil {
+				// unix socket paths are limited to 107 bytes
+				err = need(len(FrankenPHPResetSocket(v.RemotePath)) < 100, "remote_path is too long for FrankenPHP's socket (keep it under 75 characters)")
+			}
 		case "apache", "nginx", "ssl":
 			if err = need(nameRe.MatchString(v.Domain), "domain is required (e.g. app.example.com)"); err == nil && s != "ssl" && v.ProxyPort == 0 {
 				err = need(v.PHPVersion != "", "php_version is required for a PHP-FPM vhost (or set proxy_port)")
@@ -306,6 +335,16 @@ func Build(selected []string, v Vars) (Bundle, error) {
 			}
 			b[name] = []byte(out)
 		}
+	}
+	if v.FrankenPHP && slices.Contains(steps, "frankenphp") {
+		var out bytes.Buffer
+		if err := templates.ExecuteTemplate(&out, "frankenphp.Caddyfile.tmpl", struct {
+			Vars
+			DocRootPath, ResetSocket string
+		}{v, v.DocRootPath(), FrankenPHPResetSocket(v.RemotePath)}); err != nil {
+			return nil, err
+		}
+		b["Caddyfile"] = out.Bytes()
 	}
 	if v.ServicesSudoers != "" {
 		b["services-sudoers.sh"] = []byte(v.ServicesSudoers)
@@ -480,7 +519,7 @@ func LogsCommand(id string, v Vars, phpVersion string) string {
 		files = []string{"/var/log/redis/redis-server.log", "/var/log/redis/redis.log"}
 	case "dragonfly":
 		files = []string{"/var/log/dragonfly/dragonfly.WARNING", "/var/log/dragonfly/dragonfly.INFO"}
-	case "app_service":
+	case "app_service", "frankenphp":
 		units = []string{v.AppService}
 	case "backup":
 		units = []string{BackupUnit(v.Project) + ".service"}
@@ -536,6 +575,14 @@ func Conflicts(r *Report, selected []string, v Vars) error {
 		return fmt.Errorf("Apache is already installed on this server: use it instead of nginx")
 	case has("apache") && r.Get("nginx").Status != Absent:
 		return fmt.Errorf("nginx is already installed on this server: use it instead of Apache")
+	case has("php") && has("frankenphp"):
+		return fmt.Errorf("PHP-FPM and FrankenPHP: pick one PHP for the server")
+	case has("frankenphp") && r.Get("php").Status != Absent:
+		return fmt.Errorf("PHP-FPM is already installed on this server: use it instead of FrankenPHP")
+	case has("php") && r.Get("frankenphp").Status != Absent:
+		return fmt.Errorf("FrankenPHP is already installed on this server: use it instead of PHP-FPM")
+	case has("frankenphp") && v.WebServer != "nginx":
+		return fmt.Errorf("FrankenPHP is served behind nginx: set web_server: nginx")
 	case has("php") && r.PHPVersion != "" && v.PHPVersion != r.PHPVersion:
 		return fmt.Errorf("PHP-FPM %s is already installed: set PHP version to %s instead of %s", r.PHPVersion, r.PHPVersion, v.PHPVersion)
 	}

@@ -1,6 +1,6 @@
 # ⚙️ Configuration Reference (`deploy.yml`)
 
-Every option of the versaDeploy configuration file, with defaults and behavior. For a commented example see [deploy.example.yml](../deploy.example.yml), and per framework (Laravel, Next.js, Nuxt, Flask, FastAPI, Gin) [examples/](../examples/); to generate a starter file run `versa init`. Check a file anytime with `versa config validate [env]`.
+Every option of the versaDeploy configuration file, with defaults and behavior. For a commented example see [deploy.example.yml](../deploy.example.yml), and per framework (Laravel on PHP-FPM or FrankenPHP, Next.js, Nuxt, Flask, FastAPI, Gin) [examples/](../examples/); to generate a starter file run `versa init`. Check a file anytime with `versa config validate [env]`.
 
 - [File structure](#file-structure)
 - [Environment variables in the config](#environment-variables-in-the-config)
@@ -13,6 +13,7 @@ Every option of the versaDeploy configuration file, with defaults and behavior. 
 - [Services (`services`)](#services-services): run a Go/Python process at boot and restart it on deploy
 - [Health check (`health_check`)](#health-check-health_check)
 - [Notifications (`notifications`)](#notifications-notifications)
+- [Deploy history](#deploy-history) · [Production from tags (`deploy_tags`)](#production-from-tags-deploy_tags)
 - [Performance and limits](#performance-and-limits)
 - [Local mode (no SSH)](#local-mode-no-ssh)
 - [Server directory layout](#server-directory-layout)
@@ -116,6 +117,8 @@ ssh-keyscan -p 22 your-server.com >> ~/.ssh/known_hosts
 | `pre_deploy_local`   | list         | `[]`                                               | [Hooks](#hooks) run on your machine before building.                                                                        |
 | `pre_deploy_server`  | list         | `[]`                                               | [Hooks](#hooks) run on the server before activating the release.                                                            |
 | `post_deploy`        | list         | `[]`                                               | [Hooks](#hooks) run on the server after activating the release.                                                             |
+| `on_failure`         | list         | `[]`                                               | [Hooks](#hooks) run on the server after a failed deploy (e.g. `php artisan up`).                                            |
+| `deploy_tags`        | string       | —                                                  | Only deploy commits with a git tag matching this glob, e.g. `"v*"`. See [below](#production-from-tags-deploy_tags).        |
 | `services_reload`    | list         | `[]`                                               | Commands run on the server right after activation, see [below](#service-reload-services_reload).                            |
 | `health_check`       | map          | —                                                  | See [Health check](#health-check-health_check).                                                                             |
 | `notifications`      | map          | —                                                  | See [Notifications](#notifications-notifications).                                                                          |
@@ -339,10 +342,22 @@ post_deploy:
 | `pre_deploy_local`  | Your machine | Repository root            | Before checking/cloning the repo. Skipped on `--dry-run`. | Deploy aborts. Nothing was touched on the server.             |
 | `pre_deploy_server` | Server       | `<new release>/app`        | After upload, before switching `current`           | Warning only; the deploy continues.                                 |
 | `post_deploy`       | Server       | `<new release>/app`        | After switching `current` and `services_reload`    | `current` is switched back to the previous release and the deploy fails (on the first deploy there is nothing to go back to). |
+| `on_failure`        | Server       | `current/app` (after the rollback: the release that is live) | When a deploy fails after connecting to the server | Warning only. |
 
 - Remote hooks run in the SSH user's login shell, with a limit of `hook_timeout` seconds each.
 - Local hooks (`pre_deploy_local`, and `post_deploy` in local mode) run with `sh -c`. **On Windows, `sh` must be in `PATH`** (it comes with Git for Windows: add `C:\Program Files\Git\bin`).
 - On the first deploy (`--initial-deploy`), versa asks before running `post_deploy`, so you can set up `.env` first ([how](#environment-variables-and-secrets-env-configjson)).
+- `on_failure` undoes what an earlier hook left half done, e.g. maintenance mode:
+
+  ```yaml
+  pre_deploy_server:
+    - "php artisan down --retry=15"   # storage/ is shared: affects the live site
+  post_deploy:
+    - "php artisan migrate --force"
+    - "php artisan up"
+  on_failure:
+    - "php artisan up"                # never leave the site down after a failed deploy
+  ```
 - Re-run `post_deploy` without deploying: `versa hooks <env> [indices...]`.
 - `$NAME` is [expanded locally](#environment-variables-in-the-config); write `$$NAME` for a variable of the server's shell.
 - Don't put `${SECRET}` in remote hooks: the expanded command line is visible to other users of the server (`ps`). Read secrets on the server instead, e.g. `$$DB_PASS` from the app's `.env` in `shared/`.
@@ -396,6 +411,7 @@ services:
 | `environment` | map     | —                        | Extra environment variables, written to the wrapper in `.versa/` (mode 0600 when the service runs as `ssh.user`, 0644 otherwise: put secrets in `env_file` then). |
 | `start_wait`  | int (s) | `3`                      | Seconds to wait after (re)starting before checking the process is still running.                            |
 | `stop_timeout`| int (s) | `30`                     | Seconds a stop waits for the process to exit after SIGTERM before killing it (SIGKILL). Raise it if your app needs longer to shut down cleanly. |
+| `reload`      | string  | —                        | Command run (as the SSH user) **instead of a restart** on deploys and rollbacks while the service is up: a graceful reload that drops no requests (e.g. `kill -HUP` for gunicorn; FrankenPHP: its `opcache_reset()` socket, proposed by the Services view). A stopped service, or a failed reload, is restarted. `versa service <env> restart` always restarts. |
 
 **Default `exec`** (when omitted):
 
@@ -490,14 +506,25 @@ health_check:
 
 ## Notifications (`notifications`)
 
-Sends a JSON `POST` when a deploy finishes. Works with Slack and Microsoft Teams incoming webhooks (`text` field) and Discord (`content` field). Not sent on `--dry-run`.
+Sends a JSON `POST` when a deploy finishes. Works with Slack and Microsoft Teams incoming webhooks (`text` field), Discord (`content` field) and Telegram (`chat_id` + `text`). Not sent on `--dry-run`.
 
 ```yaml
 notifications:
   webhook_url: "${DEPLOY_WEBHOOK}"
-  on_success: true
-  on_failure: true
+  on_success: false   # quiet while deploys work…
+  on_failure: true    # …every failure, and "recovered" on the next success
 ```
+
+- **Failures** carry the error and the last 20 lines of the deploy's log (`log_tail`, also in `text`).
+- **Recovered:** with `on_failure: true`, the first success after a failed deploy is sent even with `on_success: false` (status `recovered`), so a fix never goes unnoticed. The previous result comes from the server's [history](#deploy-history).
+- **Telegram:** create a bot with @BotFather and use
+
+  ```yaml
+  notifications:
+    webhook_url: "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage"
+    chat_id: "-1001234567890"
+    on_failure: true
+  ```
 
 Payload:
 
@@ -512,9 +539,49 @@ Payload:
   "status": "success",
   "error": "",
   "duration_s": 42.1,
-  "timestamp": "2026-10-01T18:38:49Z"
+  "timestamp": "2026-10-01T18:38:49Z",
+  "tags": ["v1.2.0"],
+  "log_tail": ""
 }
 ```
+
+---
+
+## Deploy history
+
+Every deploy that reaches the server is recorded there, successful or not, with its full log: `<remote_path>/history/history.jsonl` (the last 100 deploys) and `history/<id>.log` (the last 20). Failed deploys are recorded too, although their release is deleted by the rollback. Logs can hold hook output, so the files are `0600`.
+
+```text
+$ versa history production
+ID               STATUS   TIME    COMMIT    TAG           BY
+20261108-153012  success     48s  a41f09c3  v1.2.0        ana@laptop
+20261108-150140  FAILED      31s  c93a11f0                ana@laptop
+                 └ post-deploy hook failed (rolled back to 20261107-101203): …
+$ versa history production 20261108-150140    # that deploy's full log
+```
+
+The TUI shows the last 10 under **Operations → t**, and the logs in **Files → history/**.
+
+---
+
+## Production from tags (`deploy_tags`)
+
+With `deploy_tags`, an environment only deploys commits that have a matching git tag, so production changes only when you release a version, while staging deploys any commit:
+
+```yaml
+environments:
+  staging:
+    # … every commit
+  production:
+    deploy_tags: "v*"      # glob: v*, v[0-9]*, release-*
+```
+
+```bash
+git tag v1.2.0 && git push --tags
+versa deploy production          # refused if HEAD has no v* tag
+```
+
+The tag shows up in the history and the notifications. From CI, [examples/github-actions.yml](../examples/github-actions.yml) deploys staging on every push to `main` and production on every `v*` tag.
 
 ---
 
@@ -567,6 +634,7 @@ environments:
 │       ├── bin/            # Go binaries (go.deploy_path)
 │       └── manifest.json   # release metadata
 ├── shared/                 # shared_paths
+├── history/                # every deploy: history.jsonl + <id>.log
 ├── deploy.lock             # hashes and metadata of the last deploy
 ├── .versa/                 # generated service files (wrapper, systemd unit, init scripts)
 └── .versa.lock/            # exists only while a deploy is running

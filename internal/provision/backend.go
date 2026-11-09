@@ -115,6 +115,7 @@ func Defaults(env *config.Environment, project string, backends []Backend, r *Re
 		PythonVersion: p.PythonVersion,
 		Redis:         p.Redis,
 		Dragonfly:     p.Dragonfly,
+		FrankenPHP:    p.FrankenPHP,
 		Aliases:       p.Aliases,
 		BackupKeep:    p.BackupKeep,
 		SSLSelfSigned: p.SSLSelfSigned,
@@ -198,12 +199,18 @@ func Defaults(env *config.Environment, project string, backends []Backend, r *Re
 	}
 	if len(env.Services) > 0 {
 		v.AppService = env.Services[0].Name
-	} else if v.Backend != "" && v.Backend != "php" {
+	} else if v.Backend != "" && (v.Backend != "php" || v.FrankenPHP) {
 		v.AppService = safe
 	}
-	// A PHP app served by FPM takes precedence: proxying only applies without PHP
+	// A PHP app served by FPM takes precedence: proxying only applies without PHP.
+	// FrankenPHP is a service: nginx proxies index.php to it.
 	if hasBackend(backends, "php") {
-		v.ProxyPort = 0
+		switch {
+		case !v.FrankenPHP:
+			v.ProxyPort = 0
+		case p.ProxyPort == 0:
+			v.ProxyPort = 8000
+		}
 	}
 	return v
 }
@@ -215,7 +222,11 @@ func Preselect(backends []Backend, v Vars, env *config.Environment, r *Report) [
 	for _, be := range backends {
 		switch be.Kind {
 		case "php":
-			want = append(want, "php")
+			if v.FrankenPHP {
+				want = append(want, "frankenphp")
+			} else {
+				want = append(want, "php")
+			}
 		case "python":
 			want = append(want, "python")
 		case "go":
@@ -267,6 +278,9 @@ func hasBackend(bs []Backend, kind string) bool {
 // defined, else one for a Python/Go/Node app (Go and Python derive exec from their
 // build; Node runs `npm start`). The web server proxies to PORT.
 func ProposedServices(env *config.Environment, v Vars) []config.ServiceConfig {
+	if v.FrankenPHP && len(env.Services) == 0 && v.AppService != "" {
+		return []config.ServiceConfig{{Name: v.AppService, Exec: FrankenPHPExec(v.Project), Reload: FrankenPHPReload(v.RemotePath)}}
+	}
 	if len(env.Services) > 0 || v.Backend == "" || v.Backend == "php" || v.AppService == "" {
 		return env.Services
 	}

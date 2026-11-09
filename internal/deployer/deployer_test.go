@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -442,5 +443,35 @@ func TestReleaseBefore(t *testing.T) {
 		if got := ReleaseBefore(append([]string(nil), rs...), current); got != want {
 			t.Errorf("ReleaseBefore(%s) = %q, want %q", current, got, want)
 		}
+	}
+}
+
+// on_failure alone: failures carry the log's tail; the next success says "recovered".
+func TestDeployer_SendNotification_Recovered(t *testing.T) {
+	var got []map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&m)
+		got = append(got, m)
+	}))
+	defer ts.Close()
+
+	log, _ := logger.NewLogger("", false, false)
+	cfg := &config.Config{Project: "p", Environments: map[string]config.Environment{
+		"prod": {RemotePath: "/var/www", Notifications: config.NotificationConfig{WebhookURL: ts.URL, OnFailure: true, ChatID: "-100"}},
+	}}
+	d, _ := NewDeployer(cfg, "prod", ".", false, false, false, false, log)
+	d.beginAttempt()
+	d.log.Info("composer install")
+	d.sendNotification("r1", "abc", fmt.Errorf("hook failed"), time.Second)
+	d.sendNotification("r2", "abc", nil, time.Second) // previous attempt (history) was a success: silent
+	d.prevStatus = "failure"
+	d.sendNotification("r3", "abc", nil, time.Second)
+
+	if len(got) != 2 || got[0]["status"] != "failure" || got[1]["status"] != "recovered" {
+		t.Fatalf("got %v", got)
+	}
+	if tail, _ := got[0]["log_tail"].(string); !strings.Contains(tail, "INFO composer install") || got[0]["chat_id"] != "-100" {
+		t.Errorf("failure payload: %v", got[0])
 	}
 }

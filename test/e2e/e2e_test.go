@@ -24,8 +24,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	gopath "path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -49,6 +51,7 @@ type server struct {
 	dockerfile        string   // "" = Dockerfile (apt)
 	php, phpIni       string   // PHP version and the php.ini PHP-FPM reads
 	cache             string   // redis | dragonfly (both answer on 127.0.0.1:6379)
+	franken           bool     // PHP runs on FrankenPHP: no PHP-FPM, no php.ini
 }
 
 type app struct {
@@ -82,7 +85,35 @@ var (
 	alma = &server{name: "alma", image: "almalinux:9", sshPort: 2228, httpPort: 8091, web: "nginx", db: "mariadb",
 		stack:      []string{"base", "php", "nginx", "mariadb", "dragonfly", "python", "node", "deploy_user"},
 		dockerfile: "Dockerfile.rhel", php: "8.4", phpIni: "/etc/php.ini", cache: "dragonfly"}
+	// franken: PHP apps on FrankenPHP (no PHP-FPM); php is FrankenPHP's CLI
+	franken = &server{name: "franken", image: "ubuntu:24.04", sshPort: 2230, httpPort: 8097, web: "nginx", db: "postgres",
+		stack: []string{"base", "nginx", "postgres", "redis", "deploy_user"}, cache: "redis", franken: true}
 )
+
+// frankenApps are versaWYS (versaTodo) and Laravel served by FrankenPHP behind nginx:
+// each app has its service, its Caddyfile and its port.
+func frankenApps(srv *server, prefix string) []app {
+	fp := func(name string, port int, docRoot string) (func(v *provision.Vars), string) {
+		return func(v *provision.Vars) {
+			v.FrankenPHP, v.ProxyPort, v.AppService, v.PHPVersion = true, port, name, ""
+			if docRoot != "" {
+				v.DocRoot = docRoot
+			}
+		}, `[{ name: ` + name + `, exec: "` + provision.FrankenPHPExec(name) + `", reload: "` + provision.FrankenPHPReload("/var/www/versa/"+name) + `" }]`
+	}
+	todoTweak, todoSvc := fp(prefix+"todo", 8100, "")
+	laravelTweak, laravelSvc := fp(prefix+"laravel", 8101, "current/app/public")
+	laravel := frameworkApps(srv, prefix)[3]
+	laravel.tweak, laravel.services = laravelTweak, laravelSvc
+	laravel.steps = []string{"frankenphp", "nginx", srv.db, "sudoers", "dirs"}
+	return []app{
+		{name: prefix + "todo", server: srv, tweak: todoTweak, services: todoSvc,
+			builds: `php: { enabled: true, root: '.', composer_command: 'composer install --no-dev --optimize-autoloader' }
+            frontend: { enabled: true, npm_command: 'pnpm install --frozen-lockfile', compile_command: 'pnpm run compile', cleanup_dev_deps: true, production_command: 'pnpm install --production' }`,
+			steps: []string{"frankenphp", "nginx", "sudoers", "dirs"}},
+		laravel,
+	}
+}
 
 // ssrApps are real SSR frameworks behind the proxy: Next installs node_modules on the
 // server (server_install), Nuxt ships its self-contained .output.
@@ -163,6 +194,8 @@ func laravelSource(t *testing.T) string {
 			laravelOnce.err = fmt.Errorf("%v\n%s", err, out)
 		}
 		laravelOnce.dir = dir + "/app"
+		// the skeleton's app.js is a bare comment: give the page a real script to load
+		os.WriteFile(dir+"/app/resources/js/app.js", []byte("document.documentElement.dataset.versa = 'e2e';\n"), 0644)
 	})
 	if laravelOnce.err != nil {
 		t.Skipf("laravel: %v", laravelOnce.err)
@@ -218,7 +251,7 @@ var apps = slices.Concat(fixtureApps(ubuntu, "e2e"), []app{{name: "versatodo", s
             frontend: { enabled: true, npm_command: 'pnpm install --frozen-lockfile', compile_command: 'pnpm run compile', cleanup_dev_deps: true, production_command: 'pnpm install --production' }`,
 	steps: []string{"apache", "mariadb", "sudoers", "dirs", "backup"}}},
 	fixtureApps(rocky, "e2er"), fixtureApps(alma, "e2ea"), ssrApps(ubuntu, "e2e"), ssrApps(alma, "e2ea"),
-	frameworkApps(ubuntu, "e2e"), frameworkApps(alma, "e2ea"))
+	frameworkApps(ubuntu, "e2e"), frameworkApps(alma, "e2ea"), frankenApps(franken, "e2ef"))
 
 func run(t *testing.T, name string, args ...string) string {
 	t.Helper()
@@ -267,7 +300,8 @@ func (a app) vars(pub string) provision.Vars {
 		RemotePath: "/var/www/versa/" + a.name, DeployUser: "versadeploy",
 		Database: a.server.db, DBName: a.name, DBUser: a.name + "_user", DBPassword: "e2e'pass",
 		SSHPort: 22, PubKey: pub, Backend: "php", Redis: a.server.cache == "redis", Dragonfly: a.server.cache == "dragonfly", BackupKeep: 3,
-		Aliases: []string{"www." + a.domain()},
+		// <name>.localhost: browsers resolve it to 127.0.0.1, to look at a kept container
+		Aliases: []string{"www." + a.domain(), a.name + ".localhost"},
 	}
 	if a.tweak != nil {
 		a.tweak(&v)
@@ -501,11 +535,16 @@ func TestProvisionAndDeploy(t *testing.T) {
 		daemons := map[string]string{s.cache: map[string]string{"redis": "-x redis-server", "dragonfly": "-x dragonfly"}[s.cache], "php": "-f 'php-fpm: master'",
 			s.web: map[string]string{"nginx": "-x nginx", "apache": "-x apache2"}[s.web],
 			s.db:  map[string]string{"postgres": "-x 'postgres|postmaster'", "mariadb": "-x mariadbd"}[s.db]}
+		if s.franken {
+			delete(daemons, "php") // the apps' services start with their first deploy
+		}
 		pids := map[string]string{}
 		for name, match := range daemons {
 			pids[name] = sh("pgrep -o " + match)
 		}
-		sh("sed -i 's/^memory_limit = .*/memory_limit = 512M/' " + s.phpIni)
+		if s.phpIni != "" {
+			sh("sed -i 's/^memory_limit = .*/memory_limit = 512M/' " + s.phpIni)
+		}
 
 		v.DBPassword = "another-pass"
 		steps := append(append([]string{}, s.stack...), owner.steps...)
@@ -524,7 +563,7 @@ func TestProvisionAndDeploy(t *testing.T) {
 				t.Errorf("%s: %s was restarted by the re-run (pid %s → %s)", s.name, name, pids[name], now)
 			}
 		}
-		if got := sh("grep '^memory_limit' " + s.phpIni); got != "memory_limit = 512M" {
+		if got := sh("grep '^memory_limit' " + cmp.Or(s.phpIni, "/dev/null") + " || echo memory_limit = 512M"); got != "memory_limit = 512M" {
 			t.Errorf("%s: php.ini overwritten: %q", s.name, got)
 		}
 
@@ -586,6 +625,10 @@ func TestProvisionAndDeploy(t *testing.T) {
 				t.Errorf("%s: GET / = %d\n%s", a.name, status, body)
 			}
 		}
+		// the page as a browser loads it: redirects followed, its own marker, and every
+		// asset it references served for real (not the app's HTML fallback)
+		marker := cmp.Or(a.expect, "versaWYS") // versaTodo: its installer until configured
+		checkPage(t, a.name, a.server.httpPort, a.domain(), marker)
 		if a.chunks != "" {
 			// an SSR page loads dozens of chunks at once: the proxy must not rate limit them
 			page := fetch(t, a.server.httpPort, a.domain(), "/")
@@ -596,7 +639,7 @@ func TestProvisionAndDeploy(t *testing.T) {
 				t.Errorf("%s: %d of 100 parallel requests to %s got 429", a.name, n, chunk)
 			}
 		}
-		if a.vars(pub).ProxyPort == 0 {
+		if v := a.vars(pub); v.ProxyPort == 0 || v.FrankenPHP {
 			// what versaWYS's .htaccess blocks (the vhost has AllowOverride None)
 			for _, f := range []string{"/composer.json", "/versaCLI", "/pnpm-lock.yaml", "/README.md", "/tsconfig.json"} {
 				if _, err := os.Stat(filepath.Join(a.repo, f)); err != nil {
@@ -679,6 +722,9 @@ func TestProvisionAndDeploy(t *testing.T) {
 				}
 			}
 			want := []string{s.web, "php", s.db, s.cache}
+			if s.franken {
+				want[1] = "frankenphp" // active = the app's FrankenPHP service runs
+			}
 			if v.AppService != "" {
 				want = append(want, "app_service")
 			}
@@ -731,8 +777,22 @@ func TestProvisionAndDeploy(t *testing.T) {
 			}
 		}
 
-		// PHP-FPM writes group-writable files the deploy user can clean (and reuse)
-		if um, _ := c.ExecuteCommand("systemctl show -p UMask php" + s.php + "-fpm"); strings.TrimSpace(um) != "UMask=0002" {
+		if s.franken {
+			// one PHP per server: PHP-FPM is refused next to FrankenPHP, by the script too
+			var out bytes.Buffer
+			v := hosted[0].vars(pub)
+			v.PHPVersion, v.FrankenPHP = "8.4", false
+			if b, err := provision.Build([]string{"php"}, v); err != nil {
+				t.Fatal(err)
+			} else if err := provision.Run(c, "root", b, &out); err == nil || !strings.Contains(out.String(), "FrankenPHP is already installed") {
+				t.Errorf("%s: PHP-FPM next to FrankenPHP was not refused: %v\n%s", s.name, err, out.String())
+			}
+			// FrankenPHP only listens on localhost; php is its CLI (hooks, cron)
+			if out, _ := c.ExecuteCommand("ss -Hltn | awk '{print $4}' | grep -E ':(8100|8101)$' | sort | tr '\n' ' '; php -r 'echo PHP_VERSION;'"); !strings.Contains(out, "127.0.0.1:8100 127.0.0.1:8101") || !strings.Contains(out, "8.") {
+				t.Errorf("%s: FrankenPHP listeners / php CLI: %q", s.name, out)
+			}
+		} else if um, _ := c.ExecuteCommand("systemctl show -p UMask php" + s.php + "-fpm"); strings.TrimSpace(um) != "UMask=0002" {
+			// PHP-FPM writes group-writable files the deploy user can clean (and reuse)
 			t.Errorf("%s: php-fpm %q, want UMask=0002", s.name, strings.TrimSpace(um))
 		}
 
@@ -770,6 +830,184 @@ func TestProvisionAndDeploy(t *testing.T) {
 			t.Logf("%s: %s backup file(s) after backup-now", a.name, strings.TrimSpace(ls))
 		}
 	}
+	// 5. History, on_failure and deploy_tags, on an app whose repo the test owns
+	for _, a := range selected {
+		if a.fixture == "" {
+			continue // versaTodo is the user's repo: never tag it
+		}
+		dcfg := sshCfg(a.server, "versadeploy")
+		dc, err := versassh.NewClient(&dcfg, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		testHistory(t, cfg, a, dc, log)
+		dc.Close()
+		break
+	}
+}
+
+// testHistory: a failed deploy runs on_failure and is recorded with its log; deploy_tags
+// refuses an untagged commit; the history shows who deployed what, with the tag.
+func testHistory(t *testing.T, cfg *config.Config, a app, dc *versassh.Client, log *logger.Logger) {
+	env := cfg.Environments[a.name]
+	orig := env
+	marker := "/tmp/versa-on-failure-" + a.name
+	env.PostDeploy = append(slices.Clone(env.PostDeploy), config.HookConfig{Command: "exit 3"})
+	env.OnFailure = []config.HookConfig{{Command: "touch " + marker}}
+	cfg.Environments[a.name] = env
+	deploy := func() error {
+		d, err := deployer.NewDeployer(cfg, a.name, a.repo, false, false, true, true, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d.Deploy()
+	}
+	if err := deploy(); err == nil || !strings.Contains(err.Error(), "rolled back") {
+		t.Errorf("%s: failing post_deploy: %v", a.name, err)
+	}
+	if out, err := dc.ExecuteCommand("test -f " + marker + " && echo ran"); err != nil || strings.TrimSpace(out) != "ran" {
+		t.Errorf("%s: on_failure hook did not run: %q %v", a.name, out, err)
+	}
+
+	env = orig
+	env.DeployTags = "v*"
+	cfg.Environments[a.name] = env
+	if err := deploy(); err == nil || !strings.Contains(err.Error(), "only deploys tagged commits") {
+		t.Errorf("%s: untagged commit with deploy_tags: %v", a.name, err)
+	}
+	run(t, "git", "-C", a.repo, "tag", "v1.0.0")
+	// zero downtime: requests during the deploy never fail (FPM reload, FrankenPHP reload)
+	stop := make(chan struct{})
+	fails := make(chan []string)
+	go func() {
+		var bad []string
+		c := &http.Client{Timeout: 10 * time.Second}
+		for {
+			select {
+			case <-stop:
+				fails <- bad
+				return
+			case <-time.After(150 * time.Millisecond): // under nginx's 10 r/s limit
+			}
+			req, _ := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/", a.server.httpPort), nil)
+			req.Host = a.domain()
+			resp, err := c.Do(req)
+			switch {
+			case err != nil:
+				bad = append(bad, err.Error())
+			case resp.StatusCode >= 500:
+				bad = append(bad, resp.Status)
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+		}
+	}()
+	err := deploy()
+	close(stop)
+	if bad := <-fails; len(bad) > 0 {
+		t.Errorf("%s: %d requests failed during the deploy: %v", a.name, len(bad), bad)
+	}
+	if err != nil {
+		t.Errorf("%s: tagged deploy: %v", a.name, err)
+	}
+	cfg.Environments[a.name] = orig
+
+	h, err := deployer.ReadHistory(dc, a.vars("").RemotePath)
+	if err != nil || len(h) < 3 {
+		t.Fatalf("%s: history %+v %v", a.name, h, err)
+	}
+	failed, last := h[len(h)-2], h[len(h)-1]
+	if failed.Status != "failure" || !strings.Contains(failed.Error, "post-deploy hook failed") || failed.Log == "" || last.Status != "success" || !slices.Contains(last.Tags, "v1.0.0") || last.By == "" {
+		t.Errorf("%s: history:\n%s", a.name, strings.Join(deployer.FormatHistory(h, 5), "\n"))
+	}
+	if b, err := dc.ReadRemoteBytes(a.vars("").RemotePath+"/history/"+failed.Log, 1<<20); err != nil || !strings.Contains(string(b), "Running on_failure hooks") {
+		t.Errorf("%s: failed deploy's log: %v\n%s", a.name, err, b)
+	}
+	t.Logf("%s history:\n%s", a.name, strings.Join(deployer.FormatHistory(h, 5), "\n"))
+}
+
+var assetRe = regexp.MustCompile(`(?:href|src)=["']([^"'#]+\.(css|js|mjs|woff2?|png|jpe?g|svg|webp|ico))(?:\?[^"']*)?["']`)
+
+// checkPage loads / like a browser at host:port (the Host header keeps the port): it
+// follows redirects, wants marker in the final page, and fetches every same-site
+// asset the page references, which must answer 200, non-empty, with its content type.
+// Absolute asset URLs must keep the port the page was asked on.
+func checkPage(t *testing.T, name string, port int, domain, marker string) {
+	t.Helper()
+	host := fmt.Sprintf("%s:%d", domain, port)
+	c := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	do := func(path string) (*http.Response, []byte, error) {
+		req, _ := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
+		req.Host = host
+		resp, err := c.Do(req)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		return resp, b, err
+	}
+	path, status := "/", 0
+	var body []byte
+	for hop := 0; hop < 5; hop++ {
+		resp, b, err := do(path)
+		if err != nil {
+			t.Errorf("%s: GET %s: %v", name, path, err)
+			return
+		}
+		status, body = resp.StatusCode, b
+		loc := resp.Header.Get("Location")
+		if status < 300 || status >= 400 || loc == "" {
+			break
+		}
+		u, err := url.Parse(loc)
+		if err != nil || (u.Host != "" && u.Host != host) {
+			t.Errorf("%s: redirect to %q leaves %s", name, loc, host)
+			return
+		}
+		path = u.RequestURI()
+	}
+	// versaTodo's installer may answer 503 until configured: still a page of the app
+	if (status != 200 && status != 503) || !strings.Contains(string(body), marker) {
+		t.Errorf("%s: %s → %d, want the page with %q:\n%.300s", name, path, status, marker, body)
+		return
+	}
+	types := map[string]string{"css": "text/css", "js": "javascript", "mjs": "javascript", "woff": "font", "woff2": "font",
+		"png": "image/", "jpg": "image/", "jpeg": "image/", "svg": "image/svg", "webp": "image/", "ico": "image"}
+	seen := map[string]bool{}
+	for _, m := range assetRe.FindAllStringSubmatch(string(body), -1) {
+		ref, ext := m[1], m[2]
+		u, err := url.Parse(ref)
+		if err != nil {
+			continue
+		}
+		if u.Host != "" {
+			if !strings.HasPrefix(u.Host, domain) {
+				continue // a CDN
+			}
+			if u.Host != host {
+				t.Errorf("%s: asset URL %s drops the port (want %s): the app sees the wrong Host", name, ref, host)
+				continue
+			}
+		}
+		p := u.Path
+		if !strings.HasPrefix(p, "/") {
+			p = gopath.Join(gopath.Dir(path), p)
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		resp, b, err := do(p)
+		switch {
+		case err != nil:
+			t.Errorf("%s: asset %s: %v", name, p, err)
+		case resp.StatusCode != 200 || len(b) == 0 || !strings.Contains(resp.Header.Get("Content-Type"), types[ext]):
+			t.Errorf("%s: asset %s → %d, %d bytes, %q", name, p, resp.StatusCode, len(b), resp.Header.Get("Content-Type"))
+		}
+	}
+	t.Logf("%s: %s → %d with %q, %d assets ok", name, path, status, marker, len(seen))
 }
 
 // fetch returns the whole body of GET path.

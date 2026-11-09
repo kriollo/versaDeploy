@@ -21,7 +21,8 @@ type Service struct {
 // Catalog lists the services in install order (same order as setup-vps.sh).
 var Catalog = []Service{
 	{ID: "base", Label: "Base packages (curl, git, unzip…)"},
-	{ID: "php", Label: "PHP-FPM + OPCache", Packages: []string{"php{v}-*"}, Units: []string{"php{v}-fpm"}},
+	{ID: "php", Label: "PHP-FPM + OPCache", Group: "php", Packages: []string{"php{v}-*"}, Units: []string{"php{v}-fpm"}},
+	{ID: "frankenphp", Label: "FrankenPHP (PHP app server)", Group: "php"},
 	{ID: "apache", Label: "Apache2", Group: "web", Packages: []string{"apache2", "apache2-*"}, Units: []string{"apache2"}},
 	{ID: "nginx", Label: "Nginx", Group: "web", Packages: []string{"nginx", "nginx-*", "libnginx-mod-*"}, Units: []string{"nginx"}},
 	{ID: "ssl", Label: "SSL (Let's Encrypt or self-signed)", Packages: []string{"certbot", "python3-certbot*"}},

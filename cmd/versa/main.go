@@ -297,6 +297,38 @@ var statusCmd = &cobra.Command{
 	},
 }
 
+var historyCmd = &cobra.Command{
+	Use:   "history [environment] [id]",
+	Short: "List the server's deploys (who, commit, result), or print one deploy's log",
+	Args:  cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		log, err := logger.NewLogger(logFile, verbose, debug)
+		if err != nil {
+			return fmt.Errorf("failed to initialize logger: %w", err)
+		}
+		defer log.Close()
+		path, err := getOrSelectConfig(cmd)
+		if err != nil {
+			return err
+		}
+		configPath = path
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		d, err := deployer.NewDeployer(cfg, args[0], ".", false, false, false, false, log)
+		if err != nil {
+			return err
+		}
+		id := ""
+		if len(args) == 2 {
+			id = args[1]
+		}
+		n, _ := cmd.Flags().GetInt("limit")
+		return d.PrintHistory(os.Stdout, id, n)
+	},
+}
+
 var sshTestCmd = &cobra.Command{
 	Use:     "ssh-test [environment]",
 	Aliases: []string{"info"},
@@ -981,6 +1013,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&guiMode, "gui", false, "Launch interactive TUI (default behavior; kept for backward compat)")
 	rootCmd.PersistentFlags().BoolVar(&noGUI, "no-gui", false, "Disable TUI and show help")
 
+	historyCmd.Flags().Int("limit", 20, "Number of deploys to list")
 	deployCmd.Flags().Bool("dry-run", false, "Show changes without deploying")
 	deployCmd.Flags().Bool("initial-deploy", false, "Flag for first deployment")
 	deployCmd.Flags().Bool("force", false, "Force redeploy even if no changes detected")
@@ -1001,6 +1034,7 @@ func init() {
 	rootCmd.AddCommand(diffCmd)
 	rootCmd.AddCommand(rollbackCmd)
 	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(historyCmd)
 	rootCmd.AddCommand(sshTestCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(versionCmd)

@@ -432,3 +432,30 @@ func TestPathFnIgnoresPATH(t *testing.T) {
 		t.Fatalf("P resolved from PATH: %s", out)
 	}
 }
+
+// reload: a running service with `reload` reloads instead of restarting; a stopped one,
+// or a failed reload, restarts.
+func TestServiceReload(t *testing.T) {
+	requireSh(t)
+	state := filepath.ToSlash(t.TempDir())
+	env := serviceEnv("/srv/app")
+	env.Services[0].Reload = `touch "` + state + `/reloaded"; [ ! -f "` + state + `/reload-fails" ]`
+	bin := systemdStubs(t, state)
+	script := serviceScript(env, "reload", nil, 0, serverLayout, "I=systemd\n")
+	log := func() string { b, _ := os.ReadFile(filepath.Join(state, "log")); return string(b) }
+
+	// stopped: restart, no reload
+	if out, err := runScript(t, script, bin); err != nil || strings.Contains(out, "reloaded") || !strings.Contains(log(), "restart api") {
+		t.Fatalf("stopped service: %v\n%s\n%s", err, out, log())
+	}
+	os.Remove(filepath.Join(state, "log"))
+	// running: reload only
+	if out, err := runScript(t, script, bin); err != nil || !strings.Contains(out, "reloaded api") || strings.Contains(log(), "restart") {
+		t.Fatalf("running service: %v\n%s\n%s", err, out, log())
+	}
+	// failed reload: restart
+	os.WriteFile(filepath.Join(state, "reload-fails"), nil, 0644)
+	if out, err := runScript(t, script, bin); err != nil || strings.Contains(out, "reloaded") || !strings.Contains(log(), "restart api") {
+		t.Fatalf("failed reload: %v\n%s\n%s", err, out, log())
+	}
+}

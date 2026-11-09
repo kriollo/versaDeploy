@@ -35,6 +35,14 @@ type Logger struct {
 	extraWriter io.Writer // additional writer (used by TUI for streaming)
 	verbose     bool
 	debug       bool
+	parent      *Logger   // set by Tee: entries go on to it
+	tee         io.Writer // set by Tee: plain timestamped copy of every entry
+}
+
+// Tee returns a logger that writes every entry to l and a plain, timestamped copy to
+// w (the deploy log kept on the server). Safe for concurrent use.
+func (l *Logger) Tee(w io.Writer) *Logger {
+	return &Logger{parent: l, tee: w, verbose: l.verbose, debug: l.debug}
 }
 
 // OpenLogFile opens path for appending, creating the file and its folder if needed.
@@ -79,6 +87,13 @@ func (l *Logger) Close() error {
 // log writes a log entry
 func (l *Logger) log(level Level, format string, args ...interface{}) {
 	message := fmt.Sprintf(format, args...)
+	if l.parent != nil {
+		l.mu.Lock()
+		fmt.Fprintf(l.tee, "%s %s %s\n", time.Now().Format("15:04:05"), level, message)
+		l.mu.Unlock()
+		l.parent.log(level, "%s", message)
+		return
+	}
 
 	entry := Entry{
 		Timestamp: time.Now().UTC(),

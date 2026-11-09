@@ -94,6 +94,7 @@ Services that are already active are never preselected.
 | :------ | :----------- |
 | Base packages | curl, git, unzip, build-essential, ufw, cron (for app schedulers)…, plus `provision.packages` (no system upgrade: use `U`/`S`) |
 | PHP-FPM + OPCache | PHP from ondrej (Ubuntu) or sury (Debian), extensions for your DB and Redis, production `php.ini` and OPCache tuned for symlink deploys (`revalidate_path=1`) |
+| FrankenPHP | Alternative to PHP-FPM (`frankenphp: true`): the official static build (pinned version, sha256 checked: PHP 8.5 with pdo_pgsql/mysql, redis, intl, gd, opcache, zip…) in `/usr/local/bin`, `php` for hooks and cron (`frankenphp php-cli`, unless a PHP CLI exists), and the project's config `/etc/frankenphp/<project>.Caddyfile`: 127.0.0.1:`proxy_port` (default 8000), production `php_ini`, client IP and `HTTPS` from nginx. The app runs as a `services` entry (`w` proposes it) that deploys **never restart**: OPcache keys scripts by their real path (`opcache.revalidate_path`), so requests run the new release within 2 s of the switch, each one entirely in one release, and the deploy then frees the old release's scripts with `opcache_reset()` (`reload`) through the project's owner-only socket `<remote_path>/.frankenphp-opcache.sock`. No request is dropped (a FrankenPHP restart or `frankenphp reload` drops the ones in flight). The nginx vhost keeps the versaWYS/Laravel rules and serves the static files; only `/index.php` is proxied, with the original URI, and FrankenPHP runs `index.php` for every request. nginx only; x86_64 and arm64 |
 | Apache2 / Nginx | Web server + the project's vhost (from the versaWYS templates): security headers, rate limiting (nginx: 10 req/s per IP, burst 50, only on requests that reach the app — static files are never limited, also behind a proxy: Next/Nuxt chunks), caching, sensitive files blocked, `$realpath_root` for PHP. Re-running the step regenerates the vhost (with a backup) without touching the web server |
 | SSL | `certbot certonly` for the domain and the aliases that resolve to the server, then the SSL vhost. Skipped with a hint when DNS doesn't point here. With `ssl_self_signed: true` (staging, LAN, Docker): a self-signed certificate in `/etc/ssl/versa/<domain>/`, trusted by the server itself |
 | PostgreSQL | Server + database + user, `pg_hba.conf` rule for 127.0.0.1 |
@@ -115,6 +116,7 @@ Services that are already active are never preselected.
 | :------ | :-------------------- | :--------------------------- | :-- |
 | Base packages, `provision.packages` | ✅ | ✅ (+ EPEL) | all |
 | PHP-FPM + OPCache | ✅ ondrej (Ubuntu) / sury (Debian) | ✅ AppStream, or Remi for other versions and phpredis | Ubuntu, Debian 8.4 · Rocky 8.3 · Alma 8.4 |
+| FrankenPHP | ✅ | ✅ (nginx; check SELinux on enforcing servers) | Ubuntu (versaTodo + Laravel) |
 | Nginx | ✅ | ✅ | Ubuntu, Rocky, Alma |
 | Apache2 | ✅ | ❌ refused: use nginx | Debian |
 | SSL — Let's Encrypt | ✅ | ✅ (certbot from EPEL) | — (needs public DNS) |
@@ -159,7 +161,7 @@ The list comes from [endoflife.date](https://endoflife.date) (once per session, 
 
 The scripts are written to be re-run on production servers:
 
-- **Never an alternative**: Apache installed → nginx is refused (and the opposite); Redis installed → Dragonfly is refused (and the opposite: both want port 6379); MySQL installed → it is reused, MariaDB is never installed over it; a PHP-FPM or Node.js version installed → another one is refused. The TUI blocks the selection and the server script aborts before `apt-get`.
+- **Never an alternative**: Apache installed → nginx is refused (and the opposite); Redis installed → Dragonfly is refused (and the opposite: both want port 6379); MySQL installed → it is reused, MariaDB is never installed over it; a PHP-FPM or Node.js version installed → another one is refused; one PHP per server: PHP-FPM installed → FrankenPHP is refused (and the opposite). The TUI blocks the selection and the server script aborts before `apt-get`.
 - **No surprise upgrades**: packages that are already installed are skipped, never upgraded. Upgrades only happen with `U` / `S`.
 - **Existing services keep their config and keep running**: no changes to `php.ini`, OPCache, `postgresql.conf`, MySQL/MariaDB or Redis config, no restarts. Only what's missing is added (a PHP extension, an Apache module), followed by a graceful reload when needed.
 - **Existing database users keep their password** — other apps may use them. The database and privileges are ensured. Changing the password is an explicit action: **`X`** (then update every `.env` that uses it).
@@ -197,6 +199,7 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 | `aliases` | `[]` | Extra domains (vhost + certificate) |
 | `web_server` | detected, else `nginx` | `nginx` or `apache` |
 | `php_version` | installed one, else newest supported | PHP-FPM version |
+| `frankenphp` | `false` | Run the PHP app on FrankenPHP (a service on `proxy_port`, default 8000) instead of PHP-FPM; see [examples/deploy.laravel-frankenphp.yml](../examples/deploy.laravel-frankenphp.yml) |
 | `python_version` | system | Python installed next to the system one |
 | `node_major` | `engines.node`, else newest LTS | Node.js major |
 | `doc_root` | `current/app` | Document root relative to `remote_path` (releases keep the code in `app/`; e.g. `current/app/public` for Laravel) |
@@ -210,7 +213,7 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 | `cron` | `[]` | `"<min> <hour> <day> <month> <weekday> <command>"` or `"@daily <command>"`, run as `deploy_user` in `current/app`; write `%` as `\%` |
 | `deploy_user` | `ssh.user` | User that owns the releases |
 | `backends` | detected | Written by the TUI for reference |
-| `proxy_port` | builds / per backend | Port of a Python/Go/Node app behind the web server (passed to its service as `PORT`) |
+| `proxy_port` | builds / per backend | Port of a Python/Go/Node app behind the web server (passed to its service as `PORT`), or FrankenPHP's |
 
 ---
 
