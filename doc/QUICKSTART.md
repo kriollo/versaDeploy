@@ -33,7 +33,7 @@ environments:
       php:
         enabled: true
     shared_paths:
-      - ".env"                               # create /var/www/app/shared/.env on the server first
+      - ".env"                               # the first deploy creates it from .env.example
     services_reload:
       - "sudo systemctl reload php8.2-fpm"
 ```
@@ -61,6 +61,7 @@ versa deploy production --dry-run            # same, through the deploy flow
 versa deploy production --force              # redeploy without changes
 versa deploy staging,production              # several environments in a row
 versa status production                      # releases on the server
+versa history production                     # deploys and rollbacks, with their logs
 versa rollback production                    # previous release
 versa rollback production --to 20261001-183807
 versa logs production                        # tail -f the Laravel log

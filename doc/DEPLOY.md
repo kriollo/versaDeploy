@@ -316,8 +316,6 @@ Ready-made configs per framework are in [`examples/`](../examples/).
 
 ---
 
----
-
 ## Hooks
 
 Commands run at fixed points of the deploy. Each entry is a command string, or a `parallel:` block whose commands run at the same time:

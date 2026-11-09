@@ -8,6 +8,7 @@ Common errors and how to fix them. Add `--debug` (and `--log-file deploy.log` to
 - [Builds](#builds)
 - [Hooks](#hooks)
 - [Services](#services)
+- [Services view (server setup)](#services-view-server-setup)
 - [After the deploy](#after-the-deploy)
 
 ---
@@ -271,7 +272,7 @@ The app lives in `current/app/`, so the web root is `<remote_path>/current/app/p
 
 ### `.env` became an empty directory
 
-The shared path didn't exist in `shared/` on the first deploy, so versa created it as a directory. Fix it on the server:
+With versa older than 1.14, a shared path that didn't exist in `shared/` on the first deploy was created as a directory (now the first deploy creates `.env` from `.env.example`, or empty). Fix it on the server:
 
 ```bash
 rmdir /var/www/app/shared/.env && nano /var/www/app/shared/.env

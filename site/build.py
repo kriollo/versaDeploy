@@ -23,11 +23,19 @@ PENDING = """!!! note "Página en inglés"
 """
 
 
+def admonitions(md):
+    """GitHub alerts (> [!TIP]) → Material admonitions (!!! tip)."""
+    def conv(m):
+        body = "\n".join("    " + l[1:].lstrip() if l.startswith(">") else l for l in m[2].rstrip("\n").split("\n"))
+        return f"!!! {m[1].lower()}\n{body}\n"
+    return re.sub(r"^> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\n((?:>.*\n?)*)", conv, md, flags=re.M)
+
+
 def fix_links(md):
     # files outside doc/ (deploy.example.yml, examples/, CHANGELOG.md…) → GitHub
     md = re.sub(r"\]\(\.\./([^)#]+)(#[^)]*)?\)", lambda m: f"]({REPO}/blob/main/{m[1]}{m[2] or ''})", md)
     # the old index page is the site's navigation now
-    return re.sub(r"\]\(INDEX\.md\)", "](../index.md)", md)
+    return admonitions(re.sub(r"\]\(INDEX\.md\)", "](../index.md)", md))
 
 
 def reference():

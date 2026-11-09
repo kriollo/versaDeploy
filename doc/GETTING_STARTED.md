@@ -56,7 +56,7 @@ versa creates `releases/`, `shared/` and the `current` symlink inside it.
 
 ### 2.3 Shared files
 
-Files that must survive between releases (like `.env`) live in `shared/`. Create them **before** the first deploy; versa would otherwise create them as empty directories:
+Files that must survive between releases (like `.env`) live in `shared/`. You don't need to create them: the first deploy creates each missing one once, from the release (e.g. Laravel's `storage/`), else from `<path>.example` (`.env.example`), else an empty `.env` (mode 0640). You then edit `.env` on the server, e.g. from the TUI's **Shared** view. To have it in place before the first deploy, create it by hand:
 
 ```bash
 mkdir -p /var/www/my-app/shared
@@ -174,7 +174,10 @@ The server has no `deploy.lock` yet, so tell versa this is the first deploy:
 versa deploy production --initial-deploy
 ```
 
-versa builds the project, uploads it, links `shared_paths`, switches `current`, and reloads PHP-FPM. Before running the `post_deploy` hooks it asks for confirmation: check that `shared/.env` is right, then answer `y`.
+versa builds the project, uploads it, links `shared_paths` (creating `shared/.env` from `.env.example` if it doesn't exist), switches `current`, and reloads PHP-FPM. Before running the `post_deploy` hooks it asks for confirmation:
+
+- `shared/.env` already has the production settings → answer `y`.
+- It was just created from `.env.example` → answer `N`, edit it (`versa` → **Shared** → `.env` → `Enter` → `e` → `Ctrl+S`), then run `versa deploy production --force` to run the migrations.
 
 ## 6. Everyday use
 
@@ -187,6 +190,7 @@ versa deploy production             # builds and ships only if something changed
 | :------------------------------------------ | :------------------------------------------ |
 | See what would be deployed                  | `versa diff production`                     |
 | See releases on the server                  | `versa status production`                   |
+| See who deployed what, and each deploy's log | `versa history production`                 |
 | Go back to the previous release             | `versa rollback production`                 |
 | Go back to a specific release               | `versa rollback production --to 20261001-183807` |
 | Redeploy even though nothing changed        | `versa deploy production --force`           |

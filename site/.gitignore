@@ -4,3 +4,4 @@ build/
 docs/reference/
 # downloaded from the "media" pre-release by build.py
 docs/media/
+__pycache__/

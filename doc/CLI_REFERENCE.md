@@ -7,7 +7,7 @@ Every `versa` command, its arguments and flags, and what it does on your machine
 - [Choosing the configuration file](#choosing-the-configuration-file)
 - Commands
   - Setup: [`init`](#versa-init) · [`config validate`](#versa-config-validate) · [`ssh-test` / `info`](#versa-ssh-test-versa-info)
-  - Deploying: [`deploy`](#versa-deploy) · [`diff`](#versa-diff) · [`rollback`](#versa-rollback) · [`status`](#versa-status)
+  - Deploying: [`deploy`](#versa-deploy) · [`diff`](#versa-diff) · [`rollback`](#versa-rollback) · [`status`](#versa-status) · [`history`](#versa-history)
   - Operating the server: [`exec`](#versa-exec) · [`logs`](#versa-logs) · [`hooks`](#versa-hooks) · [`services-reload`](#versa-services-reload) · [`service`](#versa-service)
   - The tool itself: [`version`](#versa-version) · [`self-update`](#versa-self-update)
 - [Interactive TUI](#interactive-tui)
@@ -168,7 +168,7 @@ versa deploy staging,production              # several environments, one after a
 7. **Upload**: compresses the release into chunks and uploads them over SFTP in parallel, into `releases/<version>/`. With `incremental_upload: true`, only changed files are sent.
 8. **Prepare**: links `shared_paths`, reuses dependencies from the previous release (`vendor`, `node_modules`, `.venv` …) via hardlinks, restores `preserved_paths`, and for Python creates the virtualenv on the server when it couldn't be reused.
 9. **Activate**: runs `pre_deploy_server` hooks, atomically switches `current → releases/<version>`, runs `services_reload`, runs `post_deploy` hooks, installs and restarts [`services`](DEPLOY.md#services-services) (checking they stay up), then the `health_check`.
-10. **Finish**: writes the new `deploy.lock`, deletes old releases beyond `releases_to_keep`, sends the webhook notification, and releases the lock.
+10. **Finish**: writes the new `deploy.lock`, deletes old releases beyond `releases_to_keep`, sends the webhook notification, records the deploy in the history, and releases the lock.
 
 If a `post_deploy` hook, a service or the health check fails, `current` is switched back to the previous release (and services are restarted on it). See [DEPLOY.md](DEPLOY.md#hooks) for the hook rules.
 
@@ -212,6 +212,7 @@ versa rollback production --to 20261001-183807  # to a specific release
 - Only releases still on the server can be restored (see `releases_to_keep`). A deploy that fails after the switch (`post_deploy`, services or health check) rolls back and deletes its own release, so it can't be restored by mistake.
 - Without `--to`, a second rollback goes further back, never forward to a newer release.
 - `deploy.lock` is not changed. If you then want to redeploy the same commit, use `versa deploy <env> --force`.
+- The rollback is recorded in [`versa history`](#versa-history) (who, when, to which release), like rollbacks from the TUI.
 
 ---
 
@@ -238,7 +239,7 @@ versa status production
 
 ## `versa history`
 
-Lists the deploys recorded on the server, newest first — failed ones too — or prints one deploy's full log.
+Lists the deploys recorded on the server, newest first — failed ones and rollbacks too — or prints one deploy's full log.
 
 ```bash
 versa history production                     # last 20 (--limit N)

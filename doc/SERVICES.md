@@ -68,7 +68,7 @@ environments:
 
 One SSH round-trip (POSIX shell, works on old servers too) reports:
 
-- **Services** — state (`● active`, `● stopped`, `○ absent`) and version of nginx, Apache, PHP-FPM, PostgreSQL, MariaDB/MySQL, Redis, Certbot, Python, Node.js, UFW, the app's service (from `services`), the deploy user, its sudoers, the project directory and the backup timer.
+- **Services** — state (`● active`, `● stopped`, `○ absent`) and version of nginx, Apache, PHP-FPM, FrankenPHP, PostgreSQL, MariaDB/MySQL, Redis, Dragonfly, Certbot, Python, Node.js, UFW, Fail2ban, the app's service (from `services`), the deploy user, its sudoers, the project directory and the backup timer.
 - **Pending updates** per service (`↑ N update(s)`), in red when they are security updates.
 - **Security banner** (also on the Dashboard): pending security updates, *reboot required*, unattended-upgrades off, package index older than 7 days.
 - **Sites on this server** — every enabled vhost with its domains and document root. A vhost made by hand or by certbot under another name is matched to your app by its document root.
@@ -80,7 +80,7 @@ One SSH round-trip (POSIX shell, works on old servers too) reports:
 | PHP | `builds.php` / `composer.json` | PHP-FPM + web server with FastCGI |
 | Python | `builds.python` / `pyproject.toml`, `requirements.txt`, `Pipfile` | Python + reverse proxy to `web_port` + a [`services`](DEPLOY.md#services-services) entry |
 | Go | `builds.go` / `go.mod` | reverse proxy + a `services` entry for the binary |
-| Node | `package.json` with a `start` script (not a static frontend) | Node.js + reverse proxy + a `services` entry running `npm start` |
+| Node | `package.json` with a `start` script, a `services` entry that runs `node`/`npm` (e.g. Nuxt's `.output/server`), or `provision.node_major` (not a static frontend) | Node.js + reverse proxy + a `services` entry running `npm start` |
 
 Python, Go and Node apps run as deploy.yml [`services`](DEPLOY.md#services-services): **each deploy** restarts them (systemd, OpenRC or SysV) and rolls back if they don't stay up. When the environment has no `services`, the view proposes one (name, `exec` for Node, `PORT` = `proxy_port`), and `w` writes it to `deploy.yml`. The *Sudoers* step, run as root, installs and enables their init files and adds the rules deploys need. It does the same as `versa service <env> setup`. The deploy user can only start/stop/restart them: it never writes a file that root runs.
 
@@ -229,4 +229,4 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 go test -tags e2e -v -timeout 60m ./test/e2e/
 ```
 
-It provisions four servers in parallel: **Ubuntu 24.04** (nginx + PostgreSQL + Redis), **Rocky Linux 9** (nginx + PostgreSQL + Redis over dnf, PHP 8.3 from Remi) and **AlmaLinux 9** (nginx + MariaDB + Dragonfly, PHP 8.4 from Remi), each hosting four sample apps — PHP, Python, Go and Node, each with its own domain — and **Debian 12** (Apache + MariaDB + Dragonfly) with versaTodo (`../versaTodo`, skipped when missing), deploys them and checks HTTP and PHP sessions, aliases, backups, cron jobs and extra packages, phpredis against the cache server (and that it only listens on 127.0.0.1), group-writable releases and PHP-FPM's umask, logs, the sites listing, that re-running keeps passwords/configs/processes untouched, and that an alternative web server is refused. `VERSA_E2E_KEEP=1` keeps the containers; `VERSA_E2E_SERVERS=rocky` runs only those servers.
+It provisions five servers in parallel: **Ubuntu 24.04** (nginx + PostgreSQL + Redis), **Rocky Linux 9** (nginx + PostgreSQL + Redis over dnf, PHP 8.3 from Remi) and **AlmaLinux 9** (nginx + MariaDB + Dragonfly, PHP 8.4 from Remi), each hosting four sample apps — PHP, Python, Go and Node, each with its own domain (Ubuntu and Alma also Laravel, Next, Nuxt, Flask, FastAPI and Gin) — **Debian 12** (Apache + MariaDB + Dragonfly) with versaTodo (`../versaTodo`, skipped when missing), and **franken** (Ubuntu with FrankenPHP: versaTodo and Laravel). It deploys them and checks every page as a browser loads it (redirects, content and every asset), no failed request during a deploy, fail2ban (a real scanner is banned, the e2e's own traffic never is), HTTP and PHP sessions, aliases, backups, cron jobs and extra packages, phpredis against the cache server (and that it only listens on 127.0.0.1), group-writable releases and PHP-FPM's umask, logs, the sites listing, that re-running keeps passwords/configs/processes untouched, and that an alternative web server is refused. `VERSA_E2E_KEEP=1` keeps the containers; `VERSA_E2E_SERVERS=rocky` runs only those servers.
