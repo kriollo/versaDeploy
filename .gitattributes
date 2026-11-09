@@ -1,0 +1,5 @@
+# Embedded into the binary and run on Linux servers: LF on every OS (a Windows
+# checkout with CRLF would break bash on the server)
+*.sh   text eol=lf
+*.tmpl text eol=lf
+*.tape text eol=lf

@@ -531,7 +531,7 @@ func TestFail2banScanFilter(t *testing.T) {
 	if m == nil {
 		t.Fatal("no failregex in fail2ban.sh")
 	}
-	re := regexp.MustCompile(strings.Replace(strings.TrimRight(string(m[1]), " "), "<HOST>", `(?P<host>\S+)`, 1) + " ")
+	re := regexp.MustCompile(strings.Replace(strings.TrimRight(string(m[1]), " \r"), "<HOST>", `(?P<host>\S+)`, 1) + " ")
 	line := func(req string, status int) string {
 		return fmt.Sprintf(`203.0.113.7 - - [09/Nov/2026:10:00:00 -0300] "%s HTTP/1.1" %d 162 "-" "Mozilla/5.0"`, req, status) + "\n"
 	}
