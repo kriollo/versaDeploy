@@ -96,3 +96,26 @@ func TestRequireTag(t *testing.T) {
 		}
 	}
 }
+
+func TestWhoamiOverride(t *testing.T) {
+	t.Setenv("VERSA_DEPLOYER", "ci-bot")
+	if w := whoami(); w != "ci-bot" {
+		t.Errorf("whoami = %q", w)
+	}
+}
+
+// Rollbacks (CLI and TUI) are recorded too, without a log.
+func TestRecordRollback(t *testing.T) {
+	c := memSFTP(t)
+	t.Setenv("VERSA_DEPLOYER", "ana")
+	if err := RecordRollback(c, "/srv/app", "20261109-120000", nil); err != nil {
+		t.Fatal(err)
+	}
+	h, err := ReadHistory(c, "/srv/app")
+	if err != nil || len(h) != 1 || h[0].Status != "rollback" || h[0].Release != "20261109-120000" || h[0].By != "ana" || h[0].Log != "" {
+		t.Fatalf("%+v %v", h, err)
+	}
+	if out := strings.Join(FormatHistory(h, 5), "\n"); !strings.Contains(out, "rollback") || !strings.Contains(out, "back to release 20261109-120000") {
+		t.Errorf("history:\n%s", out)
+	}
+}

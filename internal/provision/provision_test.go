@@ -563,3 +563,24 @@ func TestFail2banScanFilter(t *testing.T) {
 		t.Error("an invalid fail2ban_ignore entry must be refused")
 	}
 }
+
+// Nuxt has no "start" script: its service (node .output/server/index.mjs) or
+// provision.node_major still make it a Node backend, so Node.js is preselected.
+func TestDetectNodeWithoutStartScript(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"build":"nuxt build"},"engines":{"node":">=22"}}`), 0644)
+	env := &config.Environment{}
+	env.Builds.Frontend.Enabled = true
+	if b := DetectBackends(env, dir); len(b) != 0 {
+		t.Fatalf("a frontend that is only compiled is no backend: %+v", b)
+	}
+	env.Services = []config.ServiceConfig{{Name: "site", Exec: "node .output/server/index.mjs"}}
+	if b := DetectBackends(env, dir); len(b) != 1 || b[0].Kind != "node" || b[0].Detail != ">=22" {
+		t.Fatalf("node service: %+v", b)
+	}
+	env.Services = nil
+	env.Provision.NodeMajor = "22"
+	if b := DetectBackends(env, dir); len(b) != 1 || b[0].Kind != "node" {
+		t.Fatalf("node_major: %+v", b)
+	}
+}

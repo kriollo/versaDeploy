@@ -60,4 +60,6 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
       - name: Deploy
+        env:
+          VERSA_DEPLOYER: ${{ github.actor }} # who shows up in versa history
         run: versa deploy ${{ startsWith(github.ref, 'refs/tags/') && 'production' || 'staging' }} --config deploy.yml

@@ -1,0 +1,119 @@
+{
+  "scenes": [
+    {
+      "id": "title",
+      "lines": [
+        "Esto es versaDeploy.",
+        "Lleva tus aplicaciones desde tu computador a un VPS Linux, por SSH, sin instalar agentes en el servidor."
+      ]
+    },
+    {
+      "id": "problem",
+      "title": "¿Cómo despliegas hoy?",
+      "items": ["Subir archivos por FTP", "Comandos a mano en el servidor", "Un error = la app caída", "¿Quién subió qué, y cuándo?"],
+      "answer": "versa deploy production",
+      "lines": [
+        "Subir archivos a mano, correr comandos en el servidor y cruzar los dedos.",
+        "Con versaDeploy, un deploy es un solo comando."
+      ]
+    },
+    {
+      "id": "pipeline",
+      "title": "Qué hace un deploy",
+      "steps": [
+        { "icon": "🔍", "name": "Detecta", "desc": "SHA256 de cada archivo: solo lo que cambió" },
+        { "icon": "🛠", "name": "Compila", "desc": "composer, npm, Go, Python… en tu equipo" },
+        { "icon": "📦", "name": "Sube", "desc": "SFTP en paralelo, por partes" },
+        { "icon": "⚡", "name": "Activa", "desc": "un symlink atómico: cero downtime" }
+      ],
+      "lines": [
+        "Detecta qué archivos cambiaron, compila en tu computador y sube solo lo necesario.",
+        "Después activa la nueva versión cambiando un enlace simbólico: sin tiempo fuera de línea."
+      ]
+    },
+    {
+      "id": "rollback",
+      "title": "Si algo falla, vuelve solo",
+      "lines": [
+        "Si una migración, un servicio o el health check fallan, versa vuelve a la versión anterior por su cuenta.",
+        "Y si te arrepientes, versa rollback lo hace en segundos."
+      ]
+    },
+    {
+      "id": "frameworks",
+      "title": "Tu stack, listo para desplegar",
+      "items": ["Laravel", "versaWYS", "PHP", "Next.js", "Nuxt", "Node.js", "FastAPI", "Flask", "Django", "Go · Gin", "Vite / SPA", "FrankenPHP"],
+      "lines": [
+        "Funciona con PHP, Node, Python y Go.",
+        "Trae ejemplos listos para Laravel, Next, Nuxt, FastAPI, Flask y Gin, probados de punta a punta."
+      ]
+    },
+    {
+      "id": "services",
+      "title": "Prepara el servidor por ti",
+      "shot": "services",
+      "items": ["Nginx o Apache", "PHP-FPM o FrankenPHP", "PostgreSQL o MariaDB", "Redis o Dragonfly", "Python + virtualenv", "Node.js", "SSL Let's Encrypt", "Fail2ban + firewall", "Backups diarios", "Cron jobs", "Usuario de deploy + llave SSH"],
+      "lines": [
+        "Desde la vista Services, versa detecta el servidor e instala lo que tu app necesita.",
+        "Web server, PHP o FrankenPHP, bases de datos, Redis, Node, Python, SSL, fail2ban, backups y cron.",
+        "Y es seguro en servidores en uso: nunca reemplaza lo que ya existe ni reinicia lo que está corriendo."
+      ]
+    },
+    {
+      "id": "distros",
+      "title": "Tus servidores Linux",
+      "items": ["Ubuntu", "Debian", "Rocky Linux", "AlmaLinux", "RHEL", "CentOS 5 y 6"],
+      "lines": [
+        "Funciona en Ubuntu, Debian, Rocky, Alma y Red Hat.",
+        "Y los deploys funcionan incluso en servidores antiguos, como CentOS 5."
+      ]
+    },
+    {
+      "id": "tui",
+      "title": "Todo desde la terminal",
+      "shot": "env",
+      "items": ["Releases y rollback", "Explorador de archivos", "Editor del .env del servidor", "Terminal remota", "Logs y servicios"],
+      "lines": [
+        "Su interfaz en la terminal te muestra el servidor, los releases y los servicios.",
+        "Y te deja editar el .env de producción sin salir de ahí: nunca entra a git."
+      ]
+    },
+    {
+      "id": "team",
+      "title": "Para equipos y CI",
+      "shot": "history",
+      "items": ["Historial: quién, qué commit, cuánto tardó", "Producción solo desde tags", "Avisos a Slack, Discord, Teams y Telegram", "GitHub Actions listo para usar"],
+      "lines": [
+        "Cada deploy queda en un historial: quién lo hizo, qué commit y cuánto tardó.",
+        "Te avisa en Slack, Discord o Telegram, y se integra con GitHub Actions."
+      ]
+    },
+    {
+      "id": "security",
+      "title": "Seguro por defecto",
+      "items": ["Verifica la llave del servidor", "Los secretos nunca salen del servidor", "Un deploy a la vez", "Actualizaciones verificadas con sha256"],
+      "lines": [
+        "Verifica la identidad del servidor, despliega solo código commiteado y tus secretos nunca salen del servidor."
+      ]
+    },
+    {
+      "id": "install",
+      "title": "Instálalo en un minuto",
+      "code": "curl -fsSL https://raw.githubusercontent.com/kriollo/versaDeploy/main/install.sh | sh",
+      "lines": [
+        "Se instala con una sola línea, en Linux y macOS. También hay binario para Windows.",
+        "Es gratis y de código abierto."
+      ]
+    },
+    {
+      "id": "outro",
+      "title": "versaDeploy",
+      "url": "github.com/kriollo/versaDeploy",
+      "next": ["Laravel", "FastAPI", "Nuxt"],
+      "lines": [
+        "En los próximos videos desplegamos Laravel, FastAPI y Nuxt, paso a paso.",
+        "¡Nos vemos!"
+      ]
+    }
+  ]
+}

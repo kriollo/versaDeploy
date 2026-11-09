@@ -486,14 +486,15 @@ func doRollback(client *versassh.Client, remotePath, targetRelease string, env *
 	return func() tea.Msg {
 		currentSymlink := filepath.ToSlash(filepath.Join(remotePath, "current"))
 		relTarget := filepath.ToSlash(filepath.Join("releases", targetRelease))
-		return rollbackDone(client, client.CreateSymlink(relTarget, currentSymlink), env)
+		return rollbackDone(client, client.CreateSymlink(relTarget, currentSymlink), env, remotePath, targetRelease)
 	}
 }
 
 // rollbackDone runs services_reload and restarts the env's services after a successful
 // symlink switch (PHP-FPM caches the old target of current, and long-running services
 // keep running the old binary); failures here don't undo the rollback.
-func rollbackDone(client *versassh.Client, err error, env *config.Environment) msgRollbackDone {
+func rollbackDone(client *versassh.Client, err error, env *config.Environment, remotePath, release string) msgRollbackDone {
+	deployer.RecordRollback(client, remotePath, release, err) // best effort: the rollback is what matters
 	if err != nil {
 		return msgRollbackDone{err: err}
 	}
@@ -534,7 +535,7 @@ func doRollbackToPrevious(client *versassh.Client, remotePath string, env *confi
 		}
 
 		relTarget := filepath.ToSlash(filepath.Join("releases", previous))
-		return rollbackDone(client, client.CreateSymlink(relTarget, currentSymlink), env)
+		return rollbackDone(client, client.CreateSymlink(relTarget, currentSymlink), env, remotePath, previous)
 	}
 }
 

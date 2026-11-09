@@ -1088,7 +1088,11 @@ func (d *Deployer) Rollback() error {
 
 	// Switch symlink
 	relativeTarget := filepath.ToSlash(filepath.Join("releases", previousRelease))
-	if err := sshClient.CreateSymlink(relativeTarget, currentSymlink); err != nil {
+	err = sshClient.CreateSymlink(relativeTarget, currentSymlink)
+	if hErr := RecordRollback(sshClient, d.env.RemotePath, previousRelease, err); hErr != nil {
+		d.log.Warn("Could not update the deploy history: %v", hErr)
+	}
+	if err != nil {
 		return err
 	}
 
@@ -1805,7 +1809,11 @@ func (d *Deployer) RollbackTo(targetVersion string) error {
 	// Switch symlink
 	currentSymlink := filepath.ToSlash(filepath.Join(d.env.RemotePath, "current"))
 	absoluteTarget := filepath.ToSlash(filepath.Join(d.env.RemotePath, "releases", targetVersion))
-	if err := sshClient.CreateSymlink(absoluteTarget, currentSymlink); err != nil {
+	err = sshClient.CreateSymlink(absoluteTarget, currentSymlink)
+	if hErr := RecordRollback(sshClient, d.env.RemotePath, targetVersion, err); hErr != nil {
+		d.log.Warn("Could not update the deploy history: %v", hErr)
+	}
+	if err != nil {
 		return err
 	}
 

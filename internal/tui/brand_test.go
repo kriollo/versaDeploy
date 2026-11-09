@@ -153,3 +153,18 @@ func TestExplicitConfigSkipsPicker(t *testing.T) {
 		}
 	}
 }
+
+// A long status never wraps the status bar (it pushed the header off the screen).
+func TestStatusbarOneLine(t *testing.T) {
+	hints := "←/→:views  Tab:sidebar  ↑/↓:navigate  ↵:select  F5:refresh  D:deploy  R:rollback  c:connect  q:quit"
+	long := "Connection failed: SSH Authentication failed — Check your SSH private key path and ensure it's added to the remote server's authorized_keys. — fresh server? Services → P prepares it for deploy"
+	for _, w := range []int{40, 80, 120, 200} {
+		out := renderStatusbar(w, hints, long)
+		if n := strings.Count(out, "\n"); n != 0 || lipgloss.Width(out) > w {
+			t.Errorf("width %d: %d extra lines, width %d", w, n, lipgloss.Width(out))
+		}
+		if !strings.Contains(out, "Connection failed") {
+			t.Errorf("width %d: the status must win over the hints: %q", w, out)
+		}
+	}
+}

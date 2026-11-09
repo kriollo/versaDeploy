@@ -362,9 +362,9 @@ esac
 				// where the deploy user can't reach systemd's bus.
 				fmt.Fprintf(&b, `sleep %d
 case $I in
-systemd) { systemctl is-active --quiet "$N" 2>/dev/null || $S $(P systemctl) is-active --quiet "$N" 2>/dev/null; } || { echo "$N is not running:"; systemctl status "$N" --no-pager -n 20 2>&1; rc=1; } ;;
-openrc) $S $(P rc-service) "$N" status >/dev/null 2>&1 || { echo "$N is not running:"; tail -n 20 %[2]s; rc=1; } ;;
-sysv) $S "$ETC/init.d/$N" status >/dev/null 2>&1 || { echo "$N is not running:"; tail -n 20 %[2]s; rc=1; } ;;
+systemd) { systemctl is-active --quiet "$N" 2>/dev/null || $S $(P systemctl) is-active --quiet "$N" 2>/dev/null; } && echo "$N is running" || { echo "$N is not running:"; systemctl status "$N" --no-pager -n 20 2>&1; rc=1; } ;;
+openrc) $S $(P rc-service) "$N" status >/dev/null 2>&1 && echo "$N is running" || { echo "$N is not running:"; tail -n 20 %[2]s; rc=1; } ;;
+sysv) $S "$ETC/init.d/$N" status >/dev/null 2>&1 && echo "$N is running" || { echo "$N is not running:"; tail -n 20 %[2]s; rc=1; } ;;
 esac
 `, wait, q(l.log+"/"+name+".log"))
 			}

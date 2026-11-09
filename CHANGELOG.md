@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Rollbacks in the deploy history**: `versa rollback` and the TUI's rollbacks are recorded (who, when, back to which release), next to the deploys.
+- **`VERSA_DEPLOYER`** names who deployed in `versa history` (default `user@host`); in CI, `VERSA_DEPLOYER: ${{ github.actor }}` (the GitHub Actions example sets it).
+- `versa service <env> restart` (and deploys) print `<service> is running` when the service stays up; it used to print nothing on success.
+
+### Fixed
+
+- **The TUI's header disappeared** when a long message (an SSH error) didn't fit the status bar: the bar wrapped onto several lines and pushed the whole view up. The status bar is always one line now, the message cut with "…".
+- **Nuxt apps weren't detected as a Node backend** in the Services view (Node.js not preselected) because Nuxt has no `start` script: a service that runs `node`/`npm`, or `provision.node_major`, now marks the app as a Node server too.
+
 ## [1.16.0] - 2026-11-09
 
 ### Added

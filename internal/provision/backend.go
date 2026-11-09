@@ -38,7 +38,9 @@ func DetectBackends(env *config.Environment, repoPath string) []Backend {
 		out = append(out, Backend{"go", b.Go.BinaryName, "deploy.yml"})
 	}
 	if b.Frontend.Enabled && !b.PHP.Enabled {
-		if pkg, ok := readPackageJSON(filepath.Join(repoPath, b.Frontend.ProjectRoot)); ok && pkg.Scripts["start"] != "" {
+		// a Node server: npm start, or a service that runs node (Nuxt's .output/server,
+		// which has no start script), or the node_major the provision block asks for
+		if pkg, ok := readPackageJSON(filepath.Join(repoPath, b.Frontend.ProjectRoot)); ok && (pkg.Scripts["start"] != "" || runsNode(env) || env.Provision.NodeMajor != "") {
 			out = append(out, Backend{"node", pkg.Engines["node"], "deploy.yml"})
 		}
 	}
@@ -63,6 +65,18 @@ func DetectBackends(env *config.Environment, repoPath string) []Backend {
 		out = append(out, Backend{"node", pkg.Engines["node"], "package.json"})
 	}
 	return out
+}
+
+// runsNode reports whether a service runs a Node.js program.
+func runsNode(env *config.Environment) bool {
+	for _, svc := range env.Services {
+		switch f := strings.Fields(svc.Exec); {
+		case len(f) == 0:
+		case f[0] == "node" || f[0] == "npm" || f[0] == "npx" || f[0] == "pnpm" || f[0] == "yarn" || strings.HasSuffix(f[0], "/node"):
+			return true
+		}
+	}
+	return false
 }
 
 type packageJSON struct {

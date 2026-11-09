@@ -1,0 +1,61 @@
+{
+  "title": "Nuxt con SSR",
+  "subtitle": "Un sitio Node detrás de nginx, y un rollback",
+  "start_caption": "Es un Nuxt 4 nuevo",
+  "end_caption": "Eso es todo",
+  "opening": {
+    "lines": [
+      "En este episodio desplegamos un sitio Nuxt con SSR: un proceso Node que corre en el servidor, detrás de nginx.",
+      "Y al final probamos lo más importante: volver atrás cuando algo sale mal."
+    ]
+  },
+  "chapters": {
+    "1": {
+      "lines": [
+        "Nuxt se compila en tu computador con npm run build. El resultado, la carpeta output, trae todo lo que necesita para correr.",
+        "En el servidor, versa la ejecuta con Node como servicio de systemd, en el puerto 3000."
+      ],
+      "bullets": ["builds.frontend: npm ci + npm run build", "services: node .output/server/index.mjs", "provision: Node.js 22 + nginx como proxy", "Sin base de datos"]
+    },
+    "2": {
+      "lines": [
+        "versa detecta que es una app Node y marca Node.js, nginx, el usuario de deploy y fail2ban."
+      ],
+      "bullets": ["Node.js 22 (NodeSource)", "Nginx como proxy al puerto 3000", "Usuario deploy con tu llave SSH", "Fail2ban"]
+    },
+    "3": {
+      "lines": [
+        "El primer deploy compila, sube la carpeta output y arranca el servicio.",
+        "nginx sirve los archivos estáticos sin límite y le pasa el resto a Nuxt."
+      ],
+      "bullets": ["npm run build en tu computador", "Sube .output", "Arranca el servicio y verifica la página"]
+    },
+    "4": {
+      "visual": "env",
+      "lines": [
+        "Nuxt lee las variables NUXT_PUBLIC del entorno al arrancar.",
+        "Así cambiamos la configuración del sitio en el servidor, sin tocar el código."
+      ]
+    },
+    "5": {
+      "visual": "rollback",
+      "lines": [
+        "Cada deploy es una carpeta nueva en releases, y current apunta a la que está en línea.",
+        "Volver atrás es mover ese enlace a la versión anterior: toma un segundo."
+      ]
+    }
+  },
+  "browser": {
+    "url": "http://misitio.localhost:8099/",
+    "lines": [
+      "Y así se ve el sitio en el navegador: renderizado en el servidor, con el nombre que le dimos en el .env."
+    ]
+  },
+  "outro": {
+    "next": "",
+    "lines": [
+      "Laravel, FastAPI y Nuxt: el mismo flujo para cualquier app.",
+      "versaDeploy es gratis y de código abierto. ¡Gracias por ver!"
+    ]
+  }
+}

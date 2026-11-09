@@ -74,17 +74,16 @@ func (d *Deployer) endAttempt(c *ssh.Client, release, commit string, deployErr e
 	if deployErr != nil {
 		e.Status, e.Error = "failure", deployErr.Error()
 	}
-	prev, err := d.appendHistory(c, e, d.logBuf.Bytes())
+	prev, err := appendHistory(c, d.remote("history"), e, d.logBuf.Bytes())
 	if err != nil {
 		d.log.Warn("Could not update the deploy history: %v", err)
 	}
 	d.prevStatus = prev
 }
 
-// appendHistory adds e (and its log) to the server's history, drops the oldest entries
-// and logs, and returns the status of the attempt before e ("" if none).
-func (d *Deployer) appendHistory(c *ssh.Client, e HistoryEntry, logData []byte) (string, error) {
-	dir := d.remote("history")
+// appendHistory adds e (and its log, if any) to the history in dir, drops the oldest
+// entries and logs, and returns the status of the attempt before e ("" if none).
+func appendHistory(c *ssh.Client, dir string, e HistoryEntry, logData []byte) (string, error) {
 	if err := c.MkdirAll(dir); err != nil {
 		return "", err
 	}
@@ -96,10 +95,12 @@ func (d *Deployer) appendHistory(c *ssh.Client, e HistoryEntry, logData []byte) 
 	if len(entries) > 0 {
 		prev = entries[len(entries)-1].Status
 	}
-	e.Log = e.ID + ".log"
-	// logs can carry hook output (secrets): private, like the deploy artifacts
-	if err := c.WriteRemoteFileMode(path.Join(dir, e.Log), logData, 0600); err != nil {
-		e.Log = ""
+	if logData != nil {
+		e.Log = e.ID + ".log"
+		// logs can carry hook output (secrets): private, like the deploy artifacts
+		if err := c.WriteRemoteFileMode(path.Join(dir, e.Log), logData, 0600); err != nil {
+			e.Log = ""
+		}
 	}
 	entries = append(entries, e)
 	for i := range len(entries) - historyLogs {
@@ -144,6 +145,17 @@ func (d *Deployer) History(c *ssh.Client) ([]HistoryEntry, error) {
 	return ReadHistory(c, d.env.RemotePath)
 }
 
+// RecordRollback adds a rollback to release (CLI or TUI) to the history under remotePath.
+func RecordRollback(c *ssh.Client, remotePath, release string, rollbackErr error) error {
+	now := time.Now().UTC()
+	e := HistoryEntry{ID: now.Format("20060102-150405"), Started: now, Status: "rollback", Release: release, By: whoami(), Version: version.Version}
+	if rollbackErr != nil {
+		e.Status, e.Error = "failure", "rollback to "+release+": "+rollbackErr.Error()
+	}
+	_, err := appendHistory(c, path.Join(remotePath, "history"), e, nil)
+	return err
+}
+
 // ReadHistory returns the deploy history under remotePath, oldest first.
 func ReadHistory(c *ssh.Client, remotePath string) ([]HistoryEntry, error) {
 	return readHistory(c, path.Join(remotePath, "history"))
@@ -151,7 +163,7 @@ func ReadHistory(c *ssh.Client, remotePath string) ([]HistoryEntry, error) {
 
 // FormatHistory renders the newest n entries, newest first, as table lines.
 func FormatHistory(entries []HistoryEntry, n int) []string {
-	lines := []string{fmt.Sprintf("%-15s  %-7s  %-6s  %-8s  %-12s  %s", "ID", "STATUS", "TIME", "COMMIT", "TAG", "BY")}
+	lines := []string{fmt.Sprintf("%-15s  %-8s  %-6s  %-8s  %-12s  %s", "ID", "STATUS", "TIME", "COMMIT", "TAG", "BY")}
 	for i := len(entries) - 1; i >= 0 && i >= len(entries)-n; i-- {
 		e := entries[i]
 		status := e.Status
@@ -162,7 +174,10 @@ func FormatHistory(entries []HistoryEntry, n int) []string {
 		if len(commit) > 8 {
 			commit = commit[:8]
 		}
-		lines = append(lines, fmt.Sprintf("%-15s  %-7s  %5.0fs  %-8s  %-12s  %s", e.ID, status, e.DurationS, commit, strings.Join(e.Tags, ","), e.By))
+		lines = append(lines, fmt.Sprintf("%-15s  %-8s  %5.0fs  %-8s  %-12s  %s", e.ID, status, e.DurationS, commit, strings.Join(e.Tags, ","), e.By))
+		if e.Status == "rollback" {
+			lines = append(lines, "                 └ back to release "+e.Release)
+		}
 		if e.Error != "" {
 			msg := strings.SplitN(e.Error, "\n", 2)[0]
 			if r := []rune(msg); len(r) > 110 {
@@ -201,8 +216,11 @@ func (d *Deployer) requireTag() error {
 	return fmt.Errorf("%s only deploys tagged commits (deploy_tags: %q) and this commit has no matching tag: tag it first, e.g. git tag v1.2.0 && git push --tags", d.envName, d.env.DeployTags)
 }
 
-// whoami names who ran the deploy: user@host.
+// whoami names who ran the deploy: $VERSA_DEPLOYER (e.g. the CI's user), else user@host.
 func whoami() string {
+	if v := strings.TrimSpace(os.Getenv("VERSA_DEPLOYER")); v != "" {
+		return v
+	}
 	name := "unknown"
 	if u, err := user.Current(); err == nil {
 		name = u.Username

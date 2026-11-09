@@ -549,7 +549,7 @@ Payload:
 
 ## Deploy history
 
-Every deploy that reaches the server is recorded there, successful or not, with its full log: `<remote_path>/history/history.jsonl` (the last 100 deploys) and `history/<id>.log` (the last 20). Failed deploys are recorded too, although their release is deleted by the rollback. Logs can hold hook output, so the files are `0600`.
+Every deploy that reaches the server is recorded there, successful or not, with its full log, and so is every rollback (from `versa rollback` or the TUI: who went back to which release): `<remote_path>/history/history.jsonl` (the last 100 deploys) and `history/<id>.log` (the last 20). Failed deploys are recorded too, although their release is deleted by the rollback. Logs can hold hook output, so the files are `0600`.
 
 ```text
 $ versa history production
@@ -560,7 +560,7 @@ ID               STATUS   TIME    COMMIT    TAG           BY
 $ versa history production 20261108-150140    # that deploy's full log
 ```
 
-The TUI shows the last 10 under **Operations → t**, and the logs in **Files → history/**.
+The TUI shows the last 10 under **Operations → t**, and the logs in **Files → history/**. `BY` is `user@host` of the machine that deployed; set `VERSA_DEPLOYER` to name it yourself (in CI: `VERSA_DEPLOYER: ${{ github.actor }}`).
 
 ---
 

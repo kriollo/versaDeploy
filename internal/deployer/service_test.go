@@ -224,8 +224,8 @@ func TestServiceRestartVerifies(t *testing.T) {
 	bin := systemdStubs(t, filepath.ToSlash(state))
 	script := serviceScript(env, "restart", nil, 0, serverLayout, "I=systemd\n")
 
-	if out, err := runScript(t, script, bin); err != nil {
-		t.Fatalf("restart of a healthy service failed: %v\n%s", err, out)
+	if out, err := runScript(t, script, bin); err != nil || !strings.Contains(out, "api is running") {
+		t.Fatalf("restart of a healthy service failed or said nothing: %v\n%s", err, out)
 	}
 
 	os.Remove(filepath.Join(state, "active"))

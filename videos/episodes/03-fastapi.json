@@ -1,0 +1,62 @@
+{
+  "title": "FastAPI + PostgreSQL",
+  "subtitle": "Una API en producción, con su base de datos",
+  "start_caption": "Es una API pequeña",
+  "end_caption": "Si algo sale mal: versa rollback",
+  "opening": {
+    "lines": [
+      "En este episodio desplegamos una API hecha con FastAPI, con su base de datos PostgreSQL.",
+      "Veremos cómo corre como servicio, cómo se configura con el .env y cómo se actualiza."
+    ]
+  },
+  "chapters": {
+    "1": {
+      "lines": [
+        "El deploy.yml de una API Python: versa crea el virtualenv en el servidor y la corre con uvicorn, como servicio de systemd.",
+        "nginx recibe las visitas y se las pasa a la API, que solo escucha en el puerto 8000 local."
+      ],
+      "bullets": ["builds.python: virtualenv + uvicorn", "services: un servicio de systemd", "provision: nginx como proxy al puerto 8000", "health_check: /docs"]
+    },
+    "2": {
+      "lines": [
+        "versa detecta que es una API FastAPI y marca lo que necesita: Python, nginx y PostgreSQL.",
+        "También crea la base de datos y su usuario, con la contraseña que le damos por variable."
+      ],
+      "bullets": ["Python 3 + venv", "Nginx como proxy", "PostgreSQL: base y usuario", "Fail2ban y backups"]
+    },
+    "3": {
+      "lines": [
+        "En el primer deploy, versa instala las dependencias de requirements.txt en el servidor y arranca el servicio.",
+        "La API va a responder, pero todavía con la configuración de ejemplo."
+      ],
+      "bullets": ["Sube el código", "Crea el virtualenv en el servidor", "Arranca el servicio y verifica /docs"]
+    },
+    "4": {
+      "visual": "env",
+      "lines": [
+        "El .env vive en el servidor y systemd lo carga en el entorno del servicio al arrancar.",
+        "Por eso, después de editarlo, se reinicia el servicio."
+      ]
+    },
+    "5": {
+      "lines": [
+        "Ahora un cambio de código: un endpoint nuevo.",
+        "versa detecta qué cambió y, como requirements.txt es el mismo, reutiliza el virtualenv: el deploy toma segundos."
+      ],
+      "bullets": ["Solo sube el archivo que cambió", "Reutiliza el virtualenv", "Reinicia y verifica el servicio"]
+    }
+  },
+  "browser": {
+    "url": "http://miapi.localhost:8099/docs",
+    "lines": [
+      "Y esta es la API en el servidor, con su documentación interactiva en /docs."
+    ]
+  },
+  "outro": {
+    "next": "Nuxt",
+    "lines": [
+      "Si algo sale mal, versa rollback production vuelve a la versión anterior al instante.",
+      "En el próximo episodio: un sitio Nuxt con SSR. ¡Nos vemos!"
+    ]
+  }
+}

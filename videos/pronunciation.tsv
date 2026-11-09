@@ -1,0 +1,93 @@
+# How the voice says what the captions write (Spanish voice, English tech words).
+# word<TAB>spoken — whole words, case-sensitive, longest first. Captions stay as written.
+versaDeploy	versa diplói
+deploy.yml	diplói punto iámel
+deploy.laravel.yml	diplói punto laravel punto iámel
+deploys	diplóis
+deploy	diplói
+--initial-deploy	initial diplói
+--force	fórs
+shared_paths	shérd páths
+post_deploy	post diplói
+health check	jélz chek
+health_check	jélz chek
+builds	bilds
+provision	províshon
+services	sérvises
+rollback	rólbak
+.env.example	punto env punto exámpol
+.env	punto env
+APP_KEY	app kei
+storage/	estórach
+storage	estórach
+nginx	enyin éx
+PostgreSQL	póstgres
+Redis	rédis
+PHP	pe hache pe
+SSH	ese ese hache
+SSL	ese ese ele
+SFTP	ese efe te pe
+VPS	ve pe ese
+API	a pe i
+FastAPI	fast a pe i
+uvicorn	iuvicorn
+systemd	sístem de
+virtualenv	virtual env
+requirements.txt	ricuáirments punto te equis te
+Nuxt	nakst
+SSR	ese ese erre
+Node.js	nóud yei es
+Node	nóud
+npm	en pe eme
+Vite	vit
+composer	compóuser
+Docker	dóker
+git	guit
+commit	comit
+commiteado	comiteado
+nano	nano
+fail2ban	feil tu ban
+Ctrl+O	control o
+Ctrl+X	control equis
+Ctrl+S	control ese
+/up	slash ap
+/health	slash jelz
+/docs	slash docs
+mitienda.localhost	mi tienda punto lócaljost
+miapi.localhost	mi a pe i punto lócaljost
+misitio.localhost	mi sitio punto lócaljost
+DB_PASS	de be pass
+Laravel	laravel
+Ubuntu	ubuntu
+cron	cron
+backups	bákaps
+symlink	sím link
+.output	punto áutput
+versa	versa
+Next	next
+Next.js	next yei es
+Gin	guin
+Django	yango
+Flask	flask
+Red Hat	red jat
+CentOS	sent o ese
+Rocky	róki
+Alma	alma
+Slack	eslak
+Discord	díscord
+Telegram	télegram
+GitHub Actions	guitjab ákshons
+macOS	mak o ese
+Windows	uíndous
+SHA256	sha dos cinco seis
+NUXT_PUBLIC	nakst páblik
+output	áutput
+npm run build	en pe eme ran bild
+npm ci	en pe eme si ai
+current	kárrent
+releases	rilíses
+shared	shérd
+artisan	ártisan
+php artisan migrate	pe hache pe ártisan mígreit
+php artisan optimize	pe hache pe ártisan óptimais
+uvicorn	iuvicorn

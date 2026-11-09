@@ -1,0 +1,63 @@
+{
+  "title": "Laravel en un VPS",
+  "subtitle": "De un servidor vacío a la app en línea",
+  "start_caption": "Este es un Laravel nuevo",
+  "end_caption": "Desde ahora, cada cambio es",
+  "opening": {
+    "lines": [
+      "En este episodio llevamos una app Laravel desde nuestro computador a un VPS recién creado.",
+      "Son cinco pasos, y al final la veremos funcionando en el navegador."
+    ]
+  },
+  "chapters": {
+    "1": {
+      "lines": [
+        "Primero, el archivo deploy.yml: le dice a versa dónde está tu servidor, qué necesita y cómo se compila tu app.",
+        "Partimos del ejemplo para Laravel y solo cambiamos el nombre, el dominio y la IP del servidor."
+      ],
+      "bullets": ["ssh: cómo conectarse", "provision: qué instalar en el servidor", "shared_paths: el .env y storage", "builds: composer y Vite", "post_deploy: migraciones y caches"]
+    },
+    "2": {
+      "lines": [
+        "Un VPS recién creado no tiene nada: ni nginx, ni PHP, ni base de datos.",
+        "La vista Services lo detecta y lo instala todo por SSH, sin dejar agentes en el servidor."
+      ],
+      "bullets": ["Nginx + PHP-FPM 8.4", "PostgreSQL + Redis", "Usuario deploy con tu llave SSH", "Backups diarios, cron y fail2ban"]
+    },
+    "3": {
+      "lines": [
+        "El primer deploy compila en tu computador, sube el código y lo activa con un enlace simbólico.",
+        "Las migraciones esperan: antes hay que configurar el .env de producción."
+      ],
+      "bullets": ["Compila: composer + Vite", "Sube por SFTP", "Activa: current → la nueva versión"]
+    },
+    "4": {
+      "visual": "env",
+      "lines": [
+        "El .env de producción vive en el servidor, en la carpeta shared, y cada versión lo enlaza.",
+        "Nunca pasa por git ni por tu computador: lo editas directo en el servidor, desde la vista Shared."
+      ]
+    },
+    "5": {
+      "lines": [
+        "Con el .env listo, el deploy corre las migraciones, arma los caches de Laravel y verifica que la app responda.",
+        "Si algo de eso fallara, versa volvería solo a la versión anterior."
+      ],
+      "bullets": ["php artisan migrate", "php artisan optimize", "health check en /up"]
+    }
+  },
+  "browser": {
+    "url": "http://mitienda.localhost:8099/",
+    "lines": [
+      "Y aquí está: Laravel funcionando en el servidor, con sus estilos y su base de datos."
+    ]
+  },
+  "outro": {
+    "next": "FastAPI",
+    "lines": [
+      "Desde ahora, cada cambio es un commit y versa deploy production. Solo sube lo que cambió.",
+      "Si algo sale mal, versa rollback production vuelve atrás al instante.",
+      "En el próximo episodio: una API con FastAPI. ¡Nos vemos!"
+    ]
+  }
+}
