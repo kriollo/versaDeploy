@@ -41,6 +41,7 @@ def shots():
 def main():
     script = json.load(open(os.path.join(HERE, "script.json"), encoding="utf-8"))
     os.makedirs(os.path.join(PUB, "voice"), exist_ok=True)
+    voice.prefetch([l for s in script["scenes"] for l in s["lines"]])
     t, scenes, srt = 0.0, [], []
     for si, scene in enumerate(script["scenes"]):
         start = t

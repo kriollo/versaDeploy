@@ -1,0 +1,6 @@
+.hero { text-align: center; margin: 1rem 0 2rem; }
+.hero img { width: 140px; border-radius: 28px; box-shadow: 0 10px 30px #0006; }
+.hero h1 { font-size: 2.6rem; margin: .6rem 0 .2rem; font-weight: 800; }
+.hero p { font-size: 1.15rem; opacity: .85; }
+video { width: 100%; border-radius: 12px; box-shadow: 0 10px 30px #0005; margin: .5rem 0 1rem; }
+.md-typeset .grid.cards > ul > li { border-radius: 12px; }

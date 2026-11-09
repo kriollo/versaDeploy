@@ -1,0 +1,100 @@
+site_name: versaDeploy
+site_url: https://versadeploy.websystem.cl/
+site_description: Deploys atómicos a tu VPS Linux por SSH, sin agentes. PHP, Node, Python y Go, con provisioning del servidor y una interfaz en la terminal.
+repo_url: https://github.com/kriollo/versaDeploy
+repo_name: kriollo/versaDeploy
+edit_uri: ""
+copyright: versaDeploy — MIT License
+
+theme:
+  name: material
+  language: es
+  logo: assets/logo.webp
+  favicon: assets/logo.webp
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: purple
+      toggle: { icon: material/weather-sunny, name: Modo claro / Light mode }
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: purple
+      toggle: { icon: material/weather-night, name: Modo oscuro / Dark mode }
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+    - toc.follow
+
+extra_css:
+  - assets/extra.css
+extra_javascript:
+  - assets/extra.js
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: suffix
+      languages:
+        - locale: es
+          default: true
+          name: Español
+          build: true
+        - locale: en
+          name: English
+          build: true
+          site_description: Atomic deploys to your Linux VPS over SSH, with no agent. PHP, Node, Python and Go, with server provisioning and a terminal UI.
+          nav_translations:
+            Inicio: Home
+            Primeros pasos: Getting started
+            Flujos: How it works
+            Ejemplos: Examples
+            Comparación: Comparison
+            Referencia: Reference
+            Instalación: Install
+            Guía rápida: Quick start
+            Guía completa: Step-by-step guide
+            Configuración (deploy.yml): Configuration (deploy.yml)
+            Servicios del servidor: Server services
+            Comandos (CLI y TUI): Commands (CLI and TUI)
+            Problemas comunes: Troubleshooting
+
+nav:
+  - Inicio: index.md
+  - Videos: videos.md
+  - Primeros pasos: start.md
+  - Flujos: flows.md
+  - Ejemplos: examples.md
+  - Comparación: compare.md
+  - Referencia:
+      - Instalación: reference/INSTALL.md
+      - Guía rápida: reference/QUICKSTART.md
+      - Guía completa: reference/GETTING_STARTED.md
+      - Configuración (deploy.yml): reference/DEPLOY.md
+      - Servicios del servidor: reference/SERVICES.md
+      - Comandos (CLI y TUI): reference/CLI_REFERENCE.md
+      - Problemas comunes: reference/TROUBLESHOOTING.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.details
+  - pymdownx.tabbed: { alternate_style: true }
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.snippets: { base_path: [".."], check_paths: true }
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg

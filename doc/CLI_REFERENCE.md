@@ -6,7 +6,7 @@ Every `versa` command, its arguments and flags, and what it does on your machine
 - [Global flags](#global-flags)
 - [Choosing the configuration file](#choosing-the-configuration-file)
 - Commands
-  - Setup: [`init`](#versa-init) · [`config validate`](#versa-config-validate) · [`ssh-test` / `info`](#versa-ssh-test--versa-info)
+  - Setup: [`init`](#versa-init) · [`config validate`](#versa-config-validate) · [`ssh-test` / `info`](#versa-ssh-test-versa-info)
   - Deploying: [`deploy`](#versa-deploy) · [`diff`](#versa-diff) · [`rollback`](#versa-rollback) · [`status`](#versa-status)
   - Operating the server: [`exec`](#versa-exec) · [`logs`](#versa-logs) · [`hooks`](#versa-hooks) · [`services-reload`](#versa-services-reload) · [`service`](#versa-service)
   - The tool itself: [`version`](#versa-version) · [`self-update`](#versa-self-update)
@@ -108,7 +108,7 @@ Environment "production":
 
 ---
 
-## `versa ssh-test` / `versa info`
+## `versa ssh-test` (`versa info`)
 
 `info` is an alias of `ssh-test`. Connects to the server, prints what it finds, and checks that SFTP works.
 
@@ -345,7 +345,7 @@ versa service production setup | ssh root@SERVER sh   # once, as root: install t
 | `--name <n>`  | all     | Act on one service. Required for `logs` when there are several.             |
 | `--lines <n>` | `50`    | `logs`: lines of history before following.                                  |
 
-Unless `ssh.user` is `root`, the commands run with `sudo -n`: see [Permissions](DEPLOY.md#permissions-sudo).
+Unless `ssh.user` is `root`, the commands run with `sudo -n`: see [Permissions](DEPLOY.md#permissions-root-setup-and-sudo).
 
 ---
 

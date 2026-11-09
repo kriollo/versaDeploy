@@ -8,8 +8,9 @@
                                        each line at its caption's time (out/NN-name.srt)
                                        plus the music, ducked under the voice
 
-Voice: Piper (offline), model in .work/voices; pronunciation.tsv says how to read
-English tech words. Music: MUSIC (default out/audio_videos.mp4) from MUSIC_START s.
+Voice: Piper (offline, default), model in .work/voices; pronunciation.tsv says how to
+read English tech words. TTS=elevenlabs uses ElevenLabs instead (ELEVENLABS_API_KEY and
+ELEVENLABS_VOICE, or .work/elevenlabs_api_key.txt and .work/elevenlabs_voice.txt). Music: MUSIC (default out/audio_videos.mp4) from MUSIC_START s.
 """
 import array
 import hashlib
@@ -22,7 +23,6 @@ import wave
 import cc
 
 V = os.path.dirname(os.path.abspath(__file__))
-VOICE = os.environ.get("VOICE", "es_MX-ald-medium")
 MUSIC = os.environ.get("MUSIC", os.path.join(V, "out", "audio_videos.mp4"))
 MUSIC_START = float(os.environ.get("MUSIC_START", "15"))
 MUSIC_VOL = float(os.environ.get("MUSIC_VOL", "0.22"))
@@ -45,17 +45,81 @@ def spoken(text):
     return text.replace("…", ".").replace("(", "").replace(")", "")
 
 
+TTS = os.environ.get("TTS", "kokoro")  # kokoro (local, GPU) | piper (local) | elevenlabs
+VOICE = os.environ.get("VOICE", {"kokoro": "em_alex", "piper": "es_MX-ald-medium"}.get(TTS, ""))
+
+
+def secret(name):
+    """$NAME, else .work/<name>.txt (kept out of git)."""
+    v = os.environ.get(name.upper(), "")
+    path = os.path.join(V, ".work", name.lower() + ".txt")
+    if not v and os.path.exists(path):
+        v = open(path, encoding="utf-8").read().strip()
+    if not v:
+        sys.exit(f"{name.upper()} not set: export it or write it to {path}")
+    return v
+
+
+def elevenlabs(text, out):
+    """ElevenLabs multilingual model: raw 16-bit PCM at RATE, wrapped as WAV."""
+    import json
+    import urllib.request
+    req = urllib.request.Request(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{secret('elevenlabs_voice')}?output_format=pcm_{RATE}",
+        data=json.dumps({"text": text, "model_id": os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
+                         "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}).encode(),
+        headers={"xi-api-key": secret("elevenlabs_api_key"), "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        pcm = r.read()
+    with wave.open(out, "w") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
+        w.writeframes(pcm)
+
+
+def cache_path(text):
+    """(spoken text, cached WAV path) of a line for the current engine and voice."""
+    # Kokoro and Piper read with Spanish rules: the dictionary fixes English words
+    say = text if TTS == "elevenlabs" else spoken(text)
+    voice = "elevenlabs:" + secret("elevenlabs_voice") if TTS == "elevenlabs" else f"{TTS}:{VOICE}"
+    key = hashlib.sha1((voice + "\n" + say).encode()).hexdigest()[:16]
+    return say, os.path.join(V, ".work", "voice-cache", key + ".wav")
+
+
+def prefetch(texts):
+    """Synthesize every missing line at once (Kokoro loads its model once per batch)."""
+    os.makedirs(os.path.join(V, ".work", "voice-cache"), exist_ok=True)
+    jobs = []
+    for text in texts:
+        say, out = cache_path(text)
+        if text and not os.path.exists(out) and all(j["out"] != out for j in jobs):
+            jobs.append({"text": say, "out": out})
+    if not jobs:
+        return
+    if TTS == "kokoro":
+        import json
+        print(f"kokoro: {len(jobs)} line(s) with {VOICE}", file=sys.stderr)
+        subprocess.run([os.path.join(V, ".work", "tts2", "bin", "python"), os.path.join(V, "kokoro_tts.py")],
+                       input=json.dumps(jobs).encode(), check=True, env={**os.environ, "VOICE": VOICE},
+                       stderr=subprocess.DEVNULL)
+    elif TTS == "elevenlabs":
+        for j in jobs:
+            elevenlabs(j["text"], j["out"] + ".tmp")
+            os.replace(j["out"] + ".tmp", j["out"])
+    else:
+        for j in jobs:
+            model = os.path.join(V, ".work", "voices", VOICE + ".onnx")
+            subprocess.run([os.path.join(V, ".work", "tts", "bin", "piper"), "-m", model, "-f", j["out"],
+                            "--sentence-silence", "0.15"], input=j["text"].encode(), check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def synth(text):
-    """WAV of text (cached by voice + spoken text); returns (path, seconds)."""
-    say = spoken(text)
-    key = hashlib.sha1((VOICE + "\n" + say).encode()).hexdigest()[:16]
-    out = os.path.join(V, ".work", "voice-cache", key + ".wav")
+    """WAV of a line (cached by engine, voice and text); returns (path, seconds)."""
+    _, out = cache_path(text)
     if not os.path.exists(out):
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        model = os.path.join(V, ".work", "voices", VOICE + ".onnx")
-        subprocess.run([os.path.join(V, ".work", "tts", "bin", "piper"), "-m", model, "-f", out,
-                        "--sentence-silence", "0.15"], input=say.encode(), check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        prefetch([text])
     with wave.open(out) as w:
         return out, w.getnframes() / w.getframerate()
 
@@ -64,6 +128,7 @@ def fit(tape):
     with open(tape, encoding="utf-8") as f:
         lines = f.readlines()
     caps, total = cc.captions(lines)
+    prefetch([text for _, text in caps])
     # line numbers of the captions, in order
     idx = [i for i, l in enumerate(lines) if l.strip().startswith("# CC:")]
     extra = {}
@@ -101,13 +166,17 @@ def mix(tape):
     base = os.path.join(V, "out", name)
     dur = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                          "-of", "csv=p=0", base + ".mp4"]))
-    track = array.array("h", bytes(int(dur * RATE) * 2))
+    lines = srt_times(base + ".srt")
+    prefetch([text for _, text in lines])
+    with wave.open(synth(lines[0][1])[0]) as w:
+        rate = w.getframerate()  # the engine's rate (Kokoro 24 kHz, Piper 22.05 kHz)
+    track = array.array("h", bytes(int(dur * rate) * 2))
     late = []
-    for start, text in srt_times(base + ".srt"):
+    for start, text in lines:
         path, secs = synth(text)
         with wave.open(path) as w:
             pcm = array.array("h", w.readframes(w.getnframes()))
-        at = int((start + 0.15) * RATE)
+        at = int((start + 0.15) * rate)
         for k, s in enumerate(pcm):
             if at + k < len(track):
                 track[at + k] = max(-32768, min(32767, track[at + k] + s))
@@ -119,7 +188,7 @@ def mix(tape):
     with wave.open(voice, "w") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
-        w.setframerate(RATE)
+        w.setframerate(rate)
         w.writeframes(track.tobytes())
     # music from MUSIC_START, looped, faded in and out, ducked under the voice
     graph = (f"[1:a]atrim=start={MUSIC_START},asetpts=PTS-STARTPTS,aloop=loop=-1:size=2e9,atrim=0:{dur:.2f},"

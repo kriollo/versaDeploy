@@ -48,6 +48,8 @@ def main(nn):
     start = next(t for t, c in caps if c.startswith(script["start_caption"]))
     end = next(t for t, c in caps if c.startswith(script["end_caption"]))
     cuts = [start] + [t * scale for t, _, _ in sections] + [end]
+    texts = [c for _, c in caps] + script["opening"]["lines"] + script["browser"]["lines"] + script["outro"]["lines"]
+    voice.prefetch(texts + [l for ch in script["chapters"].values() for l in ch["lines"]])
 
     n = 0
 

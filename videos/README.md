@@ -46,12 +46,14 @@ python3 voice.py mix episodes/02-laravel.tape # voice-over + music → out/02-la
 
 ## Voice-over and music
 
-- **Voice**: [Piper](https://github.com/rhasspy/piper), offline. One-time setup: `python3 -m venv .work/tts && .work/tts/bin/pip install piper-tts`, and the voice model in `.work/voices/` (default `es_MX-ald-medium`, from [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices); its `.onnx.json` needs `"phoneme_type": "espeak"`). `VOICE=es_MX-claude-high` picks another one.
+- **Voice**: [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0), local, on the GPU when there is one, voice `em_alex`. One-time setup (Python 3.12): `python3.12 -m venv .work/tts2 && .work/tts2/bin/pip install kokoro soundfile`; `kokoro_tts.py` synthesizes every line of a video in one batch. Also available: `TTS=piper` (offline, CPU; `.work/tts` + a model in `.work/voices`) and `TTS=elevenlabs` (paid API; key in `.work/elevenlabs_api_key.txt`, voice id in `.work/elevenlabs_voice.txt`).
 - **Pronunciation**: `pronunciation.tsv` tells the Spanish voice how to read English words (`deploy` → `diplói`). Add a line when a word sounds wrong; the captions keep the original text.
-- **Timing**: each line starts with its caption. `voice.py fit` synthesizes every line and adds a `Sleep` after the caption where the spoken line is longer than the caption stays on screen, so lines never overlap (lines are cached in `.work/voice-cache`).
-- **Music**: `MUSIC=file` (default `out/audio_videos.mp4`), from `MUSIC_START` seconds (default 15), looped, faded in and out, at `MUSIC_VOL` (0.22), and ducked under the voice (sidechain compressor). Keep licensed music out of git (`out/` and `.work/` are ignored).
+- **Timing**: each line starts with its caption. `voice.py fit` synthesizes every line and adds a `Sleep` after the caption where the spoken line is longer than the caption stays on screen, so lines never overlap (lines are cached in `.work/voice-cache` by engine, voice and text).
+- **Music**: `MUSIC=file` (default `out/audio_videos.mp4`), from `MUSIC_START` seconds (default 15), looped and ducked under the voice. Keep licensed music out of git (`out/` and `.work/` are ignored).
 
-Needs `vhs`, `ttyd`, `ffmpeg` (with libass; H.264 via libx264 or openh264), Docker, and the episode's toolchain (PHP + Composer + Node for Laravel, Node for Nuxt). Record with the machine idle: under load VHS drops frames and the video runs fast. `render.sh` waits for a load below 2 and rejects a recording more than 3% shorter or longer than the tape says (the captions would drift).
+## Publishing
+
+`youtube.py` writes `out/<video>-youtube.txt`: a YouTube description with clickable chapters taken from the final timeline. For the docs site, the final videos and their captions (`.vtt`) are assets of the `media` pre-release; `site/videos_page.py` rebuilds the site's Videos page from the descriptions.
 
 ## How it works
 
