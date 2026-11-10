@@ -12,7 +12,7 @@ body:
     attributes:
       label: versa version
       description: Output of `versa version`
-      placeholder: versaDeploy v1.17.0
+      placeholder: versaDeploy v1.17.1
     validations:
       required: true
   - type: input

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-11-09
+
+### Changed
+
+- **Dependencies up to date**: Go 1.25 (go.mod), `golang.org/x/crypto` 0.54, `pkg/sftp` 1.13.12, `progressbar` 3.19.1, `x/sync` 0.22 and their indirect dependencies.
+- **CI on the Node 24 actions**: `actions/checkout` v7, `setup-go` v7, `upload-artifact` v7, `download-artifact` v8 (the release now fails if a downloaded binary's hash doesn't match the uploaded one) and `softprops/action-gh-release` v3, each pinned by the commit of its official tag.
+
 ## [1.17.0] - 2026-11-09
 
 ### Added
