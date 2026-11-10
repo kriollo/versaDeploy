@@ -124,7 +124,10 @@ def synth(text):
 def fit(tape):
     with open(tape, encoding="utf-8") as f:
         lines = f.readlines()
-    caps, total = cc.captions(lines)
+    sections, webs = [], []
+    caps, total = cc.captions(lines, sections, webs, strict=False)  # a visible Wait counts 0 s: room to spare
+    # a line must end before the next caption, chapter card or web shot cuts the recording
+    marks = sorted([t for t, _ in caps] + [t for t, _, _ in sections] + [t for t, _ in webs] + [total])
     prefetch([text for _, text in caps])
     # line numbers of the captions, in order
     idx = [i for i, l in enumerate(lines) if l.strip().startswith("# CC:")]
@@ -133,7 +136,7 @@ def fit(tape):
         if not text:
             continue
         _, dur = synth(text)
-        end = caps[n + 1][0] if n + 1 < len(caps) else total
+        end = next((m for m in marks if m > start + 1e-6), start)
         need = dur + GAP - (end - start)
         if need > 0.05:
             extra[i] = round(need + 0.05, 1)

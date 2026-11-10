@@ -16,15 +16,30 @@ case $1 in
 # GitHub Actions: the demo repo back at its base commit, deployed by its own pipeline,
 # and the self-hosted runner up (ci-runner/; see README)
 07) curl -fsS -o /dev/null http://mipanel.localhost:8099/up || { echo "07 continues 05/06: ./make.sh 05 first"; exit 1; }
-    docker start versa-ci-runner >/dev/null
-    d="$V/.work/proyectos/mi-panel"
-    git -C "$d" reset -q --hard ep7-base
-    if [ "$(git -C "$d" rev-parse HEAD)" != "$(git -C "$d" ls-remote origin main | cut -f1)" ]; then
-        git -C "$d" push -q -f origin main
-        sleep 15
-        id=$(gh run list -R kriollo/versadeploy-demo-ci -w Deploy -L 1 --json databaseId -q '.[0].databaseId')
-        gh run watch "$id" -R kriollo/versadeploy-demo-ci --exit-status >/dev/null
+    d="$V/.work/proyectos/mi-panel" r=kriollo/versadeploy-demo-ci
+    # the self-hosted runner (ci-runner/): a fresh container registered with a token that
+    # expires in an hour (a stopped one can't start again: it would register twice)
+    if [ -z "$(docker ps -q -f name='^versa-ci-runner$')" ]; then
+        docker rm -f versa-ci-runner >/dev/null 2>&1 || true
+        docker build -q -t versa-ci-runner "$V/ci-runner" >/dev/null
+        token=$(gh api -X POST "repos/$r/actions/runners/registration-token" -q .token)
+        docker run -d --name versa-ci-runner --network host -e RUNNER_TOKEN="$token" versa-ci-runner bash -c \
+            "./config.sh --url https://github.com/$r --token \"\$RUNNER_TOKEN\" --unattended --name versa-video-pc --replace --disableupdate && ./run.sh" >/dev/null
     fi
+    i=0
+    until gh api "repos/$r/actions/runners" -q '.runners[].status' | grep -qx online; do
+        i=$((i + 1)); [ $i -lt 40 ] || { echo "07: the runner never came online"; exit 1; }; sleep 3
+    done
+    # the repo before CI (main without a workflow), and no key or secrets for CI yet
+    git -C "$d" reset -q --hard ep7-start
+    rm -rf "$d/.github" "$d/app/funciones.php"   # what the last recording left uncommitted
+    git -C "$d" push -q -f origin main
+    for s in DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do gh secret delete "$s" -R "$r" 2>/dev/null || true; done
+    docker exec versa-video sed -i '/ github-actions$/d' /home/deploy/.ssh/authorized_keys
+    # the server at that commit, deployed from here as in episodes 5 and 6
+    (cd "$d" && HOME="$V/.work/home" PATH="$V/.work/home/.local/bin:$PATH" versa deploy production --no-gui >/dev/null 2>&1)
+    # the workflow the video opens (written before recording, like deploy.yml)
+    install -D -m 644 "$V/ci-runner/deploy.yml" "$d/.github/workflows/deploy.yml"
     ;;
 *) echo "usage: $0 00|02|03|04|05|06|07"; exit 2 ;;
 esac

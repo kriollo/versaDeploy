@@ -130,3 +130,18 @@ CI	ce i
 DEPLOY_SSH_KEY	diplói ese ese hache kei
 DEPLOY_KNOWN_HOSTS	diplói nóun jousts
 strict_host_key	strict jóust kei
+ignored_paths	ignórd páths
+self-hosted	self jóusted
+ubuntu-latest	ubuntu léitest
+sha256	sha dos cinco seis
+on push	on push
+branches main	bránches méin
+concurrency	concúrrensi
+.github/workflows/deploy.yml	punto guitjab, uórkflous, diplói punto iámel
+.github	punto guitjab
+versa deploy production	versa diplói prodákshon
+build	bild
+frontend	frontend
+job deploy	yob diplói
+login	loguin
+runs-on	rans on

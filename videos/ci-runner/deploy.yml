@@ -1,0 +1,62 @@
+# Cada push a main se despliega a producción con versaDeploy.
+#
+# Secretos del repositorio (Settings → Secrets and variables → Actions):
+#   DEPLOY_SSH_KEY      llave privada del usuario deploy, solo para CI (ssh-keygen -t ed25519 -f ci_deploy)
+#   DEPLOY_KNOWN_HOSTS  la llave del servidor: ssh-keyscan -p 2299 127.0.0.1
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# un deploy a la vez: un push nuevo espera al que está corriendo
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # El runner de este video corre en el mismo PC que el VPS (Docker). Con un VPS
+    # público: runs-on: ubuntu-latest (ver examples/github-actions.yml de versaDeploy).
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # versaCLI necesita las dependencias y un config.json (el de CI es descartable:
+      # versa despliega solo lo que está en git, y el servidor tiene el suyo)
+      - name: Dependencias PHP
+        run: |
+          composer install --no-interaction --no-progress
+          php versaCLI config:init < /dev/null
+
+      - name: Revisa el código
+        run: php versaCLI app:check:deploy
+
+      - name: Instala versa
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/kriollo/versaDeploy/main/install.sh | VERSA_INSTALL_DIR="$HOME/.local/bin" sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Llave SSH y servidor conocido
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          VERSA_DEPLOYER: ${{ github.actor }} # quién aparece en versa history
+        run: versa deploy production
+
+      - name: Borra la llave
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519

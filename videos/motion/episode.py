@@ -39,16 +39,15 @@ def main(nn):
     pub = os.path.join(HERE, "public", "ep")
     os.makedirs(os.path.join(pub, nn), exist_ok=True)
 
-    # chapters, at the recording's real times (the same scale render.sh applied to the captions)
-    sections = []
-    _, computed = cc.captions(open(tape, encoding="utf-8").readlines(), sections)
-    real = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out + ".mp4"]))
-    scale = real / computed
+    # chapters and web shots, at the final recording's times (render.sh's scale and fast parts)
+    sections, webs = [], []
+    cc.captions(open(tape, encoding="utf-8").readlines(), sections, webs, log=cc.load_log(tape))
+    to_video = cc.timing(tape)
     caps = srt(out + ".srt")
     start = next(t for t, c in caps if c.startswith(script["start_caption"]))
     end = next(t for t, c in caps if c.startswith(script["end_caption"]))
-    cuts = [start] + [t * scale for t, _, _ in sections] + [end]
-    texts = [c for _, c in caps] + script["opening"]["lines"] + script["browser"]["lines"] + script["outro"]["lines"]
+    web_lines = [l for w in script.get("webs", {}).values() for l in w["lines"]]
+    texts = [c for _, c in caps] + script["opening"]["lines"] + script["browser"]["lines"] + script["outro"]["lines"] + web_lines
     voice.prefetch(texts + [l for ch in script["chapters"].values() for l in ch["lines"]])
 
     n = 0
@@ -74,11 +73,23 @@ def main(nn):
 
     segs = [card("opening", script["opening"]["lines"], title=script["title"], subtitle=script["subtitle"],
                  steps=[title for _, _, title in sections])]
-    segs.append(clip(cuts[0], cuts[1]))
-    for i, (_, num, title) in enumerate(sections):
-        ch = script["chapters"][str(num)]
-        segs.append(card("chapter", ch["lines"], num=num, title=title, bullets=ch.get("bullets", []), visual=ch.get("visual", "")))
-        segs.append(clip(cuts[i + 1], cuts[i + 2]))
+    # the recording, cut where a chapter card or a web shot goes in
+    events = sorted([(to_video(t), 0, ("chapter", num, title)) for t, num, title in sections] +
+                    [(to_video(t), 1, ("web", n, "")) for t, n in webs])
+    pos = start
+    for at, _, (kind, num, title) in events:
+        if at - pos > 0.05:
+            segs.append(clip(pos, at))
+            pos = at
+        if kind == "chapter":
+            ch = script["chapters"][str(num)]
+            segs.append(card("chapter", ch["lines"], num=num, title=title, bullets=ch.get("bullets", []), visual=ch.get("visual", "")))
+        else:
+            shot = f"ep/{nn}-web{num}.png"
+            shutil.copy(f"{out}-web{num}.png", os.path.join(HERE, "public", shot))
+            url = open(f"{out}-web{num}.url", encoding="utf-8").read().strip()
+            segs.append(card("browser", script["webs"][str(num)]["lines"], url=url, shot=shot, web=True))
+    segs.append(clip(pos, end))
     shot = f"ep/{nn}-browser.png"
     shutil.copy(out + "-browser.png", os.path.join(HERE, "public", shot))
     segs.append(card("browser", script["browser"]["lines"], url=script["browser"]["url"], shot=shot))

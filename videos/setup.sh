@@ -12,6 +12,20 @@ export PATH="$HOME/.local/bin:$PATH"
 export PS1='\[\e[38;5;111m\]\W\[\e[0m\] \[\e[38;5;141m\]❯\[\e[0m\] '
 cd "$V/.work/$1" || return 1
 unset HISTFILE PROMPT_COMMAND
+# when each command started and ended: cc.py times a Wait the video shows from it
+mkdir -p "$V/out"
+: > "$V/out/.cmdlog"
+rm -f "$V"/out/.web*
+PS0='$(echo "$EPOCHREALTIME" > "$V/out/.cmd0")'
+__cmdlog() {
+    [ -f "$V/out/.cmd0" ] || return 0
+    printf '%s\t%s\t%s\n' "$(cat "$V/out/.cmd0")" "$EPOCHREALTIME" "$(HISTTIMEFORMAT='' history 1 | sed 's/^ *[0-9]* *//')" >> "$V/out/.cmdlog"
+    rm -f "$V/out/.cmd0"
+}
+set -o history  # VHS starts bash without it; __cmdlog reads the command from it
+PROMPT_COMMAND=__cmdlog
+# web N URL: the page as a browser shows it, for "# WEB: N" (episode.py)
+web() { "$V/shot.sh" "$2" "$V/out/.web$1.png" && echo "$2" > "$V/out/.web$1.url"; }
 export VERSA_DEPLOYER=dev@laptop
 export GIT_PAGER=cat PAGER=cat GIT_AUTHOR_NAME=Dev GIT_AUTHOR_EMAIL=dev@example.com GIT_COMMITTER_NAME=Dev GIT_COMMITTER_EMAIL=dev@example.com
 clear

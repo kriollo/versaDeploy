@@ -86,7 +86,7 @@ def episode(path):
             points.append((s["start"], "Introducción"))
         elif s["type"] == "chapter":
             points.append((s["start"], f"{s['num']}. {s['title']}"))
-        elif s["type"] == "browser":
+        elif s["type"] == "browser" and not s.get("web"):  # a web shot inside a chapter isn't one
             points.append((s["start"], yt.get("browser", "La app funcionando en el navegador")))
         elif s["type"] == "outro":
             points.append((s["start"], "Cierre"))

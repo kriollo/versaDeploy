@@ -1,7 +1,7 @@
 {
   "title": "De git push a producción",
   "subtitle": "GitHub Actions y versaDeploy en tu propio VPS",
-  "start_caption": "Primero, el resultado",
+  "start_caption": "Este es el panel versaWYS",
   "end_caption": "Recapitulando",
   "opening": {
     "lines": [
@@ -12,31 +12,51 @@
   "chapters": {
     "1": {
       "lines": [
-        "Empezamos por el resultado: cambiamos un texto, commit y push.",
-        "Mientras GitHub Actions despliega, vigilamos que el sitio nunca deje de responder."
-      ],
-      "bullets": ["git push", "GitHub Actions despliega", "gh run watch", "cero caídas"]
-    },
-    "2": {
-      "lines": [
         "Hace falta un VPS con un usuario deploy, un runner de GitHub Actions, y una llave SSH solo para CI.",
         "La llave privada se guarda como secreto del repositorio, cifrada; nunca en el código."
       ],
-      "bullets": ["versa ssh-test", "una llave SSH solo para CI", "DEPLOY_SSH_KEY", "DEPLOY_KNOWN_HOSTS"]
+      "bullets": [
+        "versa ssh-test",
+        "un runner de GitHub Actions",
+        "una llave SSH solo para CI",
+        "DEPLOY_SSH_KEY y DEPLOY_KNOWN_HOSTS"
+      ]
+    },
+    "2": {
+      "lines": [
+        "deploy.yml es el mismo que usas desde tu computador: el servidor, el build, las rutas compartidas y el health check.",
+        "CI no necesita otra configuración."
+      ],
+      "bullets": [
+        "ssh y strict_host_key",
+        "provision",
+        "shared_paths y builds",
+        "post_deploy y health_check"
+      ]
     },
     "3": {
-      "lines": [
-        "deploy.yml es el mismo que usas desde tu computador: el servidor, las versiones y el health check.",
-        "Cada deploy crea una versión nueva, y current apunta a la activa: cambiar de versión es instantáneo."
-      ],
-      "bullets": ["ssh: host, puerto y usuario", "strict_host_key: true", "releases/ y current", "health check en /up"]
-    },
-    "4": {
       "lines": [
         "El workflow tiene seis pasos: checkout, dependencias, revisión del código, instalar versa, la llave SSH y el deploy.",
         "Si un paso falla, los siguientes no corren."
       ],
-      "bullets": ["actions/checkout", "app:check:deploy", "install.sh de versaDeploy", "versa deploy production"]
+      "bullets": [
+        "on: push a main",
+        "runs-on: self-hosted",
+        "app:check:deploy",
+        "versa deploy production"
+      ]
+    },
+    "4": {
+      "lines": [
+        "Con el workflow en el repositorio, desplegar es hacer push.",
+        "Cambiamos un texto y vigilamos que el sitio nunca deje de responder."
+      ],
+      "bullets": [
+        "nano: buscar y reemplazar",
+        "git push",
+        "gh run watch",
+        "cero caídas"
+      ]
     },
     "5": {
       "visual": "rollback",
@@ -60,9 +80,31 @@
     ]
   },
   "youtube": {
-    "summary": "Paso a paso: el resultado primero (un push y producción se actualiza sin caídas), el VPS y una llave SSH solo para CI guardada en los secretos de GitHub, el deploy.yml de versaDeploy (releases, current y health check), el workflow .github/workflows/deploy.yml, y qué pasa cuando algo falla: el pipeline se detiene y producción sigue funcionando. El repositorio del video, con su workflow: https://github.com/kriollo/versadeploy-demo-ci",
+    "summary": "Paso a paso: la llave SSH solo para CI y los secretos de GitHub, el deploy.yml de versaDeploy completo, el workflow .github/workflows/deploy.yml línea por línea, un cambio que llega a producción con un git push y sin caídas, y un error que detiene el pipeline antes de tocar el servidor. Los deploys se ven en cámara rápida. El repositorio del video, con su workflow: https://github.com/kriollo/versadeploy-demo-ci",
     "example": "github-actions.yml",
     "tags": "#githubactions #cicd #versawys #php",
     "browser": "Las ejecuciones en GitHub"
+  },
+  "webs": {
+    "1": {
+      "lines": [
+        "Y en el navegador: Ingresar a la plataforma. Este título lo vamos a cambiar con un push."
+      ]
+    },
+    "2": {
+      "lines": [
+        "En GitHub, la ejecución completa: el job deploy en verde, en unos veinte segundos."
+      ]
+    },
+    "3": {
+      "lines": [
+        "Ingresa a tu panel: el cambio ya está en producción, y nadie entró al servidor."
+      ]
+    },
+    "4": {
+      "lines": [
+        "En GitHub la ejecución quedó en rojo, y se ve en qué paso se detuvo."
+      ]
+    }
   }
 }
