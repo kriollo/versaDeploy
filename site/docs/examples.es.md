@@ -90,7 +90,7 @@ Binario estático compilado en tu computador, como servicio.
 
 ## GitHub Actions
 
-Staging en cada push a `main`, producción en cada tag `v*`.
+Staging en cada push a `main`, producción en cada tag `v*`. [Video](videos.md#github-actions) y un [repo de ejemplo](https://github.com/kriollo/versadeploy-demo-ci) con el workflow funcionando.
 
 ??? example "github-actions.yml"
 

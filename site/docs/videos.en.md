@@ -2,6 +2,12 @@
 
 The whole series, **in Spanish** with Spanish captions (**CC** button). Each chapter link jumps to that point of the video.
 
+## Trailer { #trailer }
+
+versaDeploy in 30 seconds, vertical, to share.
+
+<video class="vertical" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/trailer-versadeploy.mp4"></video>
+
 ## What versaDeploy is and does { #intro }
 
 What it does, how a deploy works, the services it installs, the TUI and its features for teams.
@@ -61,3 +67,13 @@ The most common errors and how to fix them: uncommitted changes, SSH, a stuck lo
 </video>
 
 <a href="#" data-video="v-problemas" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-problemas" data-t="17">0:17 1. Cambios sin commit</a> · <a href="#" data-video="v-problemas" data-t="44">0:44 2. No conecta por SSH</a> · <a href="#" data-video="v-problemas" data-t="80">1:20 3. Deploy bloqueado</a> · <a href="#" data-video="v-problemas" data-t="112">1:52 4. Un hook falla</a> · <a href="#" data-video="v-problemas" data-t="169">2:49 5. El health check falla</a> · <a href="#" data-video="v-problemas" data-t="205">3:25 6. Volver atrás a mano</a> · <a href="#" data-video="v-problemas" data-t="237">3:57 La guía de problemas frecuentes</a>
+
+## From git push to production { #github-actions }
+
+GitHub Actions and versaDeploy on your own VPS: a CI-only SSH key in the repo's secrets, the workflow, a deploy with no downtime, and a failing check that never reaches the server.
+
+<video id="v-github-actions" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/07-github-actions.mp4">
+  <track kind="captions" src="/media/07-github-actions.vtt" srclang="es" label="Español" default>
+</video>
+
+<a href="#" data-video="v-github-actions" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-github-actions" data-t="20">0:20 1. Un push, y está en producción</a> · <a href="#" data-video="v-github-actions" data-t="70">1:10 2. El servidor y los secretos</a> · <a href="#" data-video="v-github-actions" data-t="129">2:09 3. El archivo deploy.yml</a> · <a href="#" data-video="v-github-actions" data-t="177">2:57 4. El workflow de GitHub Actions</a> · <a href="#" data-video="v-github-actions" data-t="220">3:40 5. Cuando algo falla</a> · <a href="#" data-video="v-github-actions" data-t="272">4:32 Las ejecuciones en GitHub</a>

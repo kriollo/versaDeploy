@@ -13,7 +13,7 @@ PHP, Node, Python y Go. Gratis y open source (MIT).
 [Primeros pasos](start.md){ .md-button .md-button--primary } [Ver los videos](videos.md){ .md-button } [GitHub](https://github.com/kriollo/versaDeploy){ .md-button }
 </div>
 
-<video controls preload="metadata" src="/media/00-intro.mp4">
+<video controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/00-intro.mp4">
   <track kind="captions" src="/media/00-intro.vtt" srclang="es" label="Español" default>
 </video>
 

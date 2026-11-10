@@ -110,7 +110,7 @@ flowchart LR
     TG -- No --> NO[⛔ Refused<br><small>deploy_tags: v*</small>]
 ```
 
-Each environment has its own server (or its own `remote_path`) and its own `.env`. With `deploy_tags: "v*"`, production only accepts tagged versions, even from someone's laptop. The example workflow is [examples/github-actions.yml](https://github.com/kriollo/versaDeploy/blob/main/examples/github-actions.yml).
+Each environment has its own server (or its own `remote_path`) and its own `.env`. With `deploy_tags: "v*"`, production only accepts tagged versions, even from someone's laptop. The example workflow is [examples/github-actions.yml](https://github.com/kriollo/versaDeploy/blob/main/examples/github-actions.yml). The [GitHub Actions video](videos.md#github-actions) builds it step by step.
 
 ## The Services view (provisioning)
 

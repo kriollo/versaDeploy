@@ -2,6 +2,12 @@
 
 La serie completa, con voz y subtítulos (botón **CC** del reproductor). Cada capítulo es un enlace que salta a ese momento del video.
 
+## Tráiler { #trailer }
+
+versaDeploy en 30 segundos, en formato vertical para compartir.
+
+<video class="vertical" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/trailer-versadeploy.mp4"></video>
+
 ## versaDeploy: deploys a tu VPS Linux por SSH, sin agentes { #intro }
 
 Esto es versaDeploy. Lleva tus aplicaciones desde tu computador a un VPS Linux, por SSH, sin instalar agentes en el servidor. En este video: cómo funciona un deploy, el rollback automático, los frameworks que soporta, cómo prepara el servidor (nginx, PHP o FrankenPHP, PostgreSQL, Redis, Node, Python, SSL, fail2ban, backups…), su interfaz en la terminal y sus funciones para equipos.
@@ -22,7 +28,7 @@ En este episodio llevamos una app Laravel desde nuestro computador a un VPS reci
 
 <a href="#" data-video="v-laravel" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-laravel" data-t="16">0:16 1. El archivo deploy.yml</a> · <a href="#" data-video="v-laravel" data-t="149">2:29 2. Preparar el servidor</a> · <a href="#" data-video="v-laravel" data-t="209">3:29 3. Primer deploy</a> · <a href="#" data-video="v-laravel" data-t="249">4:09 4. El .env en el servidor</a> · <a href="#" data-video="v-laravel" data-t="300">5:00 5. Deploy</a> · <a href="#" data-video="v-laravel" data-t="341">5:41 La app funcionando en el navegador</a>
 
-## FastAPI + PostgreSQL: una api en producción, con su base de datos { #fastapi }
+## FastAPI + PostgreSQL: una API en producción, con su base de datos { #fastapi }
 
 En este episodio desplegamos una API hecha con FastAPI, con su base de datos PostgreSQL. Veremos cómo corre como servicio, cómo se configura con el .env y cómo se actualiza.
 
@@ -32,7 +38,7 @@ En este episodio desplegamos una API hecha con FastAPI, con su base de datos Pos
 
 <a href="#" data-video="v-fastapi" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-fastapi" data-t="20">0:20 1. El archivo deploy.yml</a> · <a href="#" data-video="v-fastapi" data-t="146">2:26 2. Preparar el servidor</a> · <a href="#" data-video="v-fastapi" data-t="191">3:11 3. Primer deploy</a> · <a href="#" data-video="v-fastapi" data-t="231">3:51 4. El .env en el servidor</a> · <a href="#" data-video="v-fastapi" data-t="274">4:34 5. Un cambio de código</a> · <a href="#" data-video="v-fastapi" data-t="320">5:20 La app funcionando en el navegador</a>
 
-## Nuxt con SSR: un sitio node detrás de nginx, y un rollback { #nuxt }
+## Nuxt con SSR: un sitio Node detrás de nginx, y un rollback { #nuxt }
 
 En este episodio desplegamos un sitio Nuxt con SSR: un proceso Node que corre en el servidor, detrás de nginx. Y al final probamos lo más importante: volver atrás cuando algo sale mal.
 
@@ -61,3 +67,13 @@ En este episodio provocamos a propósito los errores más comunes de un deploy, 
 </video>
 
 <a href="#" data-video="v-problemas" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-problemas" data-t="17">0:17 1. Cambios sin commit</a> · <a href="#" data-video="v-problemas" data-t="44">0:44 2. No conecta por SSH</a> · <a href="#" data-video="v-problemas" data-t="80">1:20 3. Deploy bloqueado</a> · <a href="#" data-video="v-problemas" data-t="112">1:52 4. Un hook falla</a> · <a href="#" data-video="v-problemas" data-t="169">2:49 5. El health check falla</a> · <a href="#" data-video="v-problemas" data-t="205">3:25 6. Volver atrás a mano</a> · <a href="#" data-video="v-problemas" data-t="237">3:57 La guía de problemas frecuentes</a>
+
+## De git push a producción: GitHub Actions y versaDeploy en tu propio VPS { #github-actions }
+
+En este episodio, un git push basta para que tu app se despliegue sola en tu VPS. GitHub Actions orquesta, y versaDeploy despliega por SSH, sin agentes en el servidor.
+
+<video id="v-github-actions" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/07-github-actions.mp4">
+  <track kind="captions" src="/media/07-github-actions.vtt" srclang="es" label="Español" default>
+</video>
+
+<a href="#" data-video="v-github-actions" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-github-actions" data-t="20">0:20 1. Un push, y está en producción</a> · <a href="#" data-video="v-github-actions" data-t="70">1:10 2. El servidor y los secretos</a> · <a href="#" data-video="v-github-actions" data-t="129">2:09 3. El archivo deploy.yml</a> · <a href="#" data-video="v-github-actions" data-t="177">2:57 4. El workflow de GitHub Actions</a> · <a href="#" data-video="v-github-actions" data-t="220">3:40 5. Cuando algo falla</a> · <a href="#" data-video="v-github-actions" data-t="272">4:32 Las ejecuciones en GitHub</a>

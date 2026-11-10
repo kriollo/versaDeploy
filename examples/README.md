@@ -19,4 +19,4 @@ Each example is deployed with the real framework by the end-to-end test (`test/e
 
 ## CI
 
-[github-actions.yml](github-actions.yml) deploys from GitHub Actions: staging on every push to `main`, production on every `v*` tag (with `deploy_tags: "v*"` in production, versa refuses untagged commits from anywhere). It installs versa with [install.sh](../install.sh), which checks the binary's sha256.
+[github-actions.yml](github-actions.yml) deploys from GitHub Actions: staging on every push to `main`, production on every `v*` tag (with `deploy_tags: "v*"` in production, versa refuses untagged commits from anywhere). It installs versa with [install.sh](../install.sh), which checks the binary's sha256. Working repo: [versadeploy-demo-ci](https://github.com/kriollo/versadeploy-demo-ci); video (Spanish): [De git push a producción](https://versadeploy.websystem.cl/videos/#github-actions).

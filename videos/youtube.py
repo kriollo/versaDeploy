@@ -26,6 +26,12 @@ Todo lo que ves es versaDeploy funcionando de verdad contra un VPS Ubuntu 24.04 
 #versaDeploy #deploy #devops #vps #linux #ssh"""
 
 
+def lower_first(s):
+    # "Los errores…" → "los errores…", but names (GitHub, VPS) keep their case
+    w = s.split(' ', 1)[0]
+    return s if any(c.isupper() for c in w[1:]) else s[:1].lower() + s[1:]
+
+
 def ts(sec):
     sec = int(sec)
     return f"{sec // 60}:{sec % 60:02}" if sec < 3600 else f"{sec // 3600}:{sec // 60 % 60:02}:{sec % 60:02}"
@@ -89,7 +95,7 @@ def episode(path):
     summary = yt.get("summary", "Paso a paso: el deploy.yml, preparar el servidor desde la vista Services, el primer deploy, el .env de producción y la app funcionando.")
     if example:
         summary += f" El deploy.yml de partida de este video: {REPO}/blob/main/examples/{example}"
-    write(name, f"""{ep['title']}: {ep['subtitle'].lower()} | versaDeploy
+    write(name, f"""{ep['title']}: {lower_first(ep['subtitle'])} | versaDeploy
 
 {' '.join(ep['opening']['lines'])}
 

@@ -2,6 +2,8 @@
 # one), a short prompt, and the episode's working dir.
 # Usage: source setup.sh <workdir> [fresh]   (fresh: no versa installed yet)
 V=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# the real HOME stays known: episode 7 uses its gh login and git config (never copied)
+export REAL_HOME="${REAL_HOME:-$HOME}"
 export HOME="$V/.work/home"
 mkdir -p "$HOME/.local/bin" "$V/.work/$1"
 case $HOME in "$V"/.work/*) ;; *) echo "setup.sh: HOME is not the sandbox"; return 1 ;; esac

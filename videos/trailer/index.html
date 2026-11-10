@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="es" data-resolution="portrait">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Inter Variable"; src: url("assets/fonts/InterVariable.ttf") format("truetype"); font-weight: 100 900; }
+      @font-face { font-family: "JetBrainsMono Nerd Font Mono"; src: url("assets/fonts/JetBrainsMonoNerdFontMono-Bold.ttf") format("truetype"); font-weight: 400 700; }
+      @font-face { font-family: "JetBrainsMono Nerd Font Mono"; src: url("assets/fonts/JetBrainsMonoNerdFontMono-ExtraBold.ttf") format("truetype"); font-weight: 800 900; }
+      :root {
+        --ground: #0b0c14;
+        --panel: #1a1b26;
+        --ink: #e6e9ff;
+        --muted: #6b739c;
+        --blue: #7aa2f7;
+        --cyan: #7dcfff;
+        --purple: #bb9af7;
+        --green: #9ece6a;
+        --orange: #e0af68;
+        --red: #f7768e;
+        --font-display: "Inter Variable", "Inter", sans-serif;
+        --font-mono: "JetBrainsMono Nerd Font Mono", "JetBrains Mono", monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--ground); }
+      #root { position: relative; width: 1080px; height: 1920px; overflow: hidden; font-family: var(--font-display); color: var(--ink); }
+      .clip { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+      .center { text-align: center; }
+
+      /* ── always-on background ── */
+      #bg { z-index: 0; }
+      .blob { position: absolute; width: 900px; height: 900px; border-radius: 50%; filter: blur(140px); opacity: 0.35; }
+      #blob1 { background: var(--blue); left: -300px; top: -200px; }
+      #blob2 { background: var(--purple); right: -350px; bottom: -250px; }
+      #grid {
+        position: absolute; left: -540px; right: -540px; bottom: -200px; height: 1100px;
+        background-image: linear-gradient(rgba(122,162,247,.28) 2px, transparent 2px), linear-gradient(90deg, rgba(122,162,247,.28) 2px, transparent 2px);
+        background-size: 90px 90px; transform: perspective(700px) rotateX(62deg); transform-origin: 50% 100%;
+        -webkit-mask-image: linear-gradient(to top, #000 10%, transparent 85%);
+      }
+      #vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,.75) 100%); }
+      #flash { position: absolute; inset: 0; background: #fff; opacity: 0; z-index: 50; pointer-events: none; }
+
+      /* ── scene 1: tension ── */
+      .typed { font-family: var(--font-mono); font-size: 60px; font-weight: 700; white-space: nowrap; overflow: hidden; }
+      #s1a { color: var(--ink); width: 0; border-right: 8px solid var(--cyan); padding-right: 6px; }
+      #s1b { margin-top: 70px; font-family: var(--font-display); font-size: 150px; font-weight: 900; color: var(--red); letter-spacing: -4px; opacity: 0; }
+
+      /* ── scene 2: drop ── */
+      #ring { position: absolute; width: 400px; height: 400px; border: 14px solid var(--cyan); border-radius: 50%; opacity: 0; }
+      #logo { width: 430px; border-radius: 80px; box-shadow: 0 40px 140px rgba(122,162,247,.6); }
+      .brand { font-size: 150px; font-weight: 900; letter-spacing: -6px; margin-top: 50px; display: flex; }
+      .brand span { display: inline-block; background: linear-gradient(180deg, #fff, var(--blue)); -webkit-background-clip: text; color: transparent; }
+      #s2tag { font-size: 46px; font-weight: 600; color: var(--muted); margin-top: 20px; letter-spacing: 8px; text-transform: uppercase; }
+
+      /* ── scene 3: terminal ── */
+      .term { width: 960px; background: rgba(26,27,38,.92); border: 2px solid rgba(122,162,247,.35); border-radius: 34px; box-shadow: 0 50px 140px rgba(0,0,0,.6); overflow: hidden; }
+      .bar { height: 76px; background: #16161e; display: flex; align-items: center; gap: 18px; padding: 0 32px; }
+      .bar i { width: 24px; height: 24px; border-radius: 50%; display: block; }
+      .body { text-align: left; padding: 44px 46px 54px; font-family: var(--font-mono); font-size: 44px; line-height: 1.7; }
+      #cmd { white-space: nowrap; overflow: hidden; width: 0; color: var(--ink); }
+      #cmd b { color: var(--purple); }
+      .ok { opacity: 0; color: var(--text, #c0caf5); }
+      .ok em { color: var(--green); font-style: normal; font-weight: 800; }
+      #online { margin-top: 90px; font-size: 140px; font-weight: 900; letter-spacing: -4px; color: var(--green); opacity: 0; text-shadow: 0 0 60px rgba(158,206,106,.7); }
+
+      /* ── scene 4: ssh ── */
+      .row { display: flex; align-items: center; justify-content: center; gap: 0; width: 100%; }
+      .node { width: 290px; height: 290px; border-radius: 60px; background: var(--panel); border: 4px solid var(--blue); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 150px; }
+      .node small { font-size: 34px; font-weight: 700; color: var(--muted); margin-top: 10px; font-family: var(--font-mono); }
+      #server { border-color: var(--green); }
+      .wire { position: relative; width: 300px; height: 8px; background: repeating-linear-gradient(90deg, var(--cyan) 0 26px, transparent 26px 44px); }
+      .packet { position: absolute; top: -14px; width: 36px; height: 36px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 40px var(--cyan); left: 0; opacity: 0; }
+      .big { font-size: 128px; font-weight: 900; letter-spacing: -4px; line-height: 1; }
+      #s4a { margin-top: 130px; }
+      #s4b { color: var(--cyan); }
+
+      /* ── scene 5: frameworks ── */
+      .fw { position: absolute; font-size: 190px; font-weight: 900; letter-spacing: -8px; opacity: 0; }
+      #fwcount { position: absolute; bottom: 300px; font-family: var(--font-mono); font-size: 40px; color: var(--muted); letter-spacing: 6px; }
+
+      /* ── scene 6: rollback ── */
+      .rel { width: 680px; height: 180px; border-radius: 34px; background: var(--panel); display: flex; align-items: center; padding: 0 54px; gap: 34px; font-family: var(--font-mono); font-size: 60px; font-weight: 800; margin: 26px 0; border: 5px solid transparent; }
+      .rel .st { margin-left: auto; font-size: 44px; }
+      #r41 { border-color: var(--green); }
+      #r42 { border-color: var(--red); }
+      #r42 .st { color: var(--red); }
+      #r41 .st { color: var(--green); }
+      #cur { position: absolute; right: 0; font-family: var(--font-mono); font-size: 46px; font-weight: 800; color: var(--blue); }
+      #rlist { position: relative; width: 1000px; display: flex; flex-direction: column; align-items: flex-start; padding-left: 30px; }
+      #s6t { margin-top: 110px; }
+      #s6t span { color: var(--green); }
+
+      /* ── scene 7: server ── */
+      #s7h { margin-bottom: 90px; }
+      .chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 30px; width: 900px; }
+      .chip { height: 150px; border-radius: 34px; background: var(--panel); border: 3px solid rgba(122,162,247,.4); display: flex; align-items: center; gap: 22px; padding: 0 34px; font-size: 50px; font-weight: 800; opacity: 0; }
+      .chip em { font-style: normal; color: var(--green); font-size: 60px; }
+      #s7f { margin-top: 90px; font-size: 52px; font-weight: 700; color: var(--muted); }
+
+      /* ── scene 8: end card ── */
+      #logo2 { width: 360px; border-radius: 70px; box-shadow: 0 30px 120px rgba(187,154,247,.6); }
+      #s8b { margin-top: 44px; }
+      #s8c { margin-top: 30px; font-size: 64px; font-weight: 700; color: var(--ink); }
+      #s8d { margin-top: 70px; padding: 26px 56px; border-radius: 999px; background: linear-gradient(90deg, var(--blue), var(--purple)); font-size: 54px; font-weight: 900; letter-spacing: 4px; color: #0b0c14; }
+      #s8e { margin-top: 70px; font-family: var(--font-mono); font-size: 46px; color: var(--cyan); }
+      #s8f { margin-top: 18px; font-family: var(--font-mono); font-size: 40px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="32" data-width="1080" data-height="1920">
+      <audio id="music" src="assets/soundtrack.wav" data-start="0" data-duration="32" data-track-index="9" data-volume="1"></audio>
+
+      <div id="bg" class="clip" data-start="0" data-duration="32" data-track-index="0">
+        <div id="blob1" class="blob"></div>
+        <div id="blob2" class="blob"></div>
+        <div id="grid"></div>
+        <div id="vignette" data-layout-ignore></div>
+      </div>
+
+      <!-- 1. tension -->
+      <div id="s1" class="clip center" data-start="0" data-duration="4" data-track-index="1">
+        <div id="s1a" class="typed">$ git commit -m "listo"</div>
+        <div id="s1b">¿Y el servidor?</div>
+      </div>
+
+      <!-- 2. drop -->
+      <div id="s2" class="clip center" data-start="4" data-duration="2" data-track-index="1">
+        <div id="ring"></div>
+        <img id="logo" src="assets/logo.webp" alt="" />
+        <div class="brand" id="brand" data-layout-allow-overlap><span>v</span><span>e</span><span>r</span><span>s</span><span>a</span><span>D</span><span>e</span><span>p</span><span>l</span><span>o</span><span>y</span></div>
+        <div id="s2tag">A tu VPS Linux</div>
+      </div>
+
+      <!-- 3. terminal -->
+      <div id="s3" class="clip center" data-start="6" data-duration="4" data-track-index="1">
+        <div class="term" id="term">
+          <div class="bar"><i style="background:#f7768e"></i><i style="background:#e0af68"></i><i style="background:#9ece6a"></i></div>
+          <div class="body">
+            <div id="cmd">❯ <b>versa</b> deploy production</div>
+            <div class="ok"><em>✓</em> Compila en tu equipo</div>
+            <div class="ok"><em>✓</em> Sube solo lo que cambió</div>
+            <div class="ok"><em>✓</em> Activa la versión nueva</div>
+            <div class="ok"><em>✓</em> Health check OK</div>
+          </div>
+        </div>
+        <div id="online">EN LÍNEA</div>
+      </div>
+
+      <!-- 4. ssh -->
+      <div id="s4" class="clip center" data-start="10" data-duration="4" data-track-index="1">
+        <div class="row">
+          <div class="node" id="laptop">💻<small>tu equipo</small></div>
+          <div class="wire"><div class="packet" id="p1"></div><div class="packet" id="p2"></div><div class="packet" id="p3"></div></div>
+          <div class="node" id="server">🖥️<small>tu VPS</small></div>
+        </div>
+        <div id="s4a" class="big">Sin agentes.</div>
+        <div id="s4b" class="big">Solo SSH.</div>
+      </div>
+
+      <!-- 5. frameworks: one per beat -->
+      <div id="s5" class="clip center" data-start="14" data-duration="4" data-track-index="1">
+        <div class="fw" style="color:#f7768e">Laravel</div>
+        <div class="fw" style="color:#7dcfff">versaWYS</div>
+        <div class="fw" style="color:#bb9af7">FrankenPHP</div>
+        <div class="fw" style="color:#ffffff">Next.js</div>
+        <div class="fw" style="color:#9ece6a">Nuxt</div>
+        <div class="fw" style="color:#7dcfff">FastAPI</div>
+        <div class="fw" style="color:#e0af68">Flask</div>
+        <div class="fw" style="color:#7aa2f7">Go</div>
+        <div id="fwcount">PHP · NODE · PYTHON · GO</div>
+      </div>
+
+      <!-- 6. rollback -->
+      <div id="s6" class="clip center" data-start="18" data-duration="4" data-track-index="1">
+        <div id="rlist">
+          <div class="rel" id="r42">v42 <span class="st">✗ falló</span></div>
+          <div class="rel" id="r41">v41 <span class="st">✓ estable</span></div>
+          <div id="cur">◀ current</div>
+        </div>
+        <div id="s6t" class="big">Rollback<br /><span>automático</span></div>
+      </div>
+
+      <!-- 7. server -->
+      <div id="s7" class="clip center" data-start="22" data-duration="4" data-track-index="1">
+        <div id="s7h" class="big">Tu servidor,<br />listo.</div>
+        <div class="chips">
+          <div class="chip"><em>✓</em> nginx</div>
+          <div class="chip"><em>✓</em> FrankenPHP</div>
+          <div class="chip"><em>✓</em> PostgreSQL</div>
+          <div class="chip"><em>✓</em> Redis</div>
+          <div class="chip"><em>✓</em> SSL</div>
+          <div class="chip"><em>✓</em> fail2ban</div>
+          <div class="chip"><em>✓</em> Backups</div>
+          <div class="chip"><em>✓</em> Cron</div>
+        </div>
+        <div id="s7f">Ubuntu · Debian · Rocky · Alma</div>
+      </div>
+
+      <!-- 8. end card -->
+      <div id="s8" class="clip center" data-start="26" data-duration="6" data-track-index="1">
+        <img id="logo2" src="assets/logo.webp" alt="" />
+        <div id="s8b" class="brand"><span>versaDeploy</span></div>
+        <div id="s8c">Simple. Seguro. Rápido.</div>
+        <div id="s8d">GRATIS · OPEN SOURCE</div>
+        <div id="s8e">github.com/kriollo/versaDeploy</div>
+        <div id="s8f">versadeploy.websystem.cl</div>
+      </div>
+
+      <div id="flash" data-layout-ignore></div>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      const B = 0.5; // one beat at 120 BPM
+
+      // background: slow drift for the whole film, a pulse on every bar after the drop
+      tl.fromTo("#blob1", { x: 0, y: 0 }, { x: 420, y: 700, duration: 32, ease: "none" }, 0);
+      tl.fromTo("#blob2", { x: 0, y: 0 }, { x: -380, y: -800, duration: 32, ease: "none" }, 0);
+      tl.fromTo("#grid", { backgroundPositionY: "0px" }, { backgroundPositionY: "2880px", duration: 32, ease: "none" }, 0);
+      for (let b = 4; b < 31; b += 2) {
+        tl.fromTo("#grid", { opacity: 1 }, { opacity: 0.45, duration: 1.2, ease: "power2.out" }, b);
+      }
+      // immediateRender off: a fromTo applies its from-values when authored, which left the
+      // last flash (opacity 1) over the whole intro
+      const flash = (at, peak = 0.85) => tl.fromTo("#flash", { opacity: peak }, { opacity: 0, duration: 0.35, ease: "power2.out", immediateRender: false }, at);
+      tl.set("#flash", { opacity: 0 }, 0);
+      const shake = (target, at, amp = 26) => {
+        tl.fromTo(target, { x: -amp }, { x: 0, duration: 0.4, ease: "elastic.out(1.2, 0.3)" }, at);
+      };
+
+      // 1. tension: the commit types, the question slams in red and glitches
+      tl.to("#s1a", { width: 850, duration: 1.4, ease: "steps(22)" }, 0.3);
+      tl.fromTo("#s1b", { opacity: 0, scale: 2.4, filter: "blur(30px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.35, ease: "expo.out" }, 2.3);
+      shake("#s1b", 2.65, 34);
+      tl.to("#s1", { scale: 1.12, duration: 1.3, ease: "power1.in" }, 2.7);
+      tl.to("#s1", { opacity: 0, filter: "blur(20px)", duration: 0.2 }, 3.8);
+
+      // 2. drop: flash, ring, the logo slams, the name falls in letter by letter
+      flash(4, 1);
+      tl.fromTo("#ring", { scale: 0.3, opacity: 1 }, { scale: 4.5, opacity: 0, duration: 1.1, ease: "expo.out" }, 4);
+      tl.fromTo("#logo", { scale: 3.2, rotation: -25, opacity: 0 }, { scale: 1, rotation: 0, opacity: 1, duration: 0.55, ease: "back.out(1.6)" }, 4);
+      tl.fromTo("#brand span", { y: -260, opacity: 0, rotation: -20 }, { y: 0, opacity: 1, rotation: 0, duration: 0.45, ease: "back.out(2)", stagger: 0.035 }, 4.2);
+      tl.fromTo("#s2tag", { opacity: 0, scaleX: 1.8 }, { opacity: 1, scaleX: 1, duration: 0.5, ease: "expo.out" }, 4.4);
+      tl.to("#s2", { scale: 0.6, opacity: 0, filter: "blur(16px)", duration: 0.3, ease: "power3.in" }, 5.7);
+
+      // 3. terminal: the window flies in, the command types, a check on every beat, EN LÍNEA
+      tl.fromTo("#term", { y: 500, rotationX: 40, opacity: 0, scale: 0.8 }, { y: 0, rotationX: 0, opacity: 1, scale: 1, duration: 0.5, ease: "expo.out" }, 6);
+      tl.to("#cmd", { width: 860, duration: 0.9, ease: "steps(26)" }, 6.4);
+      gsap.utils.toArray(".ok").forEach((el, i) => {
+        tl.fromTo(el, { opacity: 0, x: -120 }, { opacity: 1, x: 0, duration: 0.25, ease: "back.out(2)" }, 7.2 + i * 0.4);
+      });
+      tl.fromTo("#online", { opacity: 0, scale: 3, rotation: -8 }, { opacity: 1, scale: 1, rotation: -3, duration: 0.3, ease: "back.out(2.5)" }, 9.5);
+      flash(9.5, 0.35);
+      tl.to("#s3", { x: -1100, opacity: 0, duration: 0.2, ease: "power3.in" }, 9.85);
+
+      // 4. ssh: two boxes, packets fly over the wire, "agentes" struck out
+      tl.fromTo("#laptop", { x: -500, opacity: 0 }, { x: 0, opacity: 1, duration: 0.45, ease: "expo.out" }, 10);
+      tl.fromTo("#server", { x: 500, opacity: 0 }, { x: 0, opacity: 1, duration: 0.45, ease: "expo.out" }, 10.1);
+      ["#p1", "#p2", "#p3"].forEach((p, i) => {
+        tl.fromTo(p, { x: -20, opacity: 1 }, { x: 284, duration: 0.6, ease: "power2.in" }, 10.5 + i * 0.35);
+        tl.to(p, { opacity: 0, duration: 0.05 }, 11.1 + i * 0.35);
+        tl.fromTo("#server", { scale: 1.15 }, { scale: 1, duration: 0.3, ease: "power2.out" }, 11.1 + i * 0.35);
+      });
+      tl.fromTo("#s4a", { opacity: 0, y: 80 }, { opacity: 1, y: 0, duration: 0.35, ease: "expo.out" }, 10.6);
+      tl.fromTo("#s4b", { opacity: 0, scale: 2 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2.4)" }, 11.9);
+      flash(11.9, 0.3);
+      tl.to("#s4", { scale: 1.4, opacity: 0, duration: 0.25, ease: "power3.in" }, 13.75);
+
+      // 5. frameworks: one name slams per beat
+      gsap.utils.toArray(".fw").forEach((el, i) => {
+        const at = 14 + i * B;
+        tl.fromTo(el, { opacity: 0, scale: 2.6, rotation: i % 2 ? 6 : -6 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.18, ease: "expo.out" }, at);
+        tl.to(el, { opacity: 0, scale: 0.7, duration: 0.12, ease: "power2.in" }, at + B - 0.12);
+      });
+      tl.fromTo("#fwcount", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 14);
+
+      // 6. rollback: v42 fails and glitches, current jumps back to v41
+      tl.fromTo("#r42", { x: 900, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: "expo.out" }, 18);
+      tl.fromTo("#r41", { x: -900, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: "expo.out" }, 18.1);
+      tl.fromTo("#cur", { y: 46, opacity: 0 }, { y: 46, opacity: 1, duration: 0.2 }, 18.4);
+      for (let k = 0; k < 6; k++) {
+        tl.to("#r42", { x: k % 2 ? 22 : -22, skewX: k % 2 ? 8 : -8, duration: 0.05 }, 18.9 + k * 0.05);
+      }
+      tl.to("#r42", { x: 0, skewX: 0, opacity: 0.35, duration: 0.1 }, 19.2);
+      tl.to("#cur", { y: 278, duration: 0.45, ease: "back.out(2)" }, 19.4);
+      tl.fromTo("#r41", { scale: 1.08 }, { scale: 1, duration: 0.4, ease: "power2.out" }, 19.85);
+      tl.fromTo("#s6t", { opacity: 0, y: 120 }, { opacity: 1, y: 0, duration: 0.4, ease: "expo.out" }, 19.9);
+      flash(19.85, 0.3);
+      tl.to("#s6", { y: -1200, opacity: 0, duration: 0.3, ease: "power3.in" }, 21.7);
+
+      // 7. server: the headline, then a check pops on every half beat
+      tl.fromTo("#s7h", { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)" }, 22);
+      gsap.utils.toArray(".chip").forEach((el, i) => {
+        tl.fromTo(el, { opacity: 0, scale: 0.4, y: 60 }, { opacity: 1, scale: 1, y: 0, duration: 0.25, ease: "back.out(2.6)" }, 22.6 + i * 0.25);
+      });
+      tl.fromTo("#s7f", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 23.8);
+      tl.to("#s7", { scale: 0.5, opacity: 0, filter: "blur(20px)", duration: 0.3, ease: "power3.in" }, 25.7);
+
+      // 8. end card: the big hit, everything builds, a slow push in
+      flash(26, 1);
+      tl.fromTo("#logo2", { scale: 0, rotation: 180 }, { scale: 1, rotation: 0, duration: 0.7, ease: "back.out(1.7)" }, 26);
+      tl.fromTo("#s8b", { opacity: 0, y: 80, scaleX: 1.6 }, { opacity: 1, y: 0, scaleX: 1, duration: 0.6, ease: "expo.out" }, 26.3);
+      tl.fromTo("#s8c", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.4, ease: "expo.out" }, 27.0);
+      tl.fromTo("#s8d", { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2.5)" }, 27.6);
+      tl.fromTo("#s8e", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 28.2);
+      tl.fromTo("#s8f", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 28.5);
+      tl.fromTo("#s8", { scale: 1 }, { scale: 1.06, duration: 6, ease: "none" }, 26);
+      tl.fromTo("#logo2", { y: 0 }, { y: -18, duration: 1, ease: "sine.inOut", yoyo: true, repeat: 4 }, 27);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

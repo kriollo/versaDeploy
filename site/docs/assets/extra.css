@@ -77,3 +77,4 @@ video { width: 100%; border-radius: 12px; box-shadow: 0 10px 30px #0005; margin:
 
 /* tables: navy header like the logo's server */
 .md-typeset table:not([class]) th { background-color: var(--vd-navy); color: #fff; }
+video.vertical { max-width: 360px; display: block; margin: .5rem auto 1rem; }

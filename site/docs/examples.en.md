@@ -90,7 +90,7 @@ A static binary built on your machine, run as a service.
 
 ## GitHub Actions
 
-Staging on every push to `main`, production on every `v*` tag.
+Staging on every push to `main`, production on every `v*` tag. [Video](videos.md#github-actions) (Spanish) and a [demo repo](https://github.com/kriollo/versadeploy-demo-ci) with the workflow running.
 
 ??? example "github-actions.yml"
 

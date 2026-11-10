@@ -11,6 +11,9 @@
 #
 # deploy.yml reads the key from ~/.ssh/id_ed25519, as in the examples; set
 # `strict_host_key: true` under ssh so CI never connects to an unknown host.
+#
+# Step by step (Spanish video): https://versadeploy.websystem.cl/videos/#github-actions
+# A working repo with this workflow: https://github.com/kriollo/versadeploy-demo-ci
 name: Deploy
 
 on:
@@ -44,6 +47,9 @@ jobs:
         with:
           node-version: "22"
 
+      # Your checks: if one fails, the job stops and nothing reaches the server
+      # - run: composer install --no-interaction && vendor/bin/phpunit
+
       - name: Install versa
         run: |
           curl -fsSL https://raw.githubusercontent.com/kriollo/versaDeploy/main/install.sh | VERSA_INSTALL_DIR="$HOME/.local/bin" sh
@@ -63,3 +69,8 @@ jobs:
         env:
           VERSA_DEPLOYER: ${{ github.actor }} # who shows up in versa history
         run: versa deploy ${{ startsWith(github.ref, 'refs/tags/') && 'production' || 'staging' }} --config deploy.yml
+
+      # ubuntu-latest throws the machine away; on a self-hosted runner, delete the key
+      - name: Remove the key
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519

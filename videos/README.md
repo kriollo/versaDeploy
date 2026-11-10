@@ -11,6 +11,7 @@ Tutorial episodes recorded with [VHS](https://github.com/charmbracelet/vhs): eve
 | 4 — Nuxt con SSR: .env en tiempo de ejecución y un rollback | `episodes/04-nuxt.tape` | `./prep.sh 04` |
 | 5 — versaWYS en FrankenPHP: del composer create-project al panel en línea | `episodes/05-versawys.tape` | `./prep.sh 05` |
 | 6 — Cuando un deploy falla: los errores más comunes | `episodes/06-problemas.tape` | after `./make.sh 05` (continues its server) |
+| 7 — De git push a producción: GitHub Actions y versaDeploy en tu propio VPS | `episodes/07-github-actions.tape` | `./prep.sh 07` (demo repo `kriollo/versadeploy-demo-ci` + the runner in `ci-runner/`) |
 
 ## The intro (Remotion)
 

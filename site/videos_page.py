@@ -7,7 +7,8 @@ import os, re
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(os.path.dirname(HERE), "videos", "out")
 VIDEOS = [("00-intro", "intro"), ("02-laravel", "laravel"), ("03-fastapi", "fastapi"), ("04-nuxt", "nuxt"),
-          ("05-versawys", "versawys"), ("06-problemas", "problemas")]
+          ("05-versawys", "versawys"), ("06-problemas", "problemas"),
+          ("07-github-actions", "github-actions")]
 EN = {
     "intro": ("What versaDeploy is and does", "What it does, how a deploy works, the services it installs, the TUI and its features for teams."),
     "laravel": ("Laravel: from an empty VPS to the app online", "deploy.yml, setting up the server from the Services view, the first deploy, the production .env and the app in the browser."),
@@ -15,6 +16,11 @@ EN = {
     "nuxt": ("Nuxt with SSR", "A Node server behind nginx, runtime config from the .env, and an instant rollback."),
     "versawys": ("versaWYS on FrankenPHP", "From composer create-project to the panel online: FrankenPHP instead of PHP-FPM, the versaWYS installer, app:deploy:finish, cron, Redis and maintenance mode."),
     "problemas": ("When a deploy fails", "The most common errors and how to fix them: uncommitted changes, SSH, a stuck lock, a failing hook, a failing health check and a manual rollback."),
+    "github-actions": ("From git push to production", "GitHub Actions and versaDeploy on your own VPS: a CI-only SSH key in the repo's secrets, the workflow, a deploy with no downtime, and a failing check that never reaches the server."),
+}
+TRAILER = {
+    "es": "## Tráiler { #trailer }\n\nversaDeploy en 30 segundos, en formato vertical para compartir.\n",
+    "en": "## Trailer { #trailer }\n\nversaDeploy in 30 seconds, vertical, to share.\n",
 }
 
 
@@ -31,7 +37,9 @@ def page(lang):
         "es": "# Videos\n\nLa serie completa, con voz y subtítulos (botón **CC** del reproductor). Cada capítulo es un enlace que salta a ese momento del video.\n",
         "en": "# Videos\n\nThe whole series, **in Spanish** with Spanish captions (**CC** button). Each chapter link jumps to that point of the video.\n",
     }[lang]
-    out = [head]
+    out = [head, TRAILER[lang] + """
+<video class="vertical" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/trailer-versadeploy.mp4"></video>
+"""]
     for name, vid in VIDEOS:
         title, summary, chapters = parse(name)
         if lang == "en":

@@ -16,7 +16,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 REPO = "https://github.com/kriollo/versaDeploy"
 REF = ["INSTALL", "QUICKSTART", "GETTING_STARTED", "DEPLOY", "SERVICES", "CLI_REFERENCE", "TROUBLESHOOTING"]
-VIDEOS = ["00-intro", "02-laravel", "03-fastapi", "04-nuxt", "05-versawys", "06-problemas"]
+VIDEOS = ["00-intro", "02-laravel", "03-fastapi", "04-nuxt", "05-versawys", "06-problemas", "07-github-actions"]
 PENDING = """!!! note "Página en inglés"
     Esta página de referencia todavía no está traducida al español. Las guías (Primeros pasos, Flujos, Videos, Ejemplos) sí lo están.
 

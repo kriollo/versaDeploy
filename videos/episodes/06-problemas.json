@@ -79,10 +79,10 @@
     ]
   },
   "outro": {
-    "next": "",
+    "next": "De git push a producción",
     "lines": [
       "En resumen: versa ssh-test para la conexión, versa history para ver qué pasó, y versa rollback para volver.",
-      "¡Gracias por ver la serie, y nos vemos!"
+      "En el próximo episodio: despliegues automáticos con GitHub Actions. ¡Nos vemos!"
     ]
   },
   "youtube": {
