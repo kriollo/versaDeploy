@@ -12,7 +12,8 @@ func TestServicesViewRendersAndSelects(t *testing.T) {
 	env := &config.Environment{RemotePath: "/var/www/app", SSH: config.SSHConfig{Host: "h", User: "deploy", Port: 22}}
 	env.Builds.PHP.Enabled = true
 	s := newServicesModel(120, 40)
-	r := provision.ParseReport("apt=1\nos_id=ubuntu\nsvc_nginx=active 1.24.0\nupg nginx/noble-security 1.24.1 amd64 [upgradable from: 1.24.0]\nreboot=1")
+	// the project already has its vhost (vhost=nginx): nothing for nginx to do
+	r := provision.ParseReport("apt=1\nos_id=ubuntu\nsvc_nginx=active 1.24.0\nvhost=nginx\nupg nginx/noble-security 1.24.1 amd64 [upgradable from: 1.24.0]\nreboot=1")
 	s.applyDetected(msgServicesDetected{envName: "prod", report: r}, env, "app", t.TempDir())
 
 	out := s.view(120, 40, env)
@@ -22,7 +23,7 @@ func TestServicesViewRendersAndSelects(t *testing.T) {
 		}
 	}
 	if s.selected["nginx"] {
-		t.Error("active nginx should not be preselected")
+		t.Error("active nginx with the project's vhost should not be preselected")
 	}
 
 	pick := func(s *servicesModel, id string) {

@@ -397,15 +397,15 @@ Running `versa` with no command opens a full-screen interface (`versa --no-gui` 
 
 | Key              | Action                                          |
 | :--------------- | :---------------------------------------------- |
-| `←` / `→`        | Previous / next view                            |
-| `Tab`            | Focus the sidebar (pick a view or environment)  |
+| `←` / `→`        | Previous / next view (Switch Config included)   |
+| `Tab`            | Focus the sidebar: `↑`/`↓` move through every deploy file's environments; one of another file loads that file |
 | `↑` / `↓`, `Enter` | Move, select                                  |
 | `F5`             | Refresh the current view                        |
 | `c`              | Connect / reconnect to the active environment   |
 | `D`              | Go to Operations to deploy                      |
 | `q`, `Ctrl+C`    | Quit                                            |
 
-**Mouse**: click a tab to open it, click an environment in the sidebar to switch to it, and use the wheel to scroll (lists move their selection). While the TUI uses the mouse, most terminals select text with `Shift` + drag.
+**Mouse**: click a tab to open it, click an environment in the sidebar to switch to it (the sidebar lists every `*deploy*.yml` in the directory with its environments: one of another file loads that file), and use the wheel to scroll (lists move their selection). While the TUI uses the mouse, most terminals select text with `Shift` + drag.
 
 **Views**
 

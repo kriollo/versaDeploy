@@ -778,15 +778,7 @@ func TestProvisionAndDeploy(t *testing.T) {
 		}
 
 		if s.franken {
-			// one PHP per server: PHP-FPM is refused next to FrankenPHP, by the script too
-			var out bytes.Buffer
-			v := hosted[0].vars(pub)
-			v.PHPVersion, v.FrankenPHP = "8.4", false
-			if b, err := provision.Build([]string{"php"}, v); err != nil {
-				t.Fatal(err)
-			} else if err := provision.Run(c, "root", b, &out); err == nil || !strings.Contains(out.String(), "FrankenPHP is already installed") {
-				t.Errorf("%s: PHP-FPM next to FrankenPHP was not refused: %v\n%s", s.name, err, out.String())
-			}
+			// (PHP-FPM next to FrankenPHP, for another project: TestMultiVersion)
 			// FrankenPHP only listens on localhost; php is its CLI (hooks, cron), with
 			// production settings (php.d/00-versa.ini: no errors on screen) and PHP_BINARY
 			// = the wrapper (PHP that runs PHP_BINARY: schedule:run, app:deploy:finish)

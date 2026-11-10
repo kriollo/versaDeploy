@@ -26,3 +26,13 @@ func TestFindConfigFiles(t *testing.T) {
 		t.Errorf("found %v, want %v", got, want)
 	}
 }
+
+// Environment names come back sorted, even from a file that wouldn't load (missing ${VAR}).
+func TestEnvironmentNames(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "deploy.yml")
+	os.WriteFile(p, []byte("project: x\nenvironments:\n  staging: { ssh: { host: '${NOPE}' } }\n  production: {}\n"), 0o644)
+	got, err := EnvironmentNames(p)
+	if err != nil || !slices.Equal(got, []string{"production", "staging"}) {
+		t.Fatalf("got %v, %v", got, err)
+	}
+}

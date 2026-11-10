@@ -22,7 +22,7 @@ func TestNodeDepsScript(t *testing.T) {
 	// stub npm: "installs" by creating node_modules
 	os.WriteFile(filepath.Join(bin, "npm"), []byte("#!/bin/sh\nmkdir node_modules && echo installed\n"), 0o755)
 	run := func(cmd string) (string, error) {
-		c := exec.Command("sh", "-c", nodeDepsScript(cmd, app))
+		c := exec.Command("sh", "-c", nodeDepsScript(cmd, app, ""))
 		c.Env = append(os.Environ(), "PATH="+bin+":/usr/bin:/bin")
 		out, err := c.CombinedOutput()
 		return strings.TrimSpace(string(out)), err

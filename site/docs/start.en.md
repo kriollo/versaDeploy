@@ -66,7 +66,7 @@ The interface opens. Press **→** until the **Services** view: versa detects th
 
 Without the interface (in a script or CI) it is the same: `versa provision production` shows what it will install and asks first (`--dry-run` only shows it).
 
-If the server already runs things, versa respects them: it won't replace nginx with Apache, install a second PHP, restart services or change existing passwords.
+If the server already runs things, versa respects them: it won't replace nginx with Apache, restart services or change existing passwords. Each project can run its own PHP or Node version: it's installed next to other projects'.
 
 ## 5. First deploy
 

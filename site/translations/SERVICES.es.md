@@ -39,6 +39,8 @@ environments:
 5. Presiona **`w`** para guardar el bloque `provision:` y **`a`** para agregar a `deploy.yml` los comandos de `services_reload` sugeridos. Haz commit de `deploy.yml`.
 6. Ve a **Operations**, activa **Initial deploy** y presiona **`D`**.
 
+Sin la TUI (CI, scripts), `versa provision <entorno>` corre los mismos pasos: la preselección, `--only <ids>`, `--prepare` (`P`) o `--reset-db-password` (`X`), con `--dry-run` para verlos antes. Mira la [referencia de comandos](CLI_REFERENCE.md#versa-provision).
+
 ---
 
 ## 3. Teclas { #3-keys }
@@ -93,8 +95,8 @@ Los servicios que ya están activos nunca se preseleccionan.
 | Servicio | Qué hace |
 | :------ | :----------- |
 | Paquetes base | curl, git, unzip, build-essential, ufw, cron (para los schedulers de las apps)…, más `provision.packages` (sin actualizar el sistema: para eso `U`/`S`) |
-| PHP-FPM + OPCache | PHP desde ondrej (Ubuntu) o sury (Debian), extensiones para tu base de datos y Redis, `php.ini` de producción y OPCache ajustado para deploys con symlink (`revalidate_path=1`) |
-| FrankenPHP | Alternativa a PHP-FPM (`frankenphp: true`): el build estático oficial (versión fija, sha256 verificado: PHP 8.5 con pdo_pgsql/mysql, redis, intl, gd, opcache, zip…) en `/usr/local/bin`, `php` para hooks y cron (`frankenphp php-cli`, salvo que ya exista un PHP CLI), y la configuración del proyecto `/etc/frankenphp/<proyecto>.Caddyfile`: 127.0.0.1:`proxy_port` (por defecto 8000), `php_ini` de producción, IP del cliente y `HTTPS` desde nginx. La app corre como una entrada de `services` (`w` la propone) que los deploys **nunca reinician**: OPcache identifica los scripts por su ruta real (`opcache.revalidate_path`), así que las requests corren el release nuevo a los 2 s del cambio, cada una completa en un solo release, y después el deploy libera los scripts del release anterior con `opcache_reset()` (`reload`) por el socket privado del proyecto `<remote_path>/.frankenphp-opcache.sock`. No se pierde ninguna request (reiniciar FrankenPHP o `frankenphp reload` cortan las que están en curso). El vhost de nginx mantiene las reglas de versaWYS/Laravel y sirve los estáticos; solo `/index.php` pasa por el proxy, con la URI original, y FrankenPHP ejecuta `index.php` en cada request. Solo con nginx; x86_64 y arm64 |
+| PHP-FPM + OPCache | PHP desde ondrej (Ubuntu) o sury (Debian), extensiones para tu base de datos y Redis, `php.ini` de producción y OPCache ajustado para deploys con symlink (`revalidate_path=1`). La versión del proyecto se instala **al lado** de las de otros proyectos (`php8.1-fpm`, `php8.4-fpm`…) y el `php` del servidor no cambia (§7) |
+| FrankenPHP | El PHP de esta app en vez de PHP-FPM (`frankenphp: true`), al lado del PHP-FPM de otros proyectos: el build estático oficial (versión fija, sha256 verificado: PHP 8.5 con pdo_pgsql/mysql, redis, intl, gd, opcache, zip…) en `/usr/local/bin`, el `php` del proyecto para hooks y cron (`/usr/local/bin/frankenphp-php`: `frankenphp php-cli`; también el `php` del servidor si no tiene uno), y la configuración del proyecto `/etc/frankenphp/<proyecto>.Caddyfile`: 127.0.0.1:`proxy_port` (por defecto 8000), `php_ini` de producción, IP del cliente y `HTTPS` desde nginx. La app corre como una entrada de `services` (`w` la propone) que los deploys **nunca reinician**: OPcache identifica los scripts por su ruta real (`opcache.revalidate_path`), así que las requests corren el release nuevo a los 2 s del cambio, cada una completa en un solo release, y después el deploy libera los scripts del release anterior con `opcache_reset()` (`reload`) por el socket privado del proyecto `<remote_path>/.frankenphp-opcache.sock`. No se pierde ninguna request (reiniciar FrankenPHP o `frankenphp reload` cortan las que están en curso). El vhost de nginx mantiene las reglas de versaWYS/Laravel y sirve los estáticos; solo `/index.php` pasa por el proxy, con la URI original, y FrankenPHP ejecuta `index.php` en cada request. Solo con nginx; x86_64 y arm64 |
 | Apache2 / Nginx | Web server + el vhost del proyecto (desde las plantillas de versaWYS): headers de seguridad, rate limiting (nginx: 10 req/s por IP, burst 50, solo en las requests que llegan a la app; los estáticos nunca se limitan, tampoco detrás de un proxy: los chunks de Next/Nuxt), caché, archivos sensibles bloqueados, `$realpath_root` para PHP. Volver a correr el paso regenera el vhost (con respaldo) sin tocar el web server |
 | SSL | `certbot certonly` para el dominio y los alias que apuntan al servidor, y luego el vhost SSL. Se salta con una indicación cuando el DNS no apunta acá. Con `ssl_self_signed: true` (staging, red local, Docker): un certificado autofirmado en `/etc/ssl/versa/<dominio>/`, en el que confía el propio servidor |
 | PostgreSQL | Servidor + base de datos + usuario, regla en `pg_hba.conf` para 127.0.0.1 |
@@ -102,7 +104,7 @@ Los servicios que ya están activos nunca se preseleccionan.
 | Redis | Escuchando en 127.0.0.1, protected mode, `maxmemory 256mb` |
 | Dragonfly | Alternativa compatible con Redis (mismo protocolo y puerto, multihilo): el paquete oficial (versión fija, sha256 verificado), en 127.0.0.1, `maxmemory 256mb`, `cache_mode` (descarta como `allkeys-lru`), 1 hilo (Dragonfly necesita 256 MB por hilo: sube ambos juntos en `/etc/dragonfly/dragonfly.conf`), sin consultas de versión a internet. x86_64 y arm64 (Debian/Ubuntu); x86_64 en RHEL. Las apps siguen usando phpredis o cualquier cliente de Redis |
 | Python 3 | El Python del sistema, u otra versión junto a él (Ubuntu: deadsnakes) |
-| Node.js | NodeSource LTS |
+| Node.js | El build oficial del major del proyecto en `/opt/versa/node-<major>` (verificado con el SHASUMS256 de nodejs.org), al lado de los majors de otros proyectos, con corepack (pnpm, yarn). El primero queda como `node`/`npm` del servidor (`/usr/local/bin`) si no tiene uno; un `node` del servidor del mismo major se usa tal cual |
 | Usuario de deploy + llave SSH | Crea el usuario, lo agrega a `www-data` e instala tu llave pública |
 | Sudoers | `reload`/`restart` del web server y PHP-FPM, más las reglas de los `services` del entorno, validado con `visudo -c`. Un archivo por proyecto |
 | Directorio del proyecto | `remote_path` del usuario de deploy, grupo `www-data`, setgid. Los releases se extraen con `umask 002`, y un PHP-FPM nuevo recibe `UMask=0002` (drop-in de systemd), así el usuario de deploy (hooks, cron) y PHP-FPM pueden escribir los archivos del otro en todas las distribuciones |
@@ -127,7 +129,8 @@ Los servicios que ya están activos nunca se preseleccionan.
 | Redis | ✅ | ✅ | Ubuntu, Rocky |
 | Dragonfly | ✅ x86_64 + arm64 (.deb) | ✅ x86_64 (.rpm) | Debian, Alma |
 | Python 3 + venv | ✅ del sistema, o deadsnakes (Ubuntu) | ✅ del sistema, o `python3.X` de AppStream | Ubuntu, Rocky, Alma |
-| Node.js | ✅ NodeSource | ✅ módulo de AppStream | Ubuntu, Rocky, Alma |
+| Node.js | ✅ build oficial, por major | ✅ build oficial, por major | Ubuntu, Rocky, Alma |
+| Varias versiones de PHP | ✅ PHP-FPM por versión, FrankenPHP al lado | FrankenPHP al lado del único PHP-FPM | Ubuntu (`TestMultiVersion`) |
 | Usuario de deploy, sudoers, directorio, backups, cron jobs | ✅ | ✅ (+ etiquetas SELinux) | todos |
 | UFW | ✅ | ❌ rechazado: firewalld (nginx abre 80/443) | — |
 | Fail2ban | ✅ (UFW o nftables) | ✅ EPEL (firewalld o nftables) | todos (se bloquea un escáner real) |
@@ -162,7 +165,7 @@ La lista viene de [endoflife.date](https://endoflife.date) (una vez por sesión,
 
 Los scripts están hechos para volver a correrse en servidores de producción:
 
-- **Nunca una alternativa**: con Apache instalado se rechaza nginx (y al revés); con Redis instalado se rechaza Dragonfly (y al revés: ambos usan el puerto 6379); con MySQL instalado se reutiliza, nunca se instala MariaDB encima; con una versión de PHP-FPM o Node.js instalada se rechaza otra; un solo PHP por servidor: con PHP-FPM instalado se rechaza FrankenPHP (y al revés). La TUI bloquea la selección y el script del servidor se detiene antes de `apt-get`.
+- **Nunca una alternativa**: con Apache instalado se rechaza nginx (y al revés); con Redis instalado se rechaza Dragonfly (y al revés: ambos usan el puerto 6379); con MySQL instalado se reutiliza, nunca se instala MariaDB encima; La TUI bloquea la selección y el script del servidor se detiene antes de `apt-get`. Las **versiones** de PHP y Node no son alternativas: cada proyecto tiene la suya al lado de las otras (§7).
 - **Sin actualizaciones sorpresa**: los paquetes ya instalados se saltan, nunca se actualizan. Las actualizaciones solo ocurren con `U` / `S`.
 - **Los servicios existentes mantienen su configuración y siguen corriendo**: no se cambia `php.ini`, OPCache, `postgresql.conf`, ni la configuración de MySQL/MariaDB o Redis, y no se reinician. Solo se agrega lo que falta (una extensión de PHP, un módulo de Apache), con una recarga suave cuando hace falta.
 - **Los usuarios de base de datos existentes conservan su contraseña**: otras apps pueden usarlos. Se asegura la base de datos y sus permisos. Cambiar la contraseña es una acción explícita: **`X`** (y luego actualiza cada `.env` que la use).
@@ -177,6 +180,15 @@ Los scripts están hechos para volver a correrse en servidores de producción:
 ## 7. Varias apps en un servidor { #7-several-apps-on-one-server }
 
 Cada proyecto tiene su propio vhost (`sites-available/<proyecto>`), su archivo de sudoers (`/etc/sudoers.d/<usuario>-<proyecto>`), sus `services` y su timer de backups. Crea un entorno (o un archivo de configuración) por app, con su propio `project`, `remote_path` y `provision.domain`, e instala desde cada uno. *Sitios en este servidor* los lista todos.
+
+### Cada proyecto con su versión de PHP y Node { #each-project-its-php-and-node-version }
+
+Los proyectos de un mismo servidor pueden usar versiones distintas: PHP-FPM 8.1 para uno, 8.4 para otro, FrankenPHP (PHP 8.5) para un tercero, Node 20 y 22. No hay nada que activar: pon `provision.php_version`, `frankenphp` o `node_major` del proyecto e instala desde su entorno (Services → **I**, o `versa provision <entorno>`).
+
+- **Instalación**: un PHP-FPM por versión, al lado de los otros (Debian/Ubuntu: `php<versión>-fpm`, con su propio socket, que usa el vhost del proyecto). El `php` del servidor no cambia cuando llega una versión más nueva (Debian lo cambiaría). Los majors de Node van en `/opt/versa/node-<major>`.
+- **Deploy**: cada deploy apunta `<remote_path>/.versa/bin` a los runtimes del proyecto: `php` → `/usr/bin/php8.1` (o `frankenphp-php` de FrankenPHP), `node`/`npm`/`npx`/`pnpm` → `/opt/versa/node-20/bin`. Los hooks, `server_install`, el comando del health check, `versa exec`, la terminal de la TUI, el cron del proyecto y sus `services` corren con esa carpeta primero en el `PATH`, así que `php artisan migrate` usa el PHP del proyecto. Si una versión no está instalada, el deploy avisa y usan la del servidor.
+- **Cambiar de versión**: cambia `php_version` / `node_major`, instálala y despliega: los enlaces se actualizan solos.
+- **RHEL / Rocky / Alma** tienen un solo PHP-FPM por servidor (module streams): ahí se rechaza otra versión; FrankenPHP sí puede ir al lado. FrankenPHP necesita PHP 8.2 o superior (PHP 8.1 solo con PHP-FPM), y todas las apps FrankenPHP de un servidor usan el mismo build fijo (PHP 8.5).
 
 Los dominios extra van en `provision.aliases` (por ejemplo `www.myapp.com`): se agregan al vhost, y al certificado cuando apuntan al servidor.
 
@@ -200,10 +212,10 @@ El paso **Backups de la base de datos** instala `/usr/local/sbin/versa-backup-<p
 | `domain` | - | Dominio principal del vhost y del certificado |
 | `aliases` | `[]` | Dominios extra (vhost + certificado) |
 | `web_server` | el detectado, si no `nginx` | `nginx` o `apache` |
-| `php_version` | la instalada, si no la más nueva con soporte | Versión de PHP-FPM |
+| `php_version` | la instalada, si no la más nueva con soporte | La versión de PHP-FPM de este proyecto (al lado de las de otros, §7); también su `php` en hooks y cron |
 | `frankenphp` | `false` | Correr la app PHP con FrankenPHP (un servicio en `proxy_port`, 8000 por defecto) en vez de PHP-FPM; mira [examples/deploy.laravel-frankenphp.yml](../examples/deploy.laravel-frankenphp.yml) |
 | `python_version` | la del sistema | Python instalado junto al del sistema |
-| `node_major` | `engines.node`, si no la LTS más nueva | Versión mayor de Node.js |
+| `node_major` | `engines.node`, si no la LTS más nueva | La versión mayor de Node.js de este proyecto (en `/opt/versa/node-<major>`, §7); su `node`/`npm` en hooks, `server_install` y services |
 | `doc_root` | `current/app` | Document root relativo a `remote_path` (los releases guardan el código en `app/`; por ejemplo `current/app/public` para Laravel) |
 | `database` | la detectada | `postgres`, `mariadb` o `none` |
 | `db_name` / `db_user` | a partir de `project` | Nombres de la base de datos y del usuario (letras, dígitos, `_`) |

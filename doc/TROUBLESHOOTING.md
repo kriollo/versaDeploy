@@ -223,7 +223,15 @@ Check it's enabled: `chkconfig --list <name>` (RHEL/CentOS) or `rc-update show` 
 
 ### `Apache is already installed — nginx not installed` (or the opposite)
 
-versa never installs an alternative to what the server runs: pick the web server it already has. The same applies to a second PHP-FPM or Node.js version, and MariaDB over MySQL (the MySQL server is reused). See **[SERVICES.md](SERVICES.md#6-safety-rules-on-servers-already-in-use)**.
+versa never installs an alternative to what the server runs: pick the web server it already has. The same applies to MariaDB over MySQL (the MySQL server is reused). PHP and Node versions are per project: another project's version is installed next to it. See **[SERVICES.md](SERVICES.md#6-safety-rules-on-servers-already-in-use)**.
+
+### `php /usr/bin/php8.1 is not installed on the server` (or `node 20`)
+
+The deploy points the project's `<remote_path>/.versa/bin` at its `provision.php_version` / `node_major`, and that version isn't on the server yet: hooks, cron and services fall back to the server's default `php`/`node`. Install it from the project's environment (Services → **I**, or `versa provision <env>`) and deploy again. See **[SERVICES.md](SERVICES.md#each-project-its-php-and-node-version)**.
+
+### `PHP-FPM 8.3 is already installed and RHEL has one PHP-FPM per server`
+
+On Rocky/Alma/RHEL PHP-FPM comes from a module stream: one version per server. Use that version for this project, or run it on FrankenPHP (`frankenphp: true`), which goes next to PHP-FPM.
 
 ### `<domain> is already served by: …`
 

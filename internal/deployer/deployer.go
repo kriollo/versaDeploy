@@ -25,6 +25,7 @@ import (
 	"github.com/user/versaDeploy/internal/fsutil"
 	"github.com/user/versaDeploy/internal/git"
 	"github.com/user/versaDeploy/internal/logger"
+	"github.com/user/versaDeploy/internal/provision"
 	"github.com/user/versaDeploy/internal/ssh"
 	"github.com/user/versaDeploy/internal/state"
 	"golang.org/x/sync/errgroup"
@@ -348,6 +349,10 @@ func (d *Deployer) ship(c *ssh.Client, a *PrebuiltArtifact, previousLock *state.
 		if err := d.handlePreservedPaths(c, previousLock.LastDeploy.ReleaseDir, finalDir); err != nil {
 			return err
 		}
+	}
+	// the project's php/node before anything runs them (npm install, hooks)
+	if err := d.linkProjectRuntimes(c); err != nil {
+		return err
 	}
 	if err := d.ensurePythonVenv(c, finalDir); err != nil {
 		return err
@@ -1317,7 +1322,7 @@ func (d *Deployer) hookCmd(appPath, hook string, limit time.Duration) string {
 		// the hook's children running; GNU timeout kills the whole process group
 		hook = fmt.Sprintf(`"$(command -v gnutimeout || echo timeout)" -s KILL %d "$SHELL" -c %s`, int(limit.Seconds()), ssh.ShellQuote(hook))
 	}
-	return "cd " + ssh.ShellQuote(appPath) + " && " + hook
+	return "cd " + ssh.ShellQuote(appPath) + " && " + provision.ProjectPATH(d.env.RemotePath) + hook
 }
 
 // reuseSnippet hardlinks the first existing source to dst unless dst already exists,
@@ -1653,7 +1658,7 @@ func (d *Deployer) performHealthCheck(previousLock *state.DeployLock, sshClient 
 	client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
 	probe := func() error {
 		if hc.Command != "" {
-			cmd := fmt.Sprintf("cd %s && %s", ssh.ShellQuote(filepath.ToSlash(filepath.Join(finalDir, "app"))), hc.Command)
+			cmd := fmt.Sprintf("cd %s && %s%s", ssh.ShellQuote(filepath.ToSlash(filepath.Join(finalDir, "app"))), provision.ProjectPATH(d.env.RemotePath), hc.Command)
 			if out, err := sshClient.ExecuteCommandWithTimeout(cmd, time.Duration(timeout)*time.Second); err != nil {
 				return fmt.Errorf("command %q failed: %w (output: %s)", hc.Command, err, strings.TrimSpace(out))
 			}
@@ -1955,7 +1960,7 @@ func (d *Deployer) ExecRemoteCommand(command string) (string, error) {
 		timeout = 300 * time.Second
 	}
 
-	output, err := sshClient.ExecuteCommandWithTimeout(command, timeout)
+	output, err := sshClient.ExecuteCommandWithTimeout(provision.ProjectPATH(d.env.RemotePath)+command, timeout)
 	if err != nil {
 		return output, err
 	}

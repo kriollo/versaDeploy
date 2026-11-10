@@ -3,6 +3,7 @@ package provision
 import (
 	"crypto/tls"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +62,10 @@ type DetectParams struct {
 	RemotePath string
 	DeployUser string
 	AppService string
+	// The project's PHP version and Node major (provision.php_version / node_major):
+	// the php and node rows report those, not another project's version.
+	PHPVersion string
+	NodeMajor  string
 }
 
 // detectScript avoids non-POSIX tools so it runs on old servers. sbin is added to PATH
@@ -85,9 +90,12 @@ has nginx && svc nginx nginx "$(nginx -v 2>&1 | sed 's|.*/||')" 1
 if has apache2; then svc apache apache2 "$( (apache2ctl -v || apache2 -v) 2>/dev/null | sed -n 's|^Server version: Apache/\([^ ]*\).*|\1|p')" 1
 elif has httpd; then svc apache httpd "$(httpd -v 2>/dev/null | sed -n 's|^Server version: Apache/\([^ ]*\).*|\1|p')" 1; fi
 fpm=""
-for v in 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do if has php-fpm$v; then fpm=$v; break; fi; done
+if [ -n "$phpv" ]; then has php-fpm$phpv && fpm=$phpv
+else for v in 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do if has php-fpm$v; then fpm=$v; break; fi; done; fi
+others=$(for f in /usr/sbin/php-fpm[0-9]*; do [ -x "$f" ] && echo "${f#/usr/sbin/php-fpm}"; done | grep -vx "$fpm" | tr '\n' ' ')
 if [ -n "$fpm" ]; then echo "php_fpm=$fpm"; svc php "php$fpm-fpm" "$(php-fpm$fpm -v 2>/dev/null | head -1 | awk '{print $2}')" 1
 elif has php-fpm; then fv=$(php-fpm -v 2>/dev/null | head -1 | awk '{print $2}'); echo "php_fpm=$(echo "$fv" | cut -d. -f1,2)"; svc php php-fpm "$fv" 1
+elif [ -n "$others" ]; then echo "svc_php=absent (other projects: $others)"
 elif has php && ! grep -qs 'frankenphp php-cli' "$(command -v php)"; then echo "svc_php=absent $(php -v 2>/dev/null | head -1 | awk '{print $2}') (cli only)"; fi
 # FrankenPHP: running = the project's service is up
 [ -x /usr/local/bin/frankenphp ] && svc frankenphp "$app" "$(/usr/local/bin/frankenphp version 2>/dev/null | awk '{print $2, $3, $4}')" 1
@@ -101,10 +109,17 @@ has redis-server && svc redis "redis-server redis" "$(redis-server --version 2>/
 { has dragonfly || [ -x /usr/local/bin/dragonfly ]; } && svc dragonfly dragonfly "$( (dragonfly --version || /usr/local/bin/dragonfly --version) 2>/dev/null | head -1 | awk '{print $2}' | tr -d '\033' | sed 's/\[[0-9;]*m//g; s/-.*//')" 1
 if has python3; then pv=$(python3 -V 2>&1 | awk '{print $2}')
   if python3 -c 'import ensurepip' >/dev/null 2>&1; then echo "svc_python=installed $pv"; else echo "svc_python=absent $pv (no venv)"; fi; fi
-has node && echo "svc_node=installed $(node -v 2>/dev/null)"
+# Node: the project's major, the server's node or /opt/versa/node-<major> (node.sh)
+nv=$(node -v 2>/dev/null)
+if [ -n "$nodem" ] && [ -x "/opt/versa/node-$nodem/bin/node" ]; then echo "svc_node=installed $(/opt/versa/node-$nodem/bin/node -v)"
+elif [ -n "$nv" ] && { [ -z "$nodem" ] || [ "$(echo "$nv" | sed 's/^v//; s/\..*//')" = "$nodem" ]; }; then echo "svc_node=installed $nv"
+elif [ -n "$nv" ]; then echo "svc_node=absent (server: $nv)"; fi
 if [ -n "$app" ] && [ -f "/etc/systemd/system/$app.service" ]; then svc app_service "$app" "$app" 1; fi
 [ -n "$user" ] && id "$user" >/dev/null 2>&1 && echo "svc_deploy_user=installed $user"
-if [ -n "$user" ] && { ls /etc/sudoers.d/"$user"* >/dev/null 2>&1 || { [ "$(id -un)" = "$user" ] && sudo -n -l 2>/dev/null | grep -q systemctl; }; }; then echo "svc_sudoers=installed"; fi
+# this project's file (sudoers.sh): another project's rules don't cover its services. When
+# sudoers.d can't be read (RHEL, as the deploy user), the user's rules stand in.
+sf="/etc/sudoers.d/$(printf '%s-%s' "$user" "$proj" | tr -c 'A-Za-z0-9_-' '_')"
+if [ -n "$user" ] && { [ -f "$sf" ] || { [ ! -x /etc/sudoers.d ] && [ "$(id -un)" = "$user" ] && sudo -n -l 2>/dev/null | grep -q systemctl; }; }; then echo "svc_sudoers=installed"; fi
 [ -d "$p" ] && echo "svc_dirs=installed $p"
 has ufw && svc ufw ufw "" 1
 has fail2ban-client && svc fail2ban fail2ban "$(fail2ban-client --version 2>/dev/null | head -1 | sed 's/^[^0-9]*//')" 1
@@ -132,7 +147,16 @@ true`
 // DetectScript returns the probe script for p.
 func DetectScript(p DetectParams) string {
 	q := versassh.ShellQuote
-	return "proj=" + q(p.Project) + "; p=" + q(p.RemotePath) + "; user=" + q(p.DeployUser) + "; app=" + q(p.AppService) + "\n" + detectScript
+	// they reach a shell probe: only well-formed versions
+	phpv, nodem := p.PHPVersion, p.NodeMajor
+	if !phpVersionRe.MatchString(phpv) {
+		phpv = ""
+	}
+	if !regexp.MustCompile(`^\d+$`).MatchString(nodem) {
+		nodem = ""
+	}
+	return "proj=" + q(p.Project) + "; p=" + q(p.RemotePath) + "; user=" + q(p.DeployUser) + "; app=" + q(p.AppService) +
+		"; phpv=" + q(phpv) + "; nodem=" + q(nodem) + "\n" + detectScript
 }
 
 // Detect probes the server in one round-trip.

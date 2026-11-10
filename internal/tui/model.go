@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/user/versaDeploy/internal/config"
 	"github.com/user/versaDeploy/internal/logger"
+	"github.com/user/versaDeploy/internal/provision"
 	versassh "github.com/user/versaDeploy/internal/ssh"
 	"github.com/user/versaDeploy/internal/version"
 )
@@ -105,6 +107,7 @@ type appModel struct {
 
 	// Config selection
 	availableConfigs []string
+	fileEnvs         map[string][]string // environments of each discovered file (sidebar)
 	configSelector   configSelectorModel
 }
 
@@ -147,6 +150,10 @@ func newAppModel(cfg *config.Config, repoPath string) appModel {
 func (m *appModel) discoverConfigs() {
 	cwd, _ := os.Getwd()
 	m.availableConfigs, _ = config.FindConfigFiles(cwd)
+	m.fileEnvs = map[string][]string{}
+	for _, f := range m.availableConfigs {
+		m.fileEnvs[filepath.Clean(f)], _ = config.EnvironmentNames(f)
+	}
 
 	if len(m.availableConfigs) == 1 {
 		m.config.configPath = m.availableConfigs[0]
@@ -604,38 +611,30 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 	if m.sidebarFocused {
 		switch {
 		case key.Matches(msg, Keys.Up):
-			if m.activeEnv > 0 {
-				m.activeEnv--
-				m = m.resetViewState()
-				cmds = append(cmds, m.autoConnectCmds()...)
-			}
+			cmds = append(cmds, m.stepSideRow(-1)...)
 		case key.Matches(msg, Keys.Down):
-			if m.activeEnv < len(m.envNames)-1 {
-				m.activeEnv++
-				m = m.resetViewState()
-				cmds = append(cmds, m.autoConnectCmds()...)
-			}
+			cmds = append(cmds, m.stepSideRow(1)...)
 		case key.Matches(msg, Keys.Enter):
 			m.sidebarFocused = false
 		}
 		return m, tea.Batch(cmds...)
 	}
 
-	// Left/Right arrow: cycle through views (skip viewConfigSelector=6)
-	// Allow from config view when not editing. Block while a deploy is running.
-	configBlocked := m.currentView == viewConfig && m.config.isEditing
+	// Left/Right arrow: cycle through every tab, Switch Config included (it only needs a
+	// loaded config to leave). Not while editing config or while a deploy is running.
+	configBlocked := (m.currentView == viewConfig && m.config.isEditing) || (m.currentView == viewConfigSelector && m.cfg == nil)
 	deployRunning := (m.currentView == viewOperations && m.operations.running) || (m.currentView == viewServices && m.services.running)
-	if key.Matches(msg, Keys.Left) && !m.sidebarFocused && m.currentView != viewConfigSelector && !configBlocked && !deployRunning {
+	if key.Matches(msg, Keys.Left) && !m.sidebarFocused && !configBlocked && !deployRunning {
 		next := int(m.currentView) - 1
 		if next < 0 {
-			next = int(viewConfig)
+			next = int(viewConfigSelector)
 		}
 		cmds = append(cmds, m.switchToView(viewID(next))...)
 		return m, tea.Batch(cmds...)
 	}
-	if key.Matches(msg, Keys.Right) && !m.sidebarFocused && m.currentView != viewConfigSelector && !configBlocked && !deployRunning {
+	if key.Matches(msg, Keys.Right) && !m.sidebarFocused && !configBlocked && !deployRunning {
 		next := int(m.currentView) + 1
-		if next > int(viewConfig) {
+		if next > int(viewConfigSelector) {
 			next = 0
 		}
 		cmds = append(cmds, m.switchToView(viewID(next))...)
@@ -936,29 +935,9 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 				m.configSelector.cursor++
 			}
 		case key.Matches(msg, Keys.Enter):
-			if len(m.availableConfigs) > 0 {
-				path := m.availableConfigs[m.configSelector.cursor]
-				cfg, err := config.Load(path)
-				if err == nil {
-					m.cfg = cfg
-					m.config.configPath = path
-					m.config.loaded = false
-					m.activeEnv = 0
-					m.envNames = make([]string, 0, len(cfg.Environments))
-					for k := range cfg.Environments {
-						m.envNames = append(m.envNames, k)
-					}
-					sort.Strings(m.envNames)
-					m.currentView = viewDashboard
-					m.statusMsg = "Switched to " + filepath.Base(path)
-					// Reset SSH state for the new config environments
-					m.sshClients = make(map[string]*versassh.Client)
-					m.connStates = make(map[string]connState)
-					m.connErrors = make(map[string]error)
-					cmds = append(cmds, m.autoConnectCmds()...)
-				} else {
-					m.statusMsg = "Error loading config: " + errDisplay(err)
-				}
+			if len(m.availableConfigs) > 0 && m.loadConfigFile(m.availableConfigs[m.configSelector.cursor], "") {
+				m.currentView = viewDashboard
+				cmds = append(cmds, m.autoConnectCmds()...)
 			}
 		case msg.String() == "esc":
 			m.currentView = viewDashboard
@@ -1262,6 +1241,69 @@ func (m *appModel) handleTerminalKey(msg tea.KeyMsg) []tea.Cmd {
 	return cmds
 }
 
+// loadConfigFile switches to the config in path with env active (the first one when
+// env is ""), closing the previous file's connections. On error it keeps the current one.
+func (m *appModel) loadConfigFile(path, env string) bool {
+	cfg, err := config.Load(path)
+	if err != nil {
+		m.statusMsg = "Error loading " + filepath.Base(path) + ": " + errDisplay(err)
+		return false
+	}
+	for _, c := range m.sshClients {
+		if c != nil {
+			c.Close()
+		}
+	}
+	m.cfg = cfg
+	m.config.configPath = path
+	m.config.loaded = false
+	m.envNames = make([]string, 0, len(cfg.Environments))
+	for k := range cfg.Environments {
+		m.envNames = append(m.envNames, k)
+	}
+	sort.Strings(m.envNames)
+	m.activeEnv = max(0, slices.Index(m.envNames, env))
+	m.statusMsg = "Switched to " + filepath.Base(path)
+	m.sshClients = make(map[string]*versassh.Client)
+	m.connStates = make(map[string]connState)
+	m.connErrors = make(map[string]error)
+	*m = m.resetViewState()
+	return true
+}
+
+// selectSideRow activates a sidebar environment, loading its file first when it isn't
+// the current one.
+func (m *appModel) selectSideRow(r sideRow) []tea.Cmd {
+	if r.env == "" {
+		return nil
+	}
+	if m.isCurrentFile(r.file) {
+		i := slices.Index(m.envNames, r.env)
+		if i < 0 || i == m.activeEnv {
+			return nil
+		}
+		m.activeEnv = i
+		*m = m.resetViewState()
+	} else if !m.loadConfigFile(r.file, r.env) {
+		return nil
+	}
+	if m.currentView == viewConfig {
+		return m.switchToView(viewConfig) // show the new file
+	}
+	return m.autoConnectCmds()
+}
+
+// stepSideRow moves the sidebar selection to the previous/next environment, across files.
+func (m *appModel) stepSideRow(delta int) []tea.Cmd {
+	rows := m.sidebarRows()
+	for i := m.activeSideRow(rows) + delta; i >= 0 && i < len(rows); i += delta {
+		if rows[i].env != "" {
+			return m.selectSideRow(rows[i])
+		}
+	}
+	return nil
+}
+
 func (m appModel) resetViewState() appModel {
 	m.dashboard = dashboardModel{}
 	m.releases = releasesModel{}
@@ -1321,8 +1363,11 @@ func (m *appModel) switchToView(v viewID) []tea.Cmd {
 		}
 	}
 	if v == viewTerminal {
-		if env := m.activeEnvCfg(); env != nil && m.terminal.cwd == "" {
-			m.terminal.cwd = env.RemotePath
+		if env := m.activeEnvCfg(); env != nil {
+			if m.terminal.cwd == "" {
+				m.terminal.cwd = env.RemotePath
+			}
+			m.terminal.pathPrefix = provision.ProjectPATH(env.RemotePath)
 		}
 		m.terminal.setTyping(false) // Enter starts typing: passing through keeps ←/→
 	}
@@ -1380,7 +1425,8 @@ func (m appModel) View() string {
 	statusbarStr := renderStatusbar(m.width, Keys.ShortHelp(), m.statusMsg)
 
 	contentH := m.contentHeight()
-	sidebar := renderSidebar(contentH+1, m.envNames, m.activeEnv, m.sidebarFocused, m.connStates)
+	rows := m.sidebarRows()
+	sidebar := renderSidebar(contentH+1, rows, m.activeSideRow(rows), m.config.configPath, m.sidebarFocused, m.connStates)
 
 	contentW := m.contentWidth()
 

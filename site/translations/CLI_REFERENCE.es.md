@@ -43,11 +43,7 @@ Disponibles en todos los comandos.
 
 ## Elegir el archivo de configuración { #choosing-the-configuration-file }
 
-Si no pasas `--config`, versa busca en la carpeta actual archivos con alguno de estos nombres (`.yml` o `.yaml`):
-
-```
-deploy.yml   deploy_*.yml   versa_deploy.yml   versa_deploy_*.yml   *_deploy.yml   *_deploy_*.yml
-```
+Si no pasas `--config`, versa busca en la carpeta actual archivos cuyo nombre contenga `deploy` (`*deploy*.yml` o `*deploy*.yaml`): `deploy.yml`, `deploy.docker.yml`, `deploy_staging.yml`, `versa_deploy.yml`, `api_deploy.yml`…
 
 | Archivos encontrados | Qué pasa                                                              |
 | :------------------- | :-------------------------------------------------------------------- |
@@ -350,6 +346,31 @@ Salvo que `ssh.user` sea `root`, los comandos corren con `sudo -n`: mira [Permis
 
 ---
 
+## `versa provision` { #versa-provision }
+
+Instala y configura el stack del servidor desde la terminal: los mismos pasos, revisiones y parámetros que la [vista Services](SERVICES.md) de la TUI (`I`, `P`, `X`). Se conecta como root por `provision.ssh`, detecta lo que corre el servidor e instala lo que la vista preseleccionaría para la app (según `provision:` y `builds`). Igual que la vista, se puede repetir sin riesgo en un servidor en uso.
+
+```bash
+DB_PASS=… versa provision production                 # la preselección; pide confirmación
+versa provision production --dry-run                 # solo muestra los pasos
+versa provision production --only frankenphp,nginx,sudoers -y
+versa provision production --prepare                 # usuario deploy + llave, sudoers, carpeta del proyecto (P)
+versa provision production --steps                   # lista los ids de los pasos
+```
+
+| Opción                | Descripción                                                                               |
+| :-------------------- | :---------------------------------------------------------------------------------------- |
+| `--only <ids>`        | Corre estos pasos (separados por coma) en vez de la preselección. Un paso que no estaba preseleccionado cambia los parámetros igual que al marcarlo en la vista (por ejemplo `frankenphp` → `proxy_port` 8000). |
+| `--prepare`           | Solo `deploy_user`, `sudoers` y `dirs`.                                                    |
+| `--reset-db-password` | Cambia la contraseña del usuario de la base de datos a `provision.db_password` (por defecto un usuario existente la mantiene). |
+| `--dry-run`           | Muestra los pasos y su estado actual sin correrlos.                                       |
+| `-y`, `--yes`         | No pide confirmación (CI, scripts).                                                       |
+| `--steps`             | Lista los ids de los pasos y sale.                                                        |
+
+Si no queda nada por instalar lo dice y sale con 0. Las actualizaciones (`U`, `S`), los logs y los backups siguen en la vista.
+
+---
+
 ## `versa version` { #versa-version }
 
 ```bash
@@ -376,15 +397,15 @@ Correr `versa` sin comando abre una interfaz a pantalla completa (`versa --no-gu
 
 | Tecla            | Acción                                          |
 | :--------------- | :---------------------------------------------- |
-| `←` / `→`        | Vista anterior / siguiente                      |
-| `Tab`            | Ir a la barra lateral (elegir vista o entorno)  |
+| `←` / `→`        | Vista anterior / siguiente (incluida Switch Config) |
+| `Tab`            | Ir a la barra lateral: `↑`/`↓` recorren los entornos de todos los archivos deploy; uno de otro archivo carga ese archivo |
 | `↑` / `↓`, `Enter` | Moverse, seleccionar                          |
 | `F5`             | Refrescar la vista actual                       |
 | `c`              | Conectar / reconectar al entorno activo         |
 | `D`              | Ir a Operations para desplegar                  |
 | `q`, `Ctrl+C`    | Salir                                           |
 
-**Mouse**: haz clic en una pestaña para abrirla, en un entorno de la barra lateral para cambiarte a él, y usa la rueda para desplazarte (las listas mueven su selección). Mientras la TUI usa el mouse, la mayoría de las terminales seleccionan texto con `Shift` + arrastrar.
+**Mouse**: haz clic en una pestaña para abrirla, en un entorno de la barra lateral para cambiarte a él (la barra lista cada `*deploy*.yml` de la carpeta con sus entornos: uno de otro archivo carga ese archivo), y usa la rueda para desplazarte (las listas mueven su selección). Mientras la TUI usa el mouse, la mayoría de las terminales seleccionan texto con `Shift` + arrastrar.
 
 **Vistas**
 

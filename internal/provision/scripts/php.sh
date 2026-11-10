@@ -1,5 +1,6 @@
-# One PHP per server: FrankenPHP (frankenphp.sh) is the other one
-[ -x /usr/local/bin/frankenphp ] && die "FrankenPHP is already installed — PHP-FPM not installed (one PHP per server). Keep FrankenPHP (frankenphp: true)"
+# PHP-FPM of this project's version. Debian/Ubuntu install each version next to the
+# others (php8.1-fpm, php8.4-fpm, FrankenPHP too): the deploy points the project's
+# <remote_path>/.versa/bin/php at its version, so other projects keep theirs.
 # RHEL family: PHP from the AppStream module stream php:X.Y, one php-fpm unit
 if [ "$PKG_MGR" != apt ]; then
     if package_installed php-fpm; then
@@ -99,11 +100,14 @@ OPCACHE_EOF
     ok "php-fpm running (php${PHP_VERSION}-fpm, /run/php/php${PHP_VERSION}-fpm.sock)"
     return 0
 fi
-# Never install a second PHP-FPM next to an existing one
-for other in $(dpkg-query -W -f='${Package}\n' 'php*-fpm' 2>/dev/null | sed -n 's/^php\([0-9]\.[0-9]\)-fpm$/\1/p'); do
-    if [ "$other" != "$PHP_VERSION" ] && package_installed "php${other}-fpm"; then
-        die "PHP-FPM ${other} is already installed — PHP ${PHP_VERSION} not installed. Set php_version: \"${other}\""
-    fi
+others="$(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'php*-fpm' 2>/dev/null | sed -n 's/^ii  *php\([0-9]\.[0-9]\)-fpm$/\1/p' | grep -vx "$PHP_VERSION" | tr '\n' ' ' || true)"
+[ -n "$others" ] && info "PHP-FPM ${others}already installed for other projects: PHP ${PHP_VERSION} goes next to it"
+# The server's `php` stays what it was: Debian's alternatives would switch it to the
+# newest version installed, under the other projects' hooks and cron jobs
+prev_alt=""
+for a in php phar phar.phar; do
+    t="$(readlink -f "/etc/alternatives/$a" 2>/dev/null || true)"
+    [ -n "$t" ] && prev_alt="$prev_alt $a=$t"
 done
 php_prefix="php${PHP_VERSION}"
 php_fresh=1
@@ -128,8 +132,18 @@ case "$DATABASE" in
     mariadb)  ext+=(mysql) ;;
 esac
 pkgs=()
-for e in "${ext[@]}"; do pkgs+=("${php_prefix}-${e}"); done
+for e in "${ext[@]}"; do
+    # PHP 8.5+ builds OPcache in: there's no php8.5-opcache package
+    [ "$e" = opcache ] && ! pkg_available "${php_prefix}-opcache" && continue
+    pkgs+=("${php_prefix}-${e}")
+done
 apt_install "${pkgs[@]}"
+for kv in $prev_alt; do
+    a="${kv%%=*}"; t="${kv#*=}"
+    if [ -x "$t" ] && [ "$(readlink -f "/etc/alternatives/$a")" != "$t" ]; then
+        update-alternatives --quiet --set "$a" "$t" && ok "$a (the server's default) is still $(basename "$t")"
+    fi
+done
 if [ -z "$php_fresh" ]; then
     # existing PHP: only the missing extensions; php.ini and OPCache stay as they are
     if [ -n "$APT_INSTALLED" ]; then

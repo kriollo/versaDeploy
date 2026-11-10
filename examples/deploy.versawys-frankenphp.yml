@@ -25,7 +25,7 @@ environments:
       ssh: { user: root }
       domain: "myapp.com"                # change
       web_server: nginx
-      frankenphp: true                   # instead of PHP-FPM (one PHP per server): PHP 8.5 + extensions
+      frankenphp: true                   # instead of PHP-FPM (other projects may use it): PHP 8.5 + extensions
       proxy_port: 8000                   # FrankenPHP listens on 127.0.0.1:8000
       database: postgres                 # or mariadb
       db_name: myapp

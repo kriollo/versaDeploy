@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/user/versaDeploy/internal/config"
 	"github.com/user/versaDeploy/internal/ssh"
 )
 
@@ -136,7 +137,7 @@ func TestHookCmdTimeout(t *testing.T) {
 	if exec.Command("timeout", "-s", "KILL", "5", "true").Run() != nil {
 		t.Skip("no usable timeout")
 	}
-	d := &Deployer{server: &ssh.ServerInfo{Tools: []string{"timeout"}}}
+	d := &Deployer{env: &config.Environment{RemotePath: "/var/www/app"}, server: &ssh.ServerInfo{Tools: []string{"timeout"}}}
 	start := time.Now()
 	cmd := exec.Command("sh", "-c", d.hookCmd(t.TempDir(), `echo "it's running"; sleep 10`, time.Second))
 	cmd.Env = append(os.Environ(), "SHELL=/bin/sh")

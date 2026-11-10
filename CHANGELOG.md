@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-11-10
+
+### Added
+
+- **Each project its PHP and Node version on one server.** PHP-FPM 8.1 for one app, 8.4 for another, FrankenPHP for a third, Node 20 and 22: the install adds the project's version next to the others (nothing to turn on), and every deploy points `<remote_path>/.versa/bin` at the project's `php`/`node`/`npm`, which hooks, cron jobs, services, `server_install`, the health check command, `versa exec` and the TUI terminal run first. The server's default `php` doesn't change when a newer PHP is installed. Node majors install from nodejs.org's official builds into `/opt/versa/node-<major>` (the first one is also the server's `node`). RHEL keeps one PHP-FPM per server (FrankenPHP can go next to it). Tested end to end by `TestMultiVersion`.
+
+### Changed
+
+- **The TUI sidebar lists every deploy file** in the directory, each with its environments. `Tab` + `↑`/`↓` (or a click) on an environment of another file loads that file. Switch Config stays for multi-deploy.
+
+### Fixed
+
+- **`←`/`→` reach the Switch Config view** (only a mouse click did); from it, `←`/`→` move on once a config is loaded.
+- **A second project on a server got no vhost and no sudoers** from the default selection: nginx being active skipped the step that writes the project's vhost, and another project's sudoers file counted as this one's. Now the web server step is preselected while the project has no vhost, and sudoers is detected by the project's own file.
+- **PHP 8.5 with PHP-FPM failed to install**: OPcache is built into PHP 8.5, which has no `php8.5-opcache` package.
+
 ## [1.18.1] - 2026-11-10
 
 ### Fixed

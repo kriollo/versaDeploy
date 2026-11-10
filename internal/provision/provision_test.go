@@ -256,9 +256,13 @@ func TestDetectBackends(t *testing.T) {
 	if v.ProxyPort != 8000 || v.AppService != "app-api" {
 		t.Errorf("python defaults: %+v", v)
 	}
-	sel := Preselect(got, v, py, &Report{Services: map[string]State{"nginx": {Status: Active}}})
+	// nginx is active: its step only comes back for this project's missing vhost
+	sel := Preselect(got, v, py, &Report{Services: map[string]State{"nginx": {Status: Active}}, Vhost: "nginx"})
 	if !slices.Contains(sel, "python") || slices.Contains(sel, "app_service") || slices.Contains(sel, "nginx") {
 		t.Errorf("preselect: %v", sel)
+	}
+	if sel := Preselect(got, v, py, &Report{Services: map[string]State{"nginx": {Status: Active}}}); !slices.Contains(sel, "nginx") {
+		t.Errorf("a second project on an nginx server needs its vhost: %v", sel)
 	}
 	// defined services are kept as they are; none defined → one proposed for the app
 	if got := ProposedServices(py, v); len(got) != 1 || got[0].Name != "app-api" || got[0].Environment != nil {
@@ -336,8 +340,8 @@ func TestConflicts(t *testing.T) {
 	if Conflicts(r, []string{"apache", "php"}, v) != nil {
 		t.Error("re-running the installed web server/PHP must be allowed")
 	}
-	if Conflicts(r, []string{"php"}, Vars{PHPVersion: "8.3"}) == nil {
-		t.Error("second PHP-FPM version allowed")
+	if err := Conflicts(r, []string{"php"}, Vars{PHPVersion: "8.3"}); err != nil {
+		t.Errorf("another project's PHP-FPM version goes next to 8.4: %v", err)
 	}
 	env := &config.Environment{}
 	env.Provision.WebServer = "nginx"
@@ -362,8 +366,8 @@ func TestDeployUserNeedsPubKeyAndPasswordRules(t *testing.T) {
 		t.Error("reset without password accepted")
 	}
 	r := ParseReport("svc_node=installed v20.11.1")
-	if Conflicts(r, []string{"node"}, Vars{NodeMajor: "22"}) == nil || Conflicts(r, []string{"node"}, Vars{NodeMajor: "20"}) != nil {
-		t.Error("node major conflict check wrong")
+	if Conflicts(r, []string{"node"}, Vars{NodeMajor: "22"}) != nil || Conflicts(r, []string{"node"}, Vars{NodeMajor: "20"}) != nil {
+		t.Error("a project's Node major goes next to the server's (/opt/versa)")
 	}
 }
 
@@ -513,8 +517,8 @@ func TestFrankenPHP(t *testing.T) {
 		t.Error("FrankenPHP behind Apache must be refused")
 	}
 	r := &Report{Services: map[string]State{"php": {Status: Active}}}
-	if err := Conflicts(r, []string{"frankenphp"}, v); err == nil {
-		t.Error("FrankenPHP next to PHP-FPM must be refused")
+	if err := Conflicts(r, []string{"frankenphp"}, v); err != nil {
+		t.Errorf("FrankenPHP for this app next to another app's PHP-FPM: %v", err)
 	}
 	env := &config.Environment{Provision: config.ProvisionConfig{FrankenPHP: true}}
 	if s := ProposedServices(env, v); len(s) != 1 || s[0].Exec != "/usr/local/bin/frankenphp run --config /etc/frankenphp/versatodo.Caddyfile" || s[0].Reload != "curl -fsS --unix-socket /var/www/versatodo/.frankenphp-opcache.sock http://localhost/" {
@@ -582,5 +586,44 @@ func TestDetectNodeWithoutStartScript(t *testing.T) {
 	env.Provision.NodeMajor = "22"
 	if b := DetectBackends(env, dir); len(b) != 1 || b[0].Kind != "node" {
 		t.Fatalf("node_major: %+v", b)
+	}
+}
+
+// PHP-FPM versions, FrankenPHP next to PHP-FPM and Node majors are per project: never
+// refused on Debian/Ubuntu. RHEL has one php-fpm; real alternatives stay refused.
+func TestConflictsPerProjectVersions(t *testing.T) {
+	apt := ParseReport("apt=1\nphp_fpm=8.4\nsvc_php=active 8.4.1\nsvc_frankenphp=active v1.13\nsvc_node=installed v22.1.0\nsvc_apache=active 2.4")
+	v := Vars{PHPVersion: "8.1", NodeMajor: "20", WebServer: "nginx"}
+	for _, ids := range [][]string{{"php"}, {"frankenphp"}, {"node"}} {
+		if err := Conflicts(apt, ids, v); err != nil {
+			t.Errorf("%v next to other versions: %v", ids, err)
+		}
+	}
+	if Conflicts(apt, []string{"nginx"}, v) == nil {
+		t.Error("nginx next to Apache must stay refused")
+	}
+	if Conflicts(apt, []string{"php", "frankenphp"}, v) == nil {
+		t.Error("PHP-FPM and FrankenPHP for the same app must be refused")
+	}
+	rhel := ParseReport("dnf=1\nphp_fpm=8.3\nsvc_php=active 8.3.1")
+	if err := Conflicts(rhel, []string{"php"}, v); err == nil || !strings.Contains(err.Error(), "FrankenPHP") {
+		t.Errorf("RHEL: a second PHP-FPM version must be refused, pointing to FrankenPHP: %v", err)
+	}
+	if err := Conflicts(rhel, []string{"frankenphp"}, v); err != nil {
+		t.Errorf("RHEL: FrankenPHP next to PHP-FPM: %v", err)
+	}
+}
+
+// The probe reports the project's PHP and Node, not another project's: 8.4 and Node 22 on
+// the server, the project wants 8.1 and 20 → both absent (preselected), and the bad
+// values never reach the shell.
+func TestDetectScriptProjectVersions(t *testing.T) {
+	s := DetectScript(DetectParams{Project: "a", RemotePath: "/var/www/a", PHPVersion: "8.1", NodeMajor: "20"})
+	if !strings.Contains(s, "phpv='8.1'; nodem='20'") {
+		t.Errorf("versions not passed: %s", s[:200])
+	}
+	s = DetectScript(DetectParams{PHPVersion: "8.1; rm -rf /", NodeMajor: "$(id)"})
+	if !strings.Contains(s, "phpv=''; nodem=''") {
+		t.Errorf("malformed versions must be dropped: %s", s[:200])
 	}
 }

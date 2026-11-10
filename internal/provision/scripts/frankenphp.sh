@@ -1,9 +1,7 @@
 # FrankenPHP: PHP app server (static binary with PHP and its extensions) run by the
 # deploy as a service (deploy.yml services); nginx serves the static files and proxies
-# index.php to it. Never next to PHP-FPM: one PHP per server.
-if ls /usr/sbin/php*-fpm* /usr/sbin/php-fpm >/dev/null 2>&1 || package_installed php-fpm; then
-    die "PHP-FPM is already installed — FrankenPHP not installed (one PHP per server). Keep PHP-FPM (remove frankenphp: true)"
-fi
+# index.php to it. It can sit next to PHP-FPM (other projects): each project's
+# <remote_path>/.versa/bin/php, made by the deploy, is its own PHP.
 [ "$WEB_SERVER" = nginx ] || die "FrankenPHP is served behind nginx (web_server: nginx)"
 
 bin=/usr/local/bin/frankenphp
@@ -29,9 +27,13 @@ else
     ok "FrankenPHP ${ver} installed ($("$bin" version | awk '{print $3, $4}'))"
 fi
 
-# `php` for hooks and cron (php artisan migrate): the binary's CLI, unless a PHP CLI exists.
-# exec -a: PHP_BINARY is argv[0], so PHP that runs PHP_BINARY (artisan schedule:run,
-# versaCLI app:deploy:finish) runs this wrapper instead of `frankenphp <script>`.
+# The project's `php` for hooks and cron (php artisan migrate): the binary's CLI, which
+# <remote_path>/.versa/bin/php points at. exec -a: PHP_BINARY is argv[0], so PHP that runs
+# PHP_BINARY (artisan schedule:run, versaCLI app:deploy:finish) runs this wrapper instead
+# of `frankenphp <script>`.
+printf '#!/bin/bash\n# Generado por versaDeploy: PHP CLI de FrankenPHP\nexec -a %s %s php-cli "$@"\n' "$FRANKENPHP_CLI" "$bin" > "$FRANKENPHP_CLI"
+chmod 755 "$FRANKENPHP_CLI"
+# and the server's `php`, unless a PHP CLI exists (PHP-FPM of other projects)
 if ! command -v php >/dev/null 2>&1 || grep -q 'Generado por versaDeploy' /usr/local/bin/php 2>/dev/null; then
     printf '#!/bin/bash\n# Generado por versaDeploy: PHP CLI de FrankenPHP\nexec -a /usr/local/bin/php %s php-cli "$@"\n' "$bin" > /usr/local/bin/php
     chmod 755 /usr/local/bin/php

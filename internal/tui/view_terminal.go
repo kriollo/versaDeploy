@@ -26,16 +26,17 @@ type msgTabComplete struct {
 }
 
 type terminalModel struct {
-	input   textinput.Model
-	vp      viewport.Model
-	logBuf  *strings.Builder
-	logCh   chan string
-	doneCh  chan error
-	running bool
-	typing  bool // the prompt has the keyboard (Enter starts, Esc ends)
-	history []string
-	histIdx int
-	cwd     string // remote working directory
+	pathPrefix string // provision.ProjectPATH of the environment: its own php/node first
+	input      textinput.Model
+	vp         viewport.Model
+	logBuf     *strings.Builder
+	logCh      chan string
+	doneCh     chan error
+	running    bool
+	typing     bool // the prompt has the keyboard (Enter starts, Esc ends)
+	history    []string
+	histIdx    int
+	cwd        string // remote working directory
 
 	// Tab completion state
 	completions   []string
@@ -89,7 +90,8 @@ func (t *terminalModel) executeCommand(client *versassh.Client, cmd string) tea.
 	t.doneCh = make(chan error, 1)
 
 	// Wrap command with cd to cwd so it runs in the project directory
-	wrappedCmd := fmt.Sprintf("cd %s && %s", versassh.ShellQuote(t.cwd), cmd)
+	// with the project's own php/node first, as hooks run
+	wrappedCmd := fmt.Sprintf("cd %s && %s%s", versassh.ShellQuote(t.cwd), t.pathPrefix, cmd)
 
 	return func() tea.Msg {
 		go func() {

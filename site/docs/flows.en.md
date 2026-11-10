@@ -119,7 +119,7 @@ flowchart TD
     A[versa → Services] --> B[Detects the server<br><small>distro, what's installed, versions</small>]
     B --> C[Ticks what your app needs<br><small>from deploy.yml and the repo</small>]
     C --> D{Does it clash with<br>something installed?}
-    D -- Yes --> X[⛔ Not installed<br><small>never nginx over Apache,<br>never a second PHP</small>]
+    D -- Yes --> X[⛔ Not installed<br><small>never nginx over Apache,<br>never MariaDB over MySQL</small>]
     D -- No --> E[I: installs over SSH as root<br><small>no agent</small>]
     E --> F[What's installed is left alone<br><small>no config changes, no restarts</small>]
 ```

@@ -119,7 +119,7 @@ flowchart TD
     A[versa → Services] --> B[Detecta el servidor<br><small>distro, lo instalado, versiones</small>]
     B --> C[Marca lo que pide tu app<br><small>según deploy.yml y el repo</small>]
     C --> D{¿Choca con algo<br>ya instalado?}
-    D -- Sí --> X[⛔ No lo instala<br><small>nunca nginx sobre Apache,<br>ni un segundo PHP</small>]
+    D -- Sí --> X[⛔ No lo instala<br><small>nunca nginx sobre Apache,<br>ni MariaDB sobre MySQL</small>]
     D -- No --> E[I: instala por SSH como root<br><small>sin agentes</small>]
     E --> F[Lo ya instalado no se toca<br><small>ni su configuración, ni se reinicia</small>]
 ```

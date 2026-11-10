@@ -86,6 +86,17 @@ type Vars struct {
 	Cron            []string // "<schedule> <command>" lines (cron step)
 }
 
+// ProjectBinDir holds the project's own `php`, `node`, `npm`… (its versions, next to
+// other projects' on the same server): versa puts it
+// first in PATH for hooks, cron jobs, services and versa exec.
+func ProjectBinDir(remotePath string) string { return path.Clean(remotePath) + "/.versa/bin" }
+
+// ProjectPATH is the shell prefix that runs a command with ProjectBinDir first in PATH
+// (harmless when the directory doesn't exist).
+func ProjectPATH(remotePath string) string {
+	return "export PATH=" + versassh.ShellQuote(ProjectBinDir(remotePath)) + `:"$PATH" && `
+}
+
 // DefaultDocRoot is where releases keep the app code (versaDeploy uploads it under app/).
 const DefaultDocRoot = "current/app"
 
@@ -145,7 +156,8 @@ func CronFile(project string) string {
 // cronTab renders CronFile: every job runs as the deploy user in the live release's app dir.
 func (v Vars) cronTab() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Generado por versaDeploy — %s (provision.cron)\nSHELL=/bin/sh\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n", v.Project)
+	// the project's own php/node come first, as in hooks and services
+	fmt.Fprintf(&b, "# Generado por versaDeploy — %s (provision.cron)\nSHELL=/bin/sh\nPATH=%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n", v.Project, ProjectBinDir(v.RemotePath))
 	dir := versassh.ShellQuote(path.Join(v.RemotePath, DefaultDocRoot)) // the app, whatever the doc root
 	for _, l := range v.Cron {
 		if sched, cmd, err := cronLine(l); err == nil {
@@ -482,6 +494,7 @@ func (v Vars) env() string {
 		{"PACKAGES", strings.Join(v.Packages, " ")}, {"SSL_SELF_SIGNED", strconv.FormatBool(v.SSLSelfSigned)}, {"CERT_DIR", v.CertDir()},
 		{"CRON_PATH", CronFile(v.Project)}, {"CRON_FILE", v.cronTab()},
 		{"FAIL2BAN_IGNORE", strings.Join(v.Fail2banIgnore, " ")},
+		{"FRANKENPHP", strconv.FormatBool(v.FrankenPHP)}, {"FRANKENPHP_CLI", FrankenPHPCLI},
 	}
 	var s strings.Builder
 	for _, p := range kv {
@@ -567,8 +580,9 @@ func LogsCommand(id string, v Vars, phpVersion string) string {
 }
 
 // Conflicts reports selected services that would add an alternative to one already on
-// the server: a second web server or a second PHP-FPM version. MySQL vs MariaDB is
-// handled by the MariaDB step, which reuses an existing MySQL.
+// the server: a second web server or cache server. PHP-FPM versions, FrankenPHP and Node
+// majors are per project, not alternatives. MySQL vs MariaDB is handled by the MariaDB
+// step, which reuses an existing MySQL.
 func Conflicts(r *Report, selected []string, v Vars) error {
 	if r == nil {
 		return nil
@@ -597,19 +611,16 @@ func Conflicts(r *Report, selected []string, v Vars) error {
 	case has("apache") && r.Get("nginx").Status != Absent:
 		return fmt.Errorf("nginx is already installed on this server: use it instead of Apache")
 	case has("php") && has("frankenphp"):
-		return fmt.Errorf("PHP-FPM and FrankenPHP: pick one PHP for the server")
-	case has("frankenphp") && r.Get("php").Status != Absent:
-		return fmt.Errorf("PHP-FPM is already installed on this server: use it instead of FrankenPHP")
-	case has("php") && r.Get("frankenphp").Status != Absent:
-		return fmt.Errorf("FrankenPHP is already installed on this server: use it instead of PHP-FPM")
+		return fmt.Errorf("PHP-FPM and FrankenPHP: pick one PHP for the app")
 	case has("frankenphp") && v.WebServer != "nginx":
 		return fmt.Errorf("FrankenPHP is served behind nginx: set web_server: nginx")
-	case has("php") && r.PHPVersion != "" && v.PHPVersion != r.PHPVersion:
-		return fmt.Errorf("PHP-FPM %s is already installed: set PHP version to %s instead of %s", r.PHPVersion, r.PHPVersion, v.PHPVersion)
+	case has("php") && !r.Apt && r.Dnf && r.PHPVersion != "" && v.PHPVersion != r.PHPVersion:
+		// Debian/Ubuntu install each PHP-FPM version next to the others (php8.1-fpm,
+		// php8.4-fpm); RHEL's module streams install one php-fpm per server
+		return fmt.Errorf("PHP-FPM %s is already installed and RHEL has one PHP-FPM per server: set PHP version to %s, or use FrankenPHP for this app", r.PHPVersion, r.PHPVersion)
 	}
-	if nv := r.Get("node").Version; has("node") && nv != "" && v.NodeMajor != "" && majorRe.FindString(nv) != v.NodeMajor {
-		return fmt.Errorf("Node.js %s is already installed: set Node major to %s instead of %s", nv, majorRe.FindString(nv), v.NodeMajor)
-	}
+	// PHP-FPM versions, FrankenPHP next to PHP-FPM and Node majors are per project, never an
+	// alternative: each app gets its own in <remote_path>/.versa/bin
 	return nil
 }
 
@@ -624,3 +635,11 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 	defer s.mu.Unlock()
 	return s.w.Write(p)
 }
+
+// FrankenPHPCLI is FrankenPHP's PHP CLI for a project's hooks and cron (ProjectBinDir/php
+// points at it): `frankenphp php-cli` with PHP_BINARY = this wrapper.
+const FrankenPHPCLI = "/usr/local/bin/frankenphp-php"
+
+// NodeDir is where the node step installs a Node major (official build), next to other
+// majors: each project's ProjectBinDir links the one it uses.
+func NodeDir(major string) string { return "/opt/versa/node-" + major }

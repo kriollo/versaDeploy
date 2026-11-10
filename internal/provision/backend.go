@@ -275,7 +275,10 @@ func Preselect(backends []Backend, v Vars, env *config.Environment, r *Report) [
 	}
 	var out []string
 	for _, id := range want {
-		if id == "" || (r != nil && r.Get(id).Status != Absent) || Conflicts(r, []string{id}, v) != nil {
+		// the web server step also writes this project's vhost: needed while it has none,
+		// even when another project already installed nginx/Apache
+		needsVhost := id == v.WebServer && r != nil && r.Vhost == ""
+		if id == "" || (r != nil && r.Get(id).Status != Absent && !needsVhost) || Conflicts(r, []string{id}, v) != nil {
 			continue
 		}
 		out = append(out, id)

@@ -8,7 +8,7 @@ import (
 )
 
 // Screen layout the mouse maps onto (see appModel.View): row 0 is the header; from
-// row 1 the sidebar (title, separator, one row per environment) sits left of the
+// row 1 the sidebar (title, separator, then sidebarRows: files and their environments) sits left of the
 // content pane, whose first row is the tab bar.
 const (
 	tabBarRow   = 1
@@ -50,10 +50,8 @@ func (m appModel) handleMouse(msg tea.MouseMsg, cmds []tea.Cmd) (tea.Model, tea.
 		return m, tea.Batch(cmds...)
 	}
 	if msg.X < sideW {
-		if i := msg.Y - firstEnvRow; i >= 0 && i < len(m.envNames) && i != m.activeEnv {
-			m.activeEnv = i
-			m = m.resetViewState()
-			cmds = append(cmds, m.autoConnectCmds()...)
+		if rows, i := m.sidebarRows(), msg.Y-firstEnvRow; i >= 0 && i < len(rows) {
+			cmds = append(cmds, m.selectSideRow(rows[i])...)
 		}
 	}
 	return m, tea.Batch(cmds...)
@@ -115,5 +113,5 @@ func tabAt(x int) (viewID, bool) {
 }
 
 func sidebarRenderedWidth() int {
-	return lipgloss.Width(strings.SplitN(renderSidebar(3, nil, 0, false, nil), "\n", 2)[0])
+	return lipgloss.Width(strings.SplitN(renderSidebar(3, nil, -1, "", false, nil), "\n", 2)[0])
 }

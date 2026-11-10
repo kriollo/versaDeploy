@@ -66,7 +66,7 @@ Se abre la interfaz. Con **→** ve a la vista **Services**: versa detecta el se
 
 Sin la interfaz (en un script o en CI) es lo mismo: `versa provision production` muestra lo que va a instalar y pide confirmación (`--dry-run` solo lo muestra).
 
-Si el servidor ya tiene cosas instaladas, versa las respeta: no reemplaza nginx por Apache, no instala un segundo PHP, no reinicia servicios ni cambia contraseñas existentes.
+Si el servidor ya tiene cosas instaladas, versa las respeta: no reemplaza nginx por Apache, no reinicia servicios ni cambia contraseñas existentes. Cada proyecto puede tener su versión de PHP o Node: se instala al lado de las de otros proyectos.
 
 ## 5. Primer deploy
 

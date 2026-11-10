@@ -64,7 +64,7 @@ It needs Docker, and Composer/Node locally for the PHP and Node apps.
 These keep versaDeploy safe on servers that are already in production:
 
 - **Old servers**: commands that run on the server must work on RHEL/CentOS 5 (coreutils 5.97, OpenSSH 4.3): POSIX `sh`, `df -Pk` instead of `-B1`, read `/proc` instead of `free -h`, don't rely on `/etc/os-release`.
-- **Provisioning scripts are idempotent and safe on servers in use**: never install an alternative to what exists (nginx next to Apache, MariaDB over MySQL, a second PHP), never restart or reconfigure a running service, never change an existing database user's password, never upgrade a package unless the user asked (`U`/`S`).
+- **Provisioning scripts are idempotent and safe on servers in use**: never install an alternative to what exists (nginx next to Apache, MariaDB over MySQL; PHP and Node versions are per project, not alternatives), never restart or reconfigure a running service, never change an existing database user's password, never upgrade a package unless the user asked (`U`/`S`).
 - **Secrets never travel on a command line** (other users see them in `ps`): pass them in a private file or over stdin.
 - **Errors** are user-facing: say what failed and what to do about it ([`internal/errors`](internal/errors)).
 
