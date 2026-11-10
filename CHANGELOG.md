@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.18.1] - 2026-11-10
+
+### Fixed
+
+- **Config discovery finds any `*deploy*.yml`** (and `.yaml`): `deploy.docker.yml`, `deploy.laravel.yml` (the examples' naming) and similar were missing from the TUI's Switch Config view and from the CLI's file prompt.
+
 ## [1.18.0] - 2026-11-10
 
 ### Added

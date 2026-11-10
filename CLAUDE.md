@@ -77,7 +77,7 @@ Three hook types (replaces deprecated `hook_execution_mode`):
 
 Supports multiple environments. Each environment has: SSH config, `remote_path`, `builds` (php/go/frontend/python), `shared_paths`, `ignored_paths`, `pre_deploy_local`/`pre_deploy_server`/`post_deploy` hooks, `hook_timeout`.
 
-The tool auto-discovers `deploy*.yml` files in the current directory. Environment variables are interpolated at parse time.
+The tool auto-discovers `*deploy*.yml` / `*deploy*.yaml` files (`internal/config/discovery.go`) in the current directory. Environment variables are interpolated at parse time.
 
 ### Old server compatibility
 

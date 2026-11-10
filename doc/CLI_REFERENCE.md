@@ -43,11 +43,7 @@ Available on every command.
 
 ## Choosing the configuration file
 
-Unless you pass `--config`, versa looks in the current directory for files matching any of these names (`.yml` or `.yaml`):
-
-```
-deploy.yml   deploy_*.yml   versa_deploy.yml   versa_deploy_*.yml   *_deploy.yml   *_deploy_*.yml
-```
+Unless you pass `--config`, versa looks in the current directory for files whose name contains `deploy` (`*deploy*.yml` or `*deploy*.yaml`): `deploy.yml`, `deploy.docker.yml`, `deploy_staging.yml`, `versa_deploy.yml`, `api_deploy.yml`…
 
 | Files found | What happens                                                          |
 | :---------- | :-------------------------------------------------------------------- |

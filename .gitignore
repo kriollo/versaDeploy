@@ -44,3 +44,5 @@ deploy.lock
 versatest
 .claude
 .agents
+
+skills-lock.json

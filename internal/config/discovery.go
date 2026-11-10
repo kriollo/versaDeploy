@@ -4,38 +4,16 @@ import (
 	"path/filepath"
 )
 
-// FindConfigFiles looks for deploy.yml, deploy_*.yml, versa_deploy*.yml, and *_deploy.yml in the given directory
+// FindConfigFiles looks for *deploy*.yml and *deploy*.yaml in the given directory: deploy.yml,
+// deploy.docker.yml, deploy_staging.yml, versa_deploy.yml, api_deploy.yml…
 func FindConfigFiles(dir string) ([]string, error) {
-	patterns := []string{
-		"deploy.yml",
-		"deploy_*.yml",
-		"versa_deploy.yml",
-		"versa_deploy_*.yml",
-		"*_deploy.yml",
-		"*_deploy_*.yml",
-		"deploy.yaml",
-		"deploy_*.yaml",
-		"versa_deploy.yaml",
-		"versa_deploy_*.yaml",
-		"*_deploy.yaml",
-		"*_deploy_*.yaml",
-	}
-
 	var matches []string
-	seen := make(map[string]bool)
-
-	for _, pattern := range patterns {
+	for _, pattern := range []string{"*deploy*.yml", "*deploy*.yaml"} {
 		files, err := filepath.Glob(filepath.Join(dir, pattern))
 		if err != nil {
 			return nil, err
 		}
-		for _, f := range files {
-			base := filepath.Base(f)
-			if !seen[base] {
-				seen[base] = true
-				matches = append(matches, f)
-			}
-		}
+		matches = append(matches, files...)
 	}
 	return matches, nil
 }

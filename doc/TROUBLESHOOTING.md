@@ -17,7 +17,7 @@ Common errors and how to fix them. Add `--debug` (and `--log-file deploy.log` to
 
 ### `Multiple configuration files found. Please select one`
 
-More than one file in the directory matches the config names (`deploy*.yml`, `*_deploy*.yml`, …). Pick one, or pass it explicitly (required in scripts/CI): `--config deploy_production.yml`.
+More than one file in the directory matches the config names (`*deploy*.yml`). Pick one, or pass it explicitly (required in scripts/CI): `--config deploy_production.yml`.
 
 ### `environment 'X' not found in configuration`
 
