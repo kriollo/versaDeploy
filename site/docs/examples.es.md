@@ -28,6 +28,16 @@ FrankenPHP como servicio en vez de PHP-FPM; nginx sigue sirviendo los estáticos
     --8<-- "examples/deploy.laravel-frankenphp.yml"
     ```
 
+## versaWYS con FrankenPHP
+
+versaWYS recién creado con `composer create-project`, en FrankenPHP: `config.json` vive en `shared/versaWYS/config`, el cron corre `app:schedule:run` y cada deploy termina con `app:deploy:finish` (migraciones, cachés y revisión).
+
+??? example "deploy.versawys-frankenphp.yml"
+
+    ```yaml
+    --8<-- "examples/deploy.versawys-frankenphp.yml"
+    ```
+
 ## Next.js
 
 `npm start` como servicio; `node_modules` se instala en el servidor.

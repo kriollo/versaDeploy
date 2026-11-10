@@ -18,7 +18,7 @@ PHP-FPM behind nginx, PostgreSQL, Redis, migrations, cron and storage. [Video](v
     --8<-- "examples/deploy.laravel.yml"
     ```
 
-## Laravel con FrankenPHP
+## Laravel on FrankenPHP
 
 FrankenPHP as a service instead of PHP-FPM; nginx still serves the static files.
 
@@ -26,6 +26,16 @@ FrankenPHP as a service instead of PHP-FPM; nginx still serves the static files.
 
     ```yaml
     --8<-- "examples/deploy.laravel-frankenphp.yml"
+    ```
+
+## versaWYS on FrankenPHP
+
+versaWYS from `composer create-project` on FrankenPHP: `config.json` lives in `shared/versaWYS/config`, cron runs `app:schedule:run` and every deploy ends with `app:deploy:finish` (migrations, caches, checks).
+
+??? example "deploy.versawys-frankenphp.yml"
+
+    ```yaml
+    --8<-- "examples/deploy.versawys-frankenphp.yml"
     ```
 
 ## Next.js
