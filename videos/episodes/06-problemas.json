@@ -15,21 +15,32 @@
         "versa despliega lo que está en git, nunca lo que tienes a medio editar.",
         "Así cada versión en el servidor corresponde a un commit, y se puede reproducir."
       ],
-      "bullets": ["Working directory is not clean", "git commit, o git checkout para descartar"]
+      "bullets": [
+        "Working directory is not clean",
+        "git commit, o git checkout para descartar"
+      ]
     },
     "2": {
       "lines": [
         "Antes de desplegar, versa se conecta por SSH. Si la IP, el puerto o la llave están mal, no llega al servidor.",
         "versa ssh-test prueba la conexión y te dice qué encontró, sin desplegar nada."
       ],
-      "bullets": ["Connection refused: puerto o firewall", "Authentication failed: la llave SSH", "versa ssh-test production"]
+      "bullets": [
+        "Connection refused: puerto o firewall",
+        "Authentication failed: la llave SSH",
+        "versa ssh-test production"
+      ]
     },
     "3": {
       "lines": [
         "Dos deploys a la vez se pisarían, así que versa toma un candado en el servidor mientras despliega.",
         "Si un deploy se corta de golpe, el candado queda tomado hasta que lo liberes."
       ],
-      "bullets": ["Deployment lock already held", "versa exec … rmdir .versa.lock", "Ctrl+C lo libera solo"]
+      "bullets": [
+        "Deployment lock already held",
+        "versa exec … rmdir .versa.lock",
+        "Ctrl+C lo libera solo"
+      ]
     },
     "4": {
       "visual": "rollback",
@@ -43,14 +54,22 @@
         "Al final de cada deploy, versa pide la URL del health check. Si no responde 200, vuelve atrás.",
         "Así una versión que no responde nunca se queda en línea."
       ],
-      "bullets": ["health_check: /up", "3 intentos", "rollback automático"]
+      "bullets": [
+        "health_check: /up",
+        "3 intentos",
+        "rollback automático"
+      ]
     },
     "6": {
       "lines": [
         "A veces el error no lo detecta nada: lo ves tú, en producción.",
         "versa rollback vuelve a la versión anterior en un segundo, porque sigue en el servidor."
       ],
-      "bullets": ["versa rollback production", "versa rollback production --to <versión>", "versa history production"]
+      "bullets": [
+        "versa rollback production",
+        "versa rollback production --to <versión>",
+        "versa history production"
+      ]
     }
   },
   "browser": {
@@ -65,5 +84,10 @@
       "En resumen: versa ssh-test para la conexión, versa history para ver qué pasó, y versa rollback para volver.",
       "¡Gracias por ver la serie, y nos vemos!"
     ]
+  },
+  "youtube": {
+    "summary": "Los seis casos: cambios sin commit, un SSH que no conecta (versa ssh-test), un deploy bloqueado porque el computador se colgó, un hook que falla y vuelve atrás solo (y cómo atraparlo antes con pre_deploy_local), un health check que falla, y un rollback a mano con versa rollback. Todos los errores y su solución: https://versadeploy.websystem.cl/reference/TROUBLESHOOTING/",
+    "tags": "#troubleshooting #rollback #versawys",
+    "browser": "La guía de problemas frecuentes"
   }
 }

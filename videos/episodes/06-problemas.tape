@@ -11,6 +11,7 @@ Ctrl+L
 Show
 
 # CC: En este episodio provocamos a propósito los errores más comunes de un deploy, y los resolvemos.
+Sleep 2.2s
 Sleep 4s
 # CC: Partimos del panel versaWYS del episodio anterior, ya en línea.
 Type "versa history production --limit 3"
@@ -32,6 +33,7 @@ Wait@60s /❯\s*$/
 Show
 Sleep 3s
 # CC: versa se niega: solo despliega lo que está en git. Así cada versión se puede reproducir.
+Sleep 1.0s
 Sleep 5s
 # CC: La solución: hacer commit, o descartar el cambio. Aquí lo descartamos.
 Type "git checkout app/schedule.php && git status --short"
@@ -40,6 +42,7 @@ Sleep 3s
 
 # ─── 2. No conecta por SSH ───────────────────────────────────────────────────
 # CC: Ahora, un puerto equivocado en deploy.yml. Pasa al cambiar de servidor o de proveedor.
+Sleep 0.5s
 Ctrl+L
 Type "sed -i 's/port: 2299/port: 2222/' deploy.yml"
 Enter
@@ -50,6 +53,7 @@ Wait@120s /❯\s*$/
 Show
 Sleep 3s
 # CC: Connection refused: nadie escucha en ese puerto. Revisa el puerto y el firewall del servidor.
+Sleep 0.9s
 Sleep 5s
 # CC: versa ssh-test prueba la conexión sin desplegar. Corregimos el puerto y conecta.
 Ctrl+L
@@ -62,6 +66,7 @@ Sleep 7s
 
 # ─── 3. Deploy bloqueado ─────────────────────────────────────────────────────
 # CC: Si el computador se cuelga en medio de un deploy, el candado queda tomado en el servidor. Lo simulamos.
+Sleep 0.2s
 Ctrl+L
 Type `versa exec production "mkdir /var/www/mipanel/.versa.lock"`
 Enter
@@ -83,6 +88,7 @@ Wait@60s /❯\s*$/
 Show
 Sleep 2s
 # CC: Y si cortas un deploy con Ctrl+C, versa suelta el candado solo.
+Sleep 0.8s
 Sleep 4s
 
 # ─── 4. Un hook falla ────────────────────────────────────────────────────────
@@ -143,6 +149,7 @@ Wait@600s /❯\s*$/
 Show
 Sleep 3s
 # CC: El deploy termina, pero /up responde 503: el health check falla y versa vuelve atrás.
+Sleep 0.6s
 Sleep 6s
 # CC: Una versión que no responde nunca se queda en línea. Abrimos el sitio y desplegamos otra vez.
 Ctrl+L
@@ -160,6 +167,7 @@ Sleep 5s
 
 # ─── 6. Volver atrás a mano ──────────────────────────────────────────────────
 # CC: Y si nada lo detecta: un error que ves en producción. versa rollback vuelve a la versión anterior al instante.
+Sleep 1.2s
 Ctrl+L
 Type "versa rollback production"
 Enter
@@ -168,6 +176,7 @@ Wait@120s /❯\s*$/
 Show
 Sleep 5s
 # CC: Solo cambia el enlace current: no recompila ni corre migraciones. Después corriges y despliegas.
+Sleep 2.2s
 Sleep 4s
 # CC: Y el historial lo registra todo: deploys, fallas y rollbacks.
 Ctrl+L
@@ -179,6 +188,8 @@ Show
 Sleep 7s
 
 # CC: En resumen: versa ssh-test para la conexión, versa history para ver qué pasó, versa rollback para volver.
+Sleep 2.1s
 Sleep 5s
 # CC: Y la guía de problemas frecuentes está en versadeploy.websystem.cl. ¡Nos vemos!
+Sleep 2.5s
 Sleep 4s

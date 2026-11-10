@@ -20,7 +20,7 @@ deploy.yml, setting up the server from the Services view, the first deploy, the 
   <track kind="captions" src="/media/02-laravel.vtt" srclang="es" label="Español" default>
 </video>
 
-<a href="#" data-video="v-laravel" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-laravel" data-t="16">0:16 1. El archivo deploy.yml</a> · <a href="#" data-video="v-laravel" data-t="148">2:28 2. Preparar el servidor</a> · <a href="#" data-video="v-laravel" data-t="209">3:29 3. Primer deploy</a> · <a href="#" data-video="v-laravel" data-t="248">4:08 4. El .env en el servidor</a> · <a href="#" data-video="v-laravel" data-t="299">4:59 5. Deploy</a> · <a href="#" data-video="v-laravel" data-t="340">5:40 La app funcionando en el navegador</a>
+<a href="#" data-video="v-laravel" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-laravel" data-t="16">0:16 1. El archivo deploy.yml</a> · <a href="#" data-video="v-laravel" data-t="149">2:29 2. Preparar el servidor</a> · <a href="#" data-video="v-laravel" data-t="209">3:29 3. Primer deploy</a> · <a href="#" data-video="v-laravel" data-t="249">4:09 4. El .env en el servidor</a> · <a href="#" data-video="v-laravel" data-t="300">5:00 5. Deploy</a> · <a href="#" data-video="v-laravel" data-t="341">5:41 La app funcionando en el navegador</a>
 
 ## FastAPI + PostgreSQL { #fastapi }
 
@@ -30,7 +30,7 @@ A Python API as a systemd service, configured through the server's .env, and an 
   <track kind="captions" src="/media/03-fastapi.vtt" srclang="es" label="Español" default>
 </video>
 
-<a href="#" data-video="v-fastapi" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-fastapi" data-t="20">0:20 1. El archivo deploy.yml</a> · <a href="#" data-video="v-fastapi" data-t="146">2:26 2. Preparar el servidor</a> · <a href="#" data-video="v-fastapi" data-t="191">3:11 3. Primer deploy</a> · <a href="#" data-video="v-fastapi" data-t="230">3:50 4. El .env en el servidor</a> · <a href="#" data-video="v-fastapi" data-t="274">4:34 5. Un cambio de código</a> · <a href="#" data-video="v-fastapi" data-t="320">5:20 La app funcionando en el navegador</a>
+<a href="#" data-video="v-fastapi" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-fastapi" data-t="20">0:20 1. El archivo deploy.yml</a> · <a href="#" data-video="v-fastapi" data-t="146">2:26 2. Preparar el servidor</a> · <a href="#" data-video="v-fastapi" data-t="191">3:11 3. Primer deploy</a> · <a href="#" data-video="v-fastapi" data-t="231">3:51 4. El .env en el servidor</a> · <a href="#" data-video="v-fastapi" data-t="274">4:34 5. Un cambio de código</a> · <a href="#" data-video="v-fastapi" data-t="320">5:20 La app funcionando en el navegador</a>
 
 ## Nuxt with SSR { #nuxt }
 
@@ -40,4 +40,24 @@ A Node server behind nginx, runtime config from the .env, and an instant rollbac
   <track kind="captions" src="/media/04-nuxt.vtt" srclang="es" label="Español" default>
 </video>
 
-<a href="#" data-video="v-nuxt" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-nuxt" data-t="21">0:21 1. El archivo deploy.yml</a> · <a href="#" data-video="v-nuxt" data-t="142">2:22 2. Preparar el servidor</a> · <a href="#" data-video="v-nuxt" data-t="183">3:03 3. Primer deploy</a> · <a href="#" data-video="v-nuxt" data-t="215">3:35 4. El .env en el servidor</a> · <a href="#" data-video="v-nuxt" data-t="249">4:09 5. Un cambio… y un rollback</a> · <a href="#" data-video="v-nuxt" data-t="295">4:55 La app funcionando en el navegador</a>
+<a href="#" data-video="v-nuxt" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-nuxt" data-t="21">0:21 1. El archivo deploy.yml</a> · <a href="#" data-video="v-nuxt" data-t="142">2:22 2. Preparar el servidor</a> · <a href="#" data-video="v-nuxt" data-t="183">3:03 3. Primer deploy</a> · <a href="#" data-video="v-nuxt" data-t="215">3:35 4. El .env en el servidor</a> · <a href="#" data-video="v-nuxt" data-t="249">4:09 5. Un cambio… y un rollback</a> · <a href="#" data-video="v-nuxt" data-t="296">4:56 La app funcionando en el navegador</a>
+
+## versaWYS on FrankenPHP { #versawys }
+
+From composer create-project to the panel online: FrankenPHP instead of PHP-FPM, the versaWYS installer, app:deploy:finish, cron, Redis and maintenance mode.
+
+<video id="v-versawys" controls preload="metadata" src="/media/05-versawys.mp4">
+  <track kind="captions" src="/media/05-versawys.vtt" srclang="es" label="Español" default>
+</video>
+
+<a href="#" data-video="v-versawys" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-versawys" data-t="20">0:20 1. El proyecto</a> · <a href="#" data-video="v-versawys" data-t="60">1:00 2. El archivo deploy.yml</a> · <a href="#" data-video="v-versawys" data-t="147">2:27 3. Preparar el servidor</a> · <a href="#" data-video="v-versawys" data-t="197">3:17 4. Primer deploy e instalación</a> · <a href="#" data-video="v-versawys" data-t="250">4:10 5. Deploy con app:deploy:finish</a> · <a href="#" data-video="v-versawys" data-t="275">4:35 6. Lo que corre en el servidor</a> · <a href="#" data-video="v-versawys" data-t="326">5:26 El panel funcionando en el navegador</a>
+
+## When a deploy fails { #problemas }
+
+The most common errors and how to fix them: uncommitted changes, SSH, a stuck lock, a failing hook, a failing health check and a manual rollback.
+
+<video id="v-problemas" controls preload="metadata" src="/media/06-problemas.mp4">
+  <track kind="captions" src="/media/06-problemas.vtt" srclang="es" label="Español" default>
+</video>
+
+<a href="#" data-video="v-problemas" data-t="0">0:00 Introducción</a> · <a href="#" data-video="v-problemas" data-t="17">0:17 1. Cambios sin commit</a> · <a href="#" data-video="v-problemas" data-t="44">0:44 2. No conecta por SSH</a> · <a href="#" data-video="v-problemas" data-t="80">1:20 3. Deploy bloqueado</a> · <a href="#" data-video="v-problemas" data-t="112">1:52 4. Un hook falla</a> · <a href="#" data-video="v-problemas" data-t="169">2:49 5. El health check falla</a> · <a href="#" data-video="v-problemas" data-t="205">3:25 6. Volver atrás a mano</a> · <a href="#" data-video="v-problemas" data-t="237">3:57 La guía de problemas frecuentes</a>

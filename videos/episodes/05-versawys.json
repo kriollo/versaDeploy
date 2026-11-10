@@ -15,46 +15,77 @@
         "versaWYS se instala con Composer: un panel de administración con Vue, TypeScript y su propia línea de comandos.",
         "La configuración con secretos queda fuera de git. Los ajustes sin secretos, como usar Redis, sí se versionan."
       ],
-      "bullets": ["composer create-project versawys/versawys", "pnpm install && pnpm compile", "config.compartida.json: Redis"]
+      "bullets": [
+        "composer create-project versawys/versawys",
+        "pnpm install && pnpm compile",
+        "config.compartida.json: Redis"
+      ]
     },
     "2": {
       "lines": [
         "versaDeploy trae un ejemplo listo para versaWYS en FrankenPHP.",
         "Solo cambiamos el nombre del proyecto, el dominio y la IP del servidor."
       ],
-      "bullets": ["frankenphp: true, sin PHP-FPM", "cron: app:schedule:run", "shared_paths: config.json, logs y caché", "post_deploy: app:deploy:finish"]
+      "bullets": [
+        "frankenphp: true, sin PHP-FPM",
+        "cron: app:schedule:run",
+        "shared_paths: config.json, logs y caché",
+        "post_deploy: app:deploy:finish"
+      ]
     },
     "3": {
       "lines": [
         "FrankenPHP es un servidor de aplicaciones PHP: un solo binario con PHP 8.5 y sus extensiones.",
         "nginx entrega los archivos estáticos y le pasa a FrankenPHP solo lo que es PHP."
       ],
-      "bullets": ["nginx → FrankenPHP (127.0.0.1:8000)", "PostgreSQL + Redis", "Usuario deploy, backups, cron y fail2ban"]
+      "bullets": [
+        "nginx → FrankenPHP (127.0.0.1:8000)",
+        "PostgreSQL + Redis",
+        "Usuario deploy, backups, cron y fail2ban"
+      ]
     },
     "4": {
       "lines": [
         "El primer deploy sube el código y arranca FrankenPHP como un servicio del sistema.",
         "Después, el instalador de versaWYS crea las tablas, la empresa y el superadministrador, directo en el servidor."
       ],
-      "bullets": ["versa deploy --initial-deploy", "versa exec … app:install", "config.json queda en shared/"]
+      "bullets": [
+        "versa deploy --initial-deploy",
+        "versa exec … app:install",
+        "config.json queda en shared/"
+      ]
     },
     "5": {
       "lines": [
         "Con la app instalada, cada deploy termina con app:deploy:finish.",
         "Si algún paso falla, versa vuelve solo a la versión anterior."
       ],
-      "bullets": ["config:merge de los ajustes versionados", "migraciones", "caché de Twig", "app:check:deploy --production"]
+      "bullets": [
+        "config:merge de los ajustes versionados",
+        "migraciones",
+        "caché de Twig",
+        "app:check:deploy --production"
+      ]
     },
     "6": {
       "lines": [
         "Veamos lo que quedó corriendo: el servicio de FrankenPHP, el cron con sus tareas, Redis y el modo mantenimiento."
       ],
-      "bullets": ["versa service production", "app:schedule:list", "redis-cli", "app:down / app:up"]
+      "bullets": [
+        "versa service production",
+        "app:schedule:list",
+        "redis-cli",
+        "app:down / app:up"
+      ]
     }
   },
   "browser": {
     "url": "http://mipanel.localhost:8099/admin/usuarios",
-    "login": { "url": "http://mipanel.localhost:8099/admin/login", "email": "admin@miempresa.cl", "password": "Cl4ve-Segura#2026" },
+    "login": {
+      "url": "http://mipanel.localhost:8099/admin/login",
+      "email": "admin@miempresa.cl",
+      "password": "Cl4ve-Segura#2026"
+    },
     "lines": [
       "Y aquí está: el panel de versaWYS, con su usuario administrador, corriendo en FrankenPHP."
     ]
@@ -65,5 +96,11 @@
       "Desde ahora, cada cambio es un commit y versa deploy production. Solo sube lo que cambió.",
       "En el próximo episodio: qué hacer cuando un deploy falla. ¡Nos vemos!"
     ]
+  },
+  "youtube": {
+    "summary": "Paso a paso: crear el proyecto con composer create-project, el deploy.yml para FrankenPHP, preparar el servidor desde la vista Services, el primer deploy, el instalador de versaWYS, app:deploy:finish, y lo que queda corriendo: el servicio de FrankenPHP, el cron con app:schedule:run, la caché en Redis y el modo mantenimiento.",
+    "example": "deploy.versawys-frankenphp.yml",
+    "tags": "#versawys #php #frankenphp #postgresql #redis",
+    "browser": "El panel funcionando en el navegador"
   }
 }

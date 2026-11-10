@@ -14,7 +14,7 @@ V = os.path.dirname(os.path.abspath(__file__))
 REPO = "https://github.com/kriollo/versaDeploy"
 FOOTER = f"""🔗 versaDeploy (gratis y open source, MIT): {REPO}
 📖 Documentación: {REPO}/tree/main/doc
-🧩 Ejemplos de deploy.yml (Laravel, Next, Nuxt, FastAPI, Flask, Gin): {REPO}/tree/main/examples
+🧩 Ejemplos de deploy.yml (Laravel, versaWYS, Next, Nuxt, FastAPI, Flask, Gin): {REPO}/tree/main/examples
 
 ⚡ Instalación (Linux y macOS):
 curl -fsSL https://raw.githubusercontent.com/kriollo/versaDeploy/main/install.sh | sh
@@ -73,6 +73,7 @@ def episode(path):
         return
     ep = json.load(open(path, encoding="utf-8"))
     tl = json.load(open(tl_path, encoding="utf-8"))
+    yt = ep.get("youtube", {})  # what is this episode's own: summary, example, tags, browser chapter
     points = []
     for s in tl["segments"]:
         if s["type"] == "opening":
@@ -80,16 +81,19 @@ def episode(path):
         elif s["type"] == "chapter":
             points.append((s["start"], f"{s['num']}. {s['title']}"))
         elif s["type"] == "browser":
-            points.append((s["start"], "La app funcionando en el navegador"))
+            points.append((s["start"], yt.get("browser", "La app funcionando en el navegador")))
         elif s["type"] == "outro":
             points.append((s["start"], "Cierre"))
-    example = {"02": "deploy.laravel.yml", "03": "deploy.fastapi.yml", "04": "deploy.nuxt.yml"}.get(nn, "")
-    tag = {"02": "#laravel #php", "03": "#fastapi #python #postgresql", "04": "#nuxt #vue #nodejs"}.get(nn, "")
+    example = yt.get("example", {"02": "deploy.laravel.yml", "03": "deploy.fastapi.yml", "04": "deploy.nuxt.yml"}.get(nn, ""))
+    tag = yt.get("tags", {"02": "#laravel #php", "03": "#fastapi #python #postgresql", "04": "#nuxt #vue #nodejs"}.get(nn, ""))
+    summary = yt.get("summary", "Paso a paso: el deploy.yml, preparar el servidor desde la vista Services, el primer deploy, el .env de producción y la app funcionando.")
+    if example:
+        summary += f" El deploy.yml de partida de este video: {REPO}/blob/main/examples/{example}"
     write(name, f"""{ep['title']}: {ep['subtitle'].lower()} | versaDeploy
 
 {' '.join(ep['opening']['lines'])}
 
-Paso a paso: el deploy.yml, preparar el servidor desde la vista Services, el primer deploy, el .env de producción y la app funcionando. El deploy.yml de partida de este video: {REPO}/blob/main/examples/{example}
+{summary}
 
 📌 Capítulos
 {chapters(points)}

@@ -11,6 +11,7 @@ import re
 import sys
 
 MAX_S = 8.0
+KEY_COST = 0.0048  # what VHS adds to every keystroke (measured: 4.7-4.8 ms on long tapes)
 KEYS = {"Enter", "Backspace", "Delete", "Insert", "Down", "Up", "Left", "Right", "Tab",
         "Escape", "Space", "PageUp", "PageDown", "ScrollUp", "ScrollDown", "Home", "End"}
 
@@ -52,10 +53,10 @@ def captions(lines, sections=None):
             t += seconds(rest)
         elif base == "Type":
             text = re.fullmatch(r'\s*(["`\'])(.*)\1\s*', rest, re.S)
-            t += len(text[2] if text else rest) * (seconds(at) if at else speed)
+            t += len(text[2] if text else rest) * ((seconds(at) if at else speed) + KEY_COST)
         elif base in KEYS or re.fullmatch(r"(Ctrl|Alt|Shift)\+.+", base):
             n = int(rest) if rest.strip().isdigit() else 1
-            t += n * (seconds(at) if at else speed)
+            t += n * ((seconds(at) if at else speed) + KEY_COST)
         elif base.startswith("Wait"):
             sys.exit(f"line {no}: Wait outside Hide/Show would make the captions drift")
     return out, t

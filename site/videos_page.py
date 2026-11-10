@@ -6,12 +6,15 @@ import os, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(os.path.dirname(HERE), "videos", "out")
-VIDEOS = [("00-intro", "intro"), ("02-laravel", "laravel"), ("03-fastapi", "fastapi"), ("04-nuxt", "nuxt")]
+VIDEOS = [("00-intro", "intro"), ("02-laravel", "laravel"), ("03-fastapi", "fastapi"), ("04-nuxt", "nuxt"),
+          ("05-versawys", "versawys"), ("06-problemas", "problemas")]
 EN = {
     "intro": ("What versaDeploy is and does", "What it does, how a deploy works, the services it installs, the TUI and its features for teams."),
     "laravel": ("Laravel: from an empty VPS to the app online", "deploy.yml, setting up the server from the Services view, the first deploy, the production .env and the app in the browser."),
     "fastapi": ("FastAPI + PostgreSQL", "A Python API as a systemd service, configured through the server's .env, and an incremental deploy."),
     "nuxt": ("Nuxt with SSR", "A Node server behind nginx, runtime config from the .env, and an instant rollback."),
+    "versawys": ("versaWYS on FrankenPHP", "From composer create-project to the panel online: FrankenPHP instead of PHP-FPM, the versaWYS installer, app:deploy:finish, cron, Redis and maintenance mode."),
+    "problemas": ("When a deploy fails", "The most common errors and how to fix them: uncommitted changes, SSH, a stuck lock, a failing hook, a failing health check and a manual rollback."),
 }
 
 
