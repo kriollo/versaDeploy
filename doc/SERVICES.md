@@ -39,6 +39,8 @@ environments:
 5. Press **`w`** to save the `provision:` block and **`a`** to add the suggested `services_reload` commands to `deploy.yml`. Commit `deploy.yml`.
 6. Go to **Operations**, enable **Initial deploy** and press **`D`**.
 
+Without the TUI (CI, scripts), `versa provision <env>` runs the same steps: the preselection, `--only <ids>`, `--prepare` (`P`) or `--reset-db-password` (`X`), with `--dry-run` to see them first. See the [CLI reference](CLI_REFERENCE.md#versa-provision).
+
 ---
 
 ## 3. Keys

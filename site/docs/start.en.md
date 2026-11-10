@@ -64,6 +64,8 @@ versa
 
 The interface opens. Press **→** until the **Services** view: versa detects the server and ticks what your app needs (nginx, PHP, the database, the `deploy` user with your key, backups, fail2ban…). Check it, then press **I** and **Y** to install. It takes a few minutes. Quit with **q**.
 
+Without the interface (in a script or CI) it is the same: `versa provision production` shows what it will install and asks first (`--dry-run` only shows it).
+
 If the server already runs things, versa respects them: it won't replace nginx with Apache, install a second PHP, restart services or change existing passwords.
 
 ## 5. First deploy

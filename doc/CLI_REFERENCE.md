@@ -350,6 +350,31 @@ Unless `ssh.user` is `root`, the commands run with `sudo -n`: see [Permissions](
 
 ---
 
+## `versa provision`
+
+Installs and configures the server stack from the terminal: the same steps, checks and parameters as the TUI's [Services view](SERVICES.md) (`I`, `P`, `X`). It connects as root over `provision.ssh`, detects what the server runs and installs what the view would preselect for the app (from `provision:` and `builds`). Like the view, it is idempotent and safe on a server in use.
+
+```bash
+DB_PASS=… versa provision production                 # the preselection; asks before running
+versa provision production --dry-run                 # only show the steps
+versa provision production --only frankenphp,nginx,sudoers -y
+versa provision production --prepare                 # deploy user + key, sudoers, project directory (P)
+versa provision production --steps                   # list the step ids
+```
+
+| Flag                  | Description                                                                               |
+| :-------------------- | :---------------------------------------------------------------------------------------- |
+| `--only <ids>`        | Run these steps (comma-separated) instead of the preselection. A step that wasn't preselected changes the parameters the way selecting it in the view does (e.g. `frankenphp` → `proxy_port` 8000). |
+| `--prepare`           | Only `deploy_user`, `sudoers` and `dirs`.                                                  |
+| `--reset-db-password` | Set the database user's password from `provision.db_password` (by default an existing user keeps it). |
+| `--dry-run`           | Show the steps and their current state without running them.                              |
+| `-y`, `--yes`         | Don't ask for confirmation (CI, scripts).                                                 |
+| `--steps`             | List the step ids and exit.                                                               |
+
+With nothing left to install it says so and exits 0. Upgrades (`U`, `S`), logs and backups stay in the view.
+
+---
+
 ## `versa version`
 
 ```bash

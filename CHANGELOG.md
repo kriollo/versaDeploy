@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-11-10
+
+### Added
+
+- **`versa provision <env>`**: installs the server stack from the terminal, with the same steps, checks and parameters as the Services view (`I`). `--only <ids>`, `--prepare` (`P`), `--reset-db-password` (`X`), `--dry-run`, `-y`. Both use one code path (`internal/deployer/provision.go`).
+
 ## [1.17.1] - 2026-11-09
 
 ### Changed

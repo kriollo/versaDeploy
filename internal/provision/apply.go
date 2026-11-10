@@ -1,6 +1,10 @@
 package provision
 
-import "github.com/user/versaDeploy/internal/config"
+import (
+	"regexp"
+
+	"github.com/user/versaDeploy/internal/config"
+)
 
 // Apply merges v and the selection into p (the environment's provision block), keeping
 // fields the Services view doesn't edit (ssh). db_password is left as is.
@@ -35,4 +39,25 @@ func (v Vars) Apply(p config.ProvisionConfig, selected []string, backends []Back
 		p.DocRoot = "" // default
 	}
 	return p
+}
+
+// Select records what choosing step id means for the parameters: the web server or the
+// database of its group, PHP-FPM or FrankenPHP (a service on a local port).
+func (v *Vars) Select(id string) {
+	svc, _ := Lookup(id)
+	switch svc.Group {
+	case "web":
+		v.WebServer = id
+	case "db":
+		v.Database = id
+	case "php":
+		v.FrankenPHP = id == "frankenphp"
+		v.ProxyPort = 0
+		if v.FrankenPHP {
+			v.ProxyPort = 8000
+			if v.AppService == "" {
+				v.AppService = regexp.MustCompile(`[^A-Za-z0-9_]`).ReplaceAllString(v.Project, "_")
+			}
+		}
+	}
 }

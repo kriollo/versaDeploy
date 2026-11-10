@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -133,17 +132,7 @@ func (s servicesModel) rows() int { return len(provision.Catalog) + len(svcField
 // detectServicesCmd probes the server. Without a deploy connection (fresh server, deploy
 // user not created yet) it uses the admin connection.
 func detectServicesCmd(client *versassh.Client, env *config.Environment, envName, project string) tea.Cmd {
-	params := provision.DetectParams{
-		Project:    project,
-		RemotePath: env.RemotePath,
-		DeployUser: env.Provision.DeployUser,
-	}
-	if len(env.Services) > 0 {
-		params.AppService = env.Services[0].Name
-	}
-	if params.DeployUser == "" {
-		params.DeployUser = env.SSH.User
-	}
+	params := deployer.ProvisionDetectParams(env, project)
 	admin := env.ProvisionSSH()
 	domain := env.Provision.Domain
 	return func() tea.Msg {
@@ -178,10 +167,10 @@ func (s *servicesModel) applyDetected(msg msgServicesDetected, env *config.Envir
 	s.report = msg.report
 	s.certExp, s.certErr = msg.certExp, msg.certErr
 	if first {
-		s.backends = provision.DetectBackends(env, repoPath)
-		s.vars = provision.Defaults(env, project, s.backends, s.report)
+		var ids []string
+		s.backends, s.vars, ids = deployer.ProvisionDefaults(env, project, repoPath, s.report)
 		s.selected = map[string]bool{}
-		for _, id := range provision.Preselect(s.backends, s.vars, env, s.report) {
+		for _, id := range ids {
 			s.selected[id] = true
 		}
 	} else {
@@ -222,21 +211,7 @@ func (s *servicesModel) toggle() {
 		}
 	}
 	s.selected[svc.ID] = true
-	switch svc.Group {
-	case "web":
-		s.vars.WebServer = svc.ID
-	case "db":
-		s.vars.Database = svc.ID
-	case "php":
-		s.vars.FrankenPHP = svc.ID == "frankenphp"
-		s.vars.ProxyPort = 0 // FPM; FrankenPHP is a service on a local port
-		if s.vars.FrankenPHP {
-			s.vars.ProxyPort = 8000
-			if s.vars.AppService == "" {
-				s.vars.AppService = regexp.MustCompile(`[^A-Za-z0-9_]`).ReplaceAllString(s.vars.Project, "_")
-			}
-		}
-	}
+	s.vars.Select(svc.ID)
 }
 
 func (s *servicesModel) selectedIDs() []string {
@@ -289,7 +264,7 @@ func (s *servicesModel) askInstall() {
 // askPrepare readies a server for deploying: the deploy user with this machine's key,
 // its sudoers for services_reload and the project directory.
 func (s *servicesModel) askPrepare() {
-	s.askSteps([]string{"deploy_user", "sudoers", "dirs"}, "Prepare "+s.envName+" for deploy (user "+s.vars.DeployUser+")")
+	s.askSteps(deployer.PrepareSteps, "Prepare "+s.envName+" for deploy (user "+s.vars.DeployUser+")")
 	if s.pending != nil {
 		s.confirmLines = append(s.confirmLines, "", StyleHint.Render("  Then: Operations → Initial deploy → D"))
 	}
@@ -316,36 +291,7 @@ func (s *servicesModel) askResetPassword() {
 
 func (s *servicesModel) askSteps(ids []string, title string) {
 	s.pending = nil
-	if !s.report.CanInstall() {
-		s.status = StyleError.Render("Install needs an apt (Debian/Ubuntu) or dnf (RHEL/Rocky/Alma 8+) server")
-		return
-	}
-	if err := provision.Conflicts(s.report, ids, s.vars); err != nil {
-		s.status = StyleError.Render("✕ " + err.Error())
-		return
-	}
-	v := s.vars
-	if slices.Contains(ids, "sudoers") && s.env != nil {
-		// let deploys install and restart the app's services as the deploy user
-		e := *s.env
-		svcs, err := servicesForDeployUser(s.env, s.vars)
-		if err != nil {
-			s.status = StyleError.Render("✕ " + err.Error())
-			return
-		}
-		e.Services = svcs
-		if len(e.Services) > 0 {
-			e.SSH.User = s.vars.DeployUser
-			v.ServicesSudoers = deployer.SudoersScript(&e, s.project)
-			inst, err := deployer.ServiceInstallScript(&e, s.project, s.envName)
-			if err != nil {
-				s.status = StyleError.Render("✕ " + err.Error())
-				return
-			}
-			v.ServicesInstall = inst
-		}
-	}
-	b, err := provision.Build(ids, v)
+	b, notes, err := deployer.ProvisionBundle(s.env, s.project, s.envName, s.report, ids, s.vars)
 	if err != nil {
 		s.status = StyleError.Render("✕ " + err.Error())
 		return
@@ -357,30 +303,12 @@ func (s *servicesModel) askSteps(ids []string, title string) {
 		svc, _ := provision.Lookup(id)
 		s.confirmLines = append(s.confirmLines, "• "+svc.Label)
 	}
-	if r := s.report; r.ProjectSite != "" && (slices.Contains(ids, "nginx") || slices.Contains(ids, "apache")) {
-		s.confirmLines = append(s.confirmLines, "", StyleWarning.Render("  This app is already served by "+r.ProjectSite+": the install stops if it"),
-			StyleWarning.Render("  serves the same domain (it is never overwritten)"))
+	if len(notes) > 0 {
+		s.confirmLines = append(s.confirmLines, "")
 	}
-	if slices.Contains(ids, "ufw") {
-		s.confirmLines = append(s.confirmLines, "", StyleWarning.Render(fmt.Sprintf("  UFW: allows SSH %d, 80 and 443 (an active firewall keeps its policy)", s.vars.SSHPort)))
+	for _, n := range notes {
+		s.confirmLines = append(s.confirmLines, StyleWarning.Render("  "+n))
 	}
-}
-
-// servicesForDeployUser returns the services the sudoers step installs for the deploy
-// user. The rules go to that user, so services that ran as the old ssh.user run as
-// the deploy user, and none may run as root: the deploy user owns the wrapper root
-// would execute.
-func servicesForDeployUser(env *config.Environment, v provision.Vars) ([]config.ServiceConfig, error) {
-	svcs := slices.Clone(provision.ProposedServices(env, v))
-	for i := range svcs {
-		if u := svcs[i].User; u == "" || u == env.SSH.User {
-			svcs[i].User = v.DeployUser
-		}
-		if svcs[i].User == "root" && v.DeployUser != "root" {
-			return nil, fmt.Errorf("service %s runs as root: set its user to %s", svcs[i].Name, v.DeployUser)
-		}
-	}
-	return svcs, nil
 }
 
 // askUpgrade prepares the confirm modal for upgrades: one service, security only, or

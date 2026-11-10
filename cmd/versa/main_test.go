@@ -2,7 +2,10 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/user/versaDeploy/internal/provision"
 )
 
 func TestRootCommand(t *testing.T) {
@@ -84,5 +87,30 @@ func TestServiceCommandArgs(t *testing.T) {
 		if err := rootCmd.Execute(); err == nil {
 			t.Errorf("versa %v: expected an argument error", args)
 		}
+	}
+}
+
+// --only keeps catalog order, refuses unknown ids and app_service, and choosing
+// FrankenPHP (not preselected) moves PHP to its local port, as Space does in the view.
+func TestProvisionSelectSteps(t *testing.T) {
+	v := provision.Vars{Project: "my-app", WebServer: "apache"}
+	ids, err := selectSteps(&v, []string{"nginx"}, []string{"nginx", "frankenphp", "base"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ids, ",") != "base,frankenphp,nginx" {
+		t.Errorf("order = %v", ids)
+	}
+	if !v.FrankenPHP || v.ProxyPort != 8000 || v.AppService != "my_app" {
+		t.Errorf("frankenphp not applied: %+v", v)
+	}
+	if v.WebServer != "apache" {
+		t.Error("a preselected step must keep deploy.yml's parameters")
+	}
+	if _, err := selectSteps(&v, nil, []string{"nope"}); err == nil {
+		t.Error("unknown step accepted")
+	}
+	if _, err := selectSteps(&v, nil, []string{"app_service"}); err == nil {
+		t.Error("app_service accepted")
 	}
 }
