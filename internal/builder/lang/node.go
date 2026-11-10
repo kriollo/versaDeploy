@@ -42,7 +42,8 @@ func (f *FrontendBuilder) Build(ctx *BuilderContext) (int, bool, error) {
 
 	// If compile_command doesn't contain {file}, run it once if any frontend files changed
 	if !strings.Contains(ctx.Config.Builds.Frontend.CompileCommand, "{file}") {
-		if len(ctx.Changeset.FrontendFiles) > 0 || ctx.Changeset.Force {
+		// new dependencies too: their output isn't reused from the previous release then
+		if len(ctx.Changeset.FrontendFiles) > 0 || ctx.Changeset.PackageChanged || ctx.Changeset.Force {
 			ctx.Log.Info("Compiling frontend assets...")
 			compileDir := filepath.Join(ctx.ArtifactDir, "app", ctx.Config.Builds.Frontend.ProjectRoot)
 			ctx.Log.Debug("   Command: %s", ctx.Config.Builds.Frontend.CompileCommand)

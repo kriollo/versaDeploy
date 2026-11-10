@@ -107,7 +107,7 @@ Es el primer deploy a este entorno (o cambió `remote_path`). Usa `versa deploy 
 
 ### `Deployment lock already held` { #deployment-lock-already-held }
 
-Hay otro deploy corriendo, o uno anterior se interrumpió (Ctrl+C, conexión perdida) y dejó el bloqueo. Si estás seguro de que nadie más está desplegando:
+Hay otro deploy corriendo, o uno anterior se cortó (se colgó el computador, se perdió la conexión) y dejó el bloqueo; el mensaje dice desde cuándo. Ctrl+C lo libera. Si estás seguro de que nadie más está desplegando:
 
 ```bash
 versa exec production "rmdir /var/www/app/.versa.lock"

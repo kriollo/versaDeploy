@@ -673,11 +673,12 @@ func (c *Client) AcquireLock(lockPath string) error {
 		return nil
 	}
 	// mkdir fails for other reasons than an existing lock: tell them apart
-	if _, statErr := c.sftpClient.Stat(lockPath); statErr == nil {
-		return verserrors.New(verserrors.CodeConfigInvalid,
-			"Deployment lock already held",
-			"Another deployment is currently in progress. If you are sure no one else is deploying, manually remove the directory: "+lockPath,
-			err)
+	if fi, statErr := c.sftpClient.Stat(lockPath); statErr == nil {
+		since := fi.ModTime().Local().Format("2006-01-02 15:04")
+		return verserrors.New(verserrors.CodeDeploymentFailed,
+			"Deployment lock already held (since "+since+")",
+			"Another deployment is in progress, or one was cut off (a crash, a lost connection). If no one else is deploying, free it: versa exec <env> \"rmdir "+lockPath+"\"",
+			nil)
 	}
 	dir := path.Dir(lockPath)
 	if _, statErr := c.sftpClient.Stat(dir); statErr != nil {

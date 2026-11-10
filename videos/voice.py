@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Voice-over and music for an episode, from its captions.
+"""Voice-over for an episode, from its captions.
 
   voice.py fit episodes/NN-name.tape   synthesize every caption and lengthen the tape's
                                        pauses where the spoken line is longer than the
                                        time its caption is on screen (re-render after)
   voice.py mix episodes/NN-name.tape   build out/NN-name-voice.mp4 and -voice-cc.mp4:
                                        each line at its caption's time (out/NN-name.srt)
-                                       plus the music, ducked under the voice
+                                       (no music: Content ID claims it)
 
 Voice: Piper (offline, default), model in .work/voices; pronunciation.tsv says how to
 read English tech words. TTS=elevenlabs uses ElevenLabs instead (ELEVENLABS_API_KEY and
-ELEVENLABS_VOICE, or .work/elevenlabs_api_key.txt and .work/elevenlabs_voice.txt). Music: MUSIC (default out/audio_videos.mp4) from MUSIC_START s.
+ELEVENLABS_VOICE, or .work/elevenlabs_api_key.txt and .work/elevenlabs_voice.txt).
 """
 import array
 import hashlib
@@ -23,9 +23,6 @@ import wave
 import cc
 
 V = os.path.dirname(os.path.abspath(__file__))
-MUSIC = os.environ.get("MUSIC", os.path.join(V, "out", "audio_videos.mp4"))
-MUSIC_START = float(os.environ.get("MUSIC_START", "15"))
-MUSIC_VOL = float(os.environ.get("MUSIC_VOL", "0.22"))
 GAP = 0.35  # silence kept between one line and the next caption
 RATE = 22050
 
@@ -190,15 +187,9 @@ def mix(tape):
         w.setsampwidth(2)
         w.setframerate(rate)
         w.writeframes(track.tobytes())
-    # music from MUSIC_START, looped, faded in and out, ducked under the voice
-    graph = (f"[1:a]atrim=start={MUSIC_START},asetpts=PTS-STARTPTS,aloop=loop=-1:size=2e9,atrim=0:{dur:.2f},"
-             f"afade=t=in:d=2,afade=t=out:st={max(dur - 3, 0):.2f}:d=3,volume={MUSIC_VOL},aformat=channel_layouts=stereo[m];"
-             f"[2:a]aformat=channel_layouts=stereo,asplit=2[v][sc];"
-             f"[m][sc]sidechaincompress=threshold=0.015:ratio=10:attack=15:release=450[duck];"
-             f"[duck][v]amix=inputs=2:normalize=0,alimiter=limit=0.95[a]")
     for suffix in ("", "-cc"):
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", base + suffix + ".mp4", "-i", MUSIC, "-i", voice,
-                        "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy",
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", base + suffix + ".mp4", "-i", voice,
+                        "-map", "0:v", "-map", "1:a", "-c:v", "copy",
                         "-c:a", "aac", "-b:a", "192k", "-shortest", f"{base}-voice{suffix}.mp4"], check=True)
     print(f"{base}-voice.mp4, {base}-voice-cc.mp4")
 

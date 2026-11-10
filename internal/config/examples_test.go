@@ -34,8 +34,9 @@ func TestExamples(t *testing.T) {
 				t.Errorf("unknown key: %v", err)
 			}
 			env, err := cfg.GetEnvironment("production")
-			if err != nil || len(env.SharedPaths) == 0 || env.SharedPaths[0] != ".env" {
-				t.Errorf("production must share .env: %v %v", env, err)
+			// the server's secrets: .env, or versaWYS's config.json (versaWYS/config)
+			if err != nil || len(env.SharedPaths) == 0 || (env.SharedPaths[0] != ".env" && env.SharedPaths[0] != "versaWYS/config") {
+				t.Errorf("production must share .env (versaWYS: versaWYS/config): %v %v", env, err)
 			}
 		})
 	}

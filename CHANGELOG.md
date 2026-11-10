@@ -4,14 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-11-09
+
 ### Added
 
 - **Rollbacks in the deploy history**: `versa rollback` and the TUI's rollbacks are recorded (who, when, back to which release), next to the deploys.
 - **`VERSA_DEPLOYER`** names who deployed in `versa history` (default `user@host`); in CI, `VERSA_DEPLOYER: ${{ github.actor }}` (the GitHub Actions example sets it).
 - `versa service <env> restart` (and deploys) print `<service> is running` when the service stays up; it used to print nothing on success.
+- **`examples/deploy.versawys-frankenphp.yml`**: versaWYS on FrankenPHP behind nginx, tested end to end from `composer create-project versawys/versawys` (PostgreSQL, Redis, cron with `app:schedule:run`, `app:deploy:finish`).
+- **Ctrl+C frees the deployment lock**: an interrupted deploy used to leave `.versa.lock` behind, so the next one failed with "Deployment lock already held". The message now also says since when the lock is held and the command that frees it.
 
 ### Fixed
 
+- **FrankenPHP: `php` subprocesses ran `frankenphp <script>`**: inside FrankenPHP's CLI, `PHP_BINARY` is the `frankenphp` binary, so PHP that runs PHP_BINARY failed (`unknown command "versaCLI" for "frankenphp"`): versaWYS's `app:deploy:finish` and scheduled tasks, Laravel's `schedule:run`. The `/usr/local/bin/php` wrapper now starts FrankenPHP as `php` (`exec -a`), and is rewritten on servers that have the old one.
+- **FrankenPHP showed every PHP error and deprecation**, on web pages and in hooks and cron: its static build has no `php.ini`. The FrankenPHP step writes production settings to `/etc/frankenphp/php.d/00-versa.ini` (`display_errors = Off`, `log_errors = On`, no deprecations, the timezone); files added after it in `php.d/` override it.
+- **A deploy without PHP dependency changes failed with "release is missing required PHP dependencies"** when composer.json sets `vendor-dir` (versaWYS: `versaWYS/vendor`): `vendor` was reused from the previous release instead of the configured directory.
+- **A deploy that only changed the lockfile** (a dependency update) reinstalled the frontend dependencies but didn't compile, and lost the build output. The frontend now compiles when its dependencies change. The examples list their build output in `reusable_paths` (`public/build`, `.next`, `.output`) so deploys without frontend changes keep it, as the docs now say.
 - **The TUI's header disappeared** when a long message (an SSH error) didn't fit the status bar: the bar wrapped onto several lines and pushed the whole view up. The status bar is always one line now, the message cut with "…".
 - **Nuxt apps weren't detected as a Node backend** in the Services view (Node.js not preselected) because Nuxt has no `start` script: a service that runs `node`/`npm`, or `provision.node_major`, now marks the app as a Node server too.
 

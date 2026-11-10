@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/user/versaDeploy/internal/artifact"
@@ -242,7 +245,24 @@ func (d *Deployer) connectAndLock() (*ssh.Client, func(), error) {
 		c.Close()
 		return nil, nil, err
 	}
+	// Ctrl+C (or a kill) frees the lock: otherwise the next deploy finds it held.
+	// ponytail: in a multi-deploy the first server to exit may cut the others' release;
+	// a shared shutdown that waits for every lock if that bites.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-sig:
+			d.log.Warn("Interrupted: releasing the deployment lock")
+			_ = c.ReleaseLock(lockDir)
+			os.Exit(130)
+		case <-done:
+		}
+	}()
 	return c, func() {
+		signal.Stop(sig)
+		close(done)
 		d.log.Debug("Releasing deployment lock...")
 		if err := c.ReleaseLock(lockDir); err != nil {
 			d.log.Warn("Failed to release deployment lock: %v", err)
@@ -1341,17 +1361,11 @@ func (d *Deployer) reuseDependencies(sshClient *ssh.Client, previousVersion, fin
 
 	// PHP
 	if d.env.Builds.PHP.Enabled && !cs.ComposerChanged {
-		// Always include vendor if not explicitly in ReusablePaths
+		// Always include vendor (composer.json's vendor-dir) if not explicitly in ReusablePaths
 		paths := d.env.Builds.PHP.ReusablePaths
-		hasVendor := false
-		for _, p := range paths {
-			if p == "vendor" {
-				hasVendor = true
-				break
-			}
-		}
-		if !hasVendor {
-			paths = append(paths, "vendor")
+		vendor := filepath.ToSlash(composerVendorDir(filepath.Join(d.repoPath, d.env.Builds.PHP.ProjectRoot)))
+		if !slices.Contains(paths, vendor) {
+			paths = append(slices.Clip(paths), vendor)
 		}
 
 		for _, p := range paths {

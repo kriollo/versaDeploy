@@ -419,12 +419,11 @@ Environments with `local: true` have no server, so only these commands apply to 
 `versa` exits with `0` on success and `1` on any error, so it can be used in CI and scripts. Known errors are printed with a code, the underlying details and, when possible, a suggested fix:
 
 ```
-[ERROR] Deployment lock already held
-Code: CONFIG_INVALID
-Details: sftp: "Failure" (SSH_FX_FAILURE)
+[ERROR] Deployment lock already held (since 2026-11-09 21:50)
+Code: DEPLOYMENT_FAILED
 
-Suggestion: Another deployment is currently in progress. If you are sure no one else
-is deploying, manually remove the directory: /var/www/app/.versa.lock
+Suggestion: Another deployment is in progress, or one was cut off (a crash, a lost
+connection). If no one else is deploying, free it: versa exec <env> "rmdir /var/www/app/.versa.lock"
 ```
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common errors.

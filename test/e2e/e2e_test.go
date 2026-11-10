@@ -787,8 +787,10 @@ func TestProvisionAndDeploy(t *testing.T) {
 			} else if err := provision.Run(c, "root", b, &out); err == nil || !strings.Contains(out.String(), "FrankenPHP is already installed") {
 				t.Errorf("%s: PHP-FPM next to FrankenPHP was not refused: %v\n%s", s.name, err, out.String())
 			}
-			// FrankenPHP only listens on localhost; php is its CLI (hooks, cron)
-			if out, _ := c.ExecuteCommand("ss -Hltn | awk '{print $4}' | grep -E ':(8100|8101)$' | sort | tr '\n' ' '; php -r 'echo PHP_VERSION;'"); !strings.Contains(out, "127.0.0.1:8100 127.0.0.1:8101") || !strings.Contains(out, "8.") {
+			// FrankenPHP only listens on localhost; php is its CLI (hooks, cron), with
+			// production settings (php.d/00-versa.ini: no errors on screen) and PHP_BINARY
+			// = the wrapper (PHP that runs PHP_BINARY: schedule:run, app:deploy:finish)
+			if out, _ := c.ExecuteCommand("ss -Hltn | awk '{print $4}' | grep -E ':(8100|8101)$' | sort | tr '\n' ' '; php -r 'echo PHP_VERSION, \" display_errors=\", ini_get(\"display_errors\"), \" \", PHP_BINARY;'"); !strings.Contains(out, "127.0.0.1:8100 127.0.0.1:8101") || !strings.Contains(out, "8.") || !strings.HasSuffix(out, "display_errors= /usr/local/bin/php") {
 				t.Errorf("%s: FrankenPHP listeners / php CLI: %q", s.name, out)
 			}
 		} else if um, _ := c.ExecuteCommand("systemctl show -p UMask php" + s.php + "-fpm"); strings.TrimSpace(um) != "UMask=0002" {

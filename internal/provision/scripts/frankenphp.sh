@@ -29,12 +29,22 @@ else
     ok "FrankenPHP ${ver} installed ($("$bin" version | awk '{print $3, $4}'))"
 fi
 
-# `php` for hooks and cron (php artisan migrate): the binary's CLI, unless a PHP CLI exists
-if ! command -v php >/dev/null 2>&1; then
-    printf '#!/bin/sh\n# Generado por versaDeploy: PHP CLI de FrankenPHP\nexec %s php-cli "$@"\n' "$bin" > /usr/local/bin/php
+# `php` for hooks and cron (php artisan migrate): the binary's CLI, unless a PHP CLI exists.
+# exec -a: PHP_BINARY is argv[0], so PHP that runs PHP_BINARY (artisan schedule:run,
+# versaCLI app:deploy:finish) runs this wrapper instead of `frankenphp <script>`.
+if ! command -v php >/dev/null 2>&1 || grep -q 'Generado por versaDeploy' /usr/local/bin/php 2>/dev/null; then
+    printf '#!/bin/bash\n# Generado por versaDeploy: PHP CLI de FrankenPHP\nexec -a /usr/local/bin/php %s php-cli "$@"\n' "$bin" > /usr/local/bin/php
     chmod 755 /usr/local/bin/php
     ok "php → frankenphp php-cli (/usr/local/bin/php; php -v/-m need PHP 8.6)"
 fi
+
+# The static build has no php.ini: PHP's defaults print every error and deprecation, on
+# web pages too. Production settings for the server and the CLI (hooks, cron); files
+# added to php.d after this one override it.
+install -d -m 755 /etc/frankenphp/php.d
+printf '; Generado por versaDeploy: PHP de producción (servidor y CLI)\ndisplay_errors = Off\ndisplay_startup_errors = Off\nlog_errors = On\nerror_reporting = E_ALL & ~E_DEPRECATED\ndate.timezone = %s\n' \
+    "${PHP_TIMEZONE:-America/Santiago}" > /etc/frankenphp/php.d/00-versa.ini
+chmod 644 /etc/frankenphp/php.d/00-versa.ini
 
 # opcache_reset() endpoint, reached only through each project's owner-only socket:
 # deploys free the previous release's scripts with it, without restarting PHP

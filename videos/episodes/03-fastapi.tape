@@ -160,6 +160,7 @@ Sleep 3s
 Type "y"
 Sleep 5s
 # CC: (Unos minutos después…)
+Sleep 0.3s
 Hide
 Wait+Screen@900s /Provisioning finished/
 Show

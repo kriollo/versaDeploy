@@ -178,7 +178,7 @@ Before building, versa compares the target with the server (`uname`) and with th
 | `compile_command`    | string | —                             | **Required.** Build command, e.g. `npm run build`. If it contains `{file}`, it runs once per changed frontend file with `{file}` replaced. |
 | `cleanup_dev_deps`   | bool   | `false`                       | After building, delete `node_modules` and run `production_command`.                                              |
 | `production_command` | string | `pnpm install --production`   | Production-only install used by `cleanup_dev_deps`.                                                               |
-| `reusable_paths`     | list   | `node_modules`                | Reused from the previous release when `package.json` and its lockfile didn't change. `node_modules` is always included.           |
+| `reusable_paths`     | list   | `node_modules`                | Reused from the previous release when `package.json` and its lockfile didn't change. `node_modules` is always included. List your build output too (`public/build`, `.next`, `.output`): a deploy without frontend changes doesn't compile, so it keeps the previous one. |
 | `server_install`     | string | —                             | Install `node_modules` **on the server** with this command (e.g. `npm ci --omit=dev`) instead of shipping yours: native modules (sharp, bcrypt, better-sqlite3…) built on Windows or macOS don't run on Linux. Runs before the switch (a failure stops the deploy); reused when the lockfile didn't change. Ship the lockfile (don't ignore it) and install Node on the server (Services → Node.js). Replaces `cleanup_dev_deps`. |
 
 #### SSR apps (Next.js, Nuxt, SvelteKit, Remix, Astro…)

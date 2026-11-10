@@ -40,6 +40,8 @@ environments:
         enabled: true
         npm_command: "npm ci"
         compile_command: "NEXT_TELEMETRY_DISABLED=1 npm run build"
+        # the build output: kept from the previous release when no frontend file changed
+        reusable_paths: [".next"]
         # node_modules installed on the server: native modules (sharp…) for Linux.
         # Reused while package-lock.json doesn't change. Ship the lockfile.
         server_install: "npm ci --omit=dev"

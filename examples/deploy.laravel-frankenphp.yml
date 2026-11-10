@@ -60,6 +60,8 @@ environments:
         enabled: true
         npm_command: "npm ci"
         compile_command: "npm run build"
+        # the build output: kept from the previous release when no frontend file changed
+        reusable_paths: ["public/build"]
 
     services_reload:
       - "sudo systemctl reload nginx"

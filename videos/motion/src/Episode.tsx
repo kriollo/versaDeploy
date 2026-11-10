@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, interpolate, staticFile, useCurrentFrame } from "remotion";
 import { Background, C, Chip, Fade, MONO, Rise, SANS, Title, center, useIn } from "./Intro";
 
 type Line = { text: string; start: number; dur: number; file: string };
@@ -177,27 +177,14 @@ const Clip: React.FC<{ s: Seg; video: string; fps: number }> = ({ s, video, fps 
 
 export const Episode: React.FC<{ ep: string; timeline: EpisodeTimeline | null; captions: boolean }> = ({ timeline: t, captions }) => {
   const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
   if (!t) return null;
   const fps = t.fps;
   const all = t.segments.flatMap((s) => s.lines.map((l) => ({ a: s.start + l.start, b: s.start + l.start + l.dur, text: l.text })));
-  const speaking = (f: number) => {
-    const sec = f / fps;
-    let d = 99;
-    for (const l of all) d = Math.min(d, sec < l.a ? l.a - sec : sec > l.b ? sec - l.b : 0);
-    return d;
-  };
-  const musicVolume = (f: number) => {
-    const duck = interpolate(speaking(f), [0, 0.5], [0.07, 0.22], { extrapolateRight: "clamp" });
-    const fade = Math.min(interpolate(f, [0, 2 * fps], [0, 1], { extrapolateRight: "clamp" }), interpolate(f, [durationInFrames - 3 * fps, durationInFrames], [1, 0], { extrapolateLeft: "clamp" }));
-    return duck * fade;
-  };
   const sec = frame / fps;
   const cap = all.find((l) => sec >= l.a && sec < l.b + 0.3);
   return (
     <AbsoluteFill>
       <Background />
-      <Audio src={staticFile("music.m4a")} loop volume={musicVolume} />
       {t.segments.map((s, i) => {
         const dur = Math.round(s.dur * fps);
         const body =

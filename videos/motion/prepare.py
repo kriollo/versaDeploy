@@ -3,7 +3,7 @@
 measured, and placed; the scenes last exactly as long as their lines.
 
 Writes public/timeline.json (read by the Remotion composition), public/voice/*.wav,
-public/music.m4a, public/shots/*.png (frames of the Laravel episode) and
+public/shots/*.png (frames of the Laravel episode) and
 ../out/00-intro.srt.
 """
 import json, os, re, shutil, subprocess, sys
@@ -62,8 +62,6 @@ def main():
     with open(os.path.join(OUT, "00-intro.srt"), "w", encoding="utf-8") as f:
         for i, (a, b, text) in enumerate(srt, 1):
             f.write(f"{i}\n{srt_ts(a)} --> {srt_ts(b)}\n{text}\n\n")
-    subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", str(voice.MUSIC_START), "-i", voice.MUSIC, "-vn",
-                    "-c:a", "aac", "-b:a", "192k", os.path.join(PUB, "music.m4a")], check=True)
     shots()
     print(f"{len(scenes)} scenes, {len(srt)} lines, {t:.1f}s")
 

@@ -9,10 +9,12 @@ Tutorial episodes recorded with [VHS](https://github.com/charmbracelet/vhs): eve
 | 2 — Laravel: de un VPS vacío a la app en línea | `episodes/02-laravel.tape` | `./prep.sh 02` |
 | 3 — FastAPI + PostgreSQL: .env, servicio y un deploy incremental | `episodes/03-fastapi.tape` | `./prep.sh 03` |
 | 4 — Nuxt con SSR: .env en tiempo de ejecución y un rollback | `episodes/04-nuxt.tape` | `./prep.sh 04` |
+| 5 — versaWYS en FrankenPHP: del composer create-project al panel en línea | `episodes/05-versawys.tape` | `./prep.sh 05` |
+| 6 — Cuando un deploy falla: los errores más comunes | `episodes/06-problemas.tape` | after `./make.sh 05` (continues its server) |
 
 ## The intro (Remotion)
 
-`motion/` is a [Remotion](https://www.remotion.dev) project (React → video): an animated explainer of what versaDeploy is and does, with the same voice and music. `motion/script.json` holds the scenes and their narration; `motion/prepare.py` synthesizes every line and makes each scene last exactly as long as its lines (no drift by construction), and takes screenshots from the Laravel episode. `npx remotion studio` (in `motion/`) previews it live.
+`motion/` is a [Remotion](https://www.remotion.dev) project (React → video): an animated explainer of what versaDeploy is and does, with the same voice. `motion/script.json` holds the scenes and their narration; `motion/prepare.py` synthesizes every line and makes each scene last exactly as long as its lines (no drift by construction), and takes screenshots from the Laravel episode. `npx remotion studio` (in `motion/`) previews it live.
 
 ```bash
 cd motion && npm ci && ./render.sh   # → out/00-intro-voice.mp4, -voice-cc.mp4, 00-intro.srt
@@ -26,7 +28,7 @@ Remotion is free for individuals and companies of up to 3 people; bigger compani
 ./make.sh 02     # everything → out/02-laravel-final.mp4 (+ 02-laravel-full.srt) and -final-cc.mp4
 ```
 
-The final episode is built in Remotion (`motion/`) around the terminal recording: an animated opening with the steps, a card that explains each chapter before it is shown (from `episodes/NN-name.json`; chapters are the tape's `# ─── N. Title ───` markers), the recording itself, the deployed app in a browser window (`shot.sh`, taken while the server still runs it) and an outro. `motion/episode.sh NN` rebuilds it from an existing recording.
+The final episode is built in Remotion (`motion/`) around the terminal recording: an animated opening with the steps, a card that explains each chapter before it is shown (from `episodes/NN-name.json`; chapters are the tape's `# ─── N. Title ───` markers), the recording itself, the deployed app in a browser window (`shot.sh`, taken while the server still runs it; `shot-login.mjs` when the json has `browser.login`) and an outro. `motion/episode.sh NN` rebuilds it from an existing recording.
 
 or step by step:
 
@@ -34,7 +36,7 @@ or step by step:
 ./prep.sh 02                                  # fresh "VPS" (Docker) + the episode's project
 python3 voice.py fit episodes/02-laravel.tape # lengthen pauses where a spoken line doesn't fit
 ./render.sh episodes/02-laravel.tape          # video + captions
-python3 voice.py mix episodes/02-laravel.tape # voice-over + music → out/02-laravel-voice*.mp4
+python3 voice.py mix episodes/02-laravel.tape # voice-over → out/02-laravel-voice*.mp4
 ```
 
 `out/` gets:
@@ -42,14 +44,13 @@ python3 voice.py mix episodes/02-laravel.tape # voice-over + music → out/02-la
 - `NN-name.mp4` — 1920×1080, with an empty band at the bottom for captions. Upload this one to YouTube together with
 - `NN-name.srt` — the closed captions (YouTube: *Subtitles → Upload file → With timing*);
 - `NN-name-cc.mp4` — the same video with the captions burned in, for networks without CC (Instagram, LinkedIn, X);
-- `NN-name-voice.mp4` / `NN-name-voice-cc.mp4` — the same two with the voice-over reading the captions and background music.
+- `NN-name-voice.mp4` / `NN-name-voice-cc.mp4` — the same two with the voice-over reading the captions. No background music: YouTube's Content ID claimed the track we used.
 
-## Voice-over and music
+## Voice-over
 
 - **Voice**: [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0), local, on the GPU when there is one, voice `em_alex`. One-time setup (Python 3.12): `python3.12 -m venv .work/tts2 && .work/tts2/bin/pip install kokoro soundfile`; `kokoro_tts.py` synthesizes every line of a video in one batch. Also available: `TTS=piper` (offline, CPU; `.work/tts` + a model in `.work/voices`) and `TTS=elevenlabs` (paid API; key in `.work/elevenlabs_api_key.txt`, voice id in `.work/elevenlabs_voice.txt`).
 - **Pronunciation**: `pronunciation.tsv` tells the Spanish voice how to read English words (`deploy` → `diplói`). Add a line when a word sounds wrong; the captions keep the original text.
 - **Timing**: each line starts with its caption. `voice.py fit` synthesizes every line and adds a `Sleep` after the caption where the spoken line is longer than the caption stays on screen, so lines never overlap (lines are cached in `.work/voice-cache` by engine, voice and text).
-- **Music**: `MUSIC=file` (default `out/audio_videos.mp4`), from `MUSIC_START` seconds (default 15), looped and ducked under the voice. Keep licensed music out of git (`out/` and `.work/` are ignored).
 
 ## Publishing
 

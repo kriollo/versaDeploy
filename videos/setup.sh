@@ -13,3 +13,14 @@ unset HISTFILE PROMPT_COMMAND
 export VERSA_DEPLOYER=dev@laptop
 export GIT_PAGER=cat PAGER=cat GIT_AUTHOR_NAME=Dev GIT_AUTHOR_EMAIL=dev@example.com GIT_COMMITTER_NAME=Dev GIT_COMMITTER_EMAIL=dev@example.com
 clear
+# examples/ come from this checkout, not GitHub: a video can show an example before it is pushed
+curl() {
+    local url="${!#}" out="" prev="" a
+    case $url in
+    https://raw.githubusercontent.com/kriollo/versaDeploy/main/examples/*)
+        for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
+        cp "$V/../examples/${url##*/}" "${out:-/dev/stdout}"
+        ;;
+    *) command curl "$@" ;;
+    esac
+}

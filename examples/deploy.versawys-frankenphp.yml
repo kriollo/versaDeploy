@@ -1,0 +1,91 @@
+# versaWYS on FrankenPHP behind nginx (no PHP-FPM). Copy to your project as deploy.yml
+# and edit the values marked "change". Tested end to end with a fresh
+# `composer create-project versawys/versawys` on Ubuntu 24.04 (PostgreSQL + Redis).
+# nginx serves the static files and node_modules' .js/.css; only index.php reaches
+# FrankenPHP, which runs as the myapp service.
+#
+# First deploy:
+#   1. versa → Services: install the stack (I)
+#   2. versa deploy production --initial-deploy   → answer N to the post_deploy hooks
+#   3. versa exec production 'cd /var/www/myapp/current/app && php versaCLI app:install --db-driver=postgresql …'
+#      (or open the site: /install, with the token in shared/versaWYS/config/install.token)
+#   4. versa deploy production --force   (app:deploy:finish: migrations, caches, checks)
+project: "myapp"                         # change
+
+environments:
+  production:
+    ssh:
+      host: "myapp.com"                  # change
+      user: "deploy"
+      key_path: "~/.ssh/id_ed25519"
+
+    remote_path: "/var/www/myapp"
+
+    provision:                           # read only by the Services view
+      ssh: { user: root }
+      domain: "myapp.com"                # change
+      web_server: nginx
+      frankenphp: true                   # instead of PHP-FPM (one PHP per server): PHP 8.5 + extensions
+      proxy_port: 8000                   # FrankenPHP listens on 127.0.0.1:8000
+      database: postgres                 # or mariadb
+      db_name: myapp
+      db_user: myapp_user
+      db_password: "${DB_PASS}"          # only used to create the user: DB_PASS=… versa
+      redis: true                        # cache.driver: redis (versaWYS/config.compartida.json)
+      ssl: true
+      backup: true
+      deploy_user: deploy
+      cron:                              # app/schedule.php: tasks and the job queue
+        - "* * * * * php versaCLI app:schedule:run >> versaWYS/logs/cron.log 2>&1"
+
+    ignored_paths:
+      - ".git"
+      - ".github"
+      - ".vscode"
+      - "documentacion"
+      - "src"                            # compiled into public/dashboard
+      - "versaWYS/tests"
+
+    # On the server, never in git: config.json (keys, database) with installed.lock and
+    # down.json (maintenance), logs, caches (Twig's is shared by every release), files
+    # and uploads. The first deploy creates them empty.
+    shared_paths:
+      - "versaWYS/config"
+      - "versaWYS/logs"
+      - "versaWYS/cache"
+      - "versaWYS/storage"
+      - "public/dashboard/img/avatars"
+      - "public/dashboard/img/logos"
+      - "public/dashboard/store"
+
+    builds:
+      php:
+        enabled: true
+        composer_command: "composer install --no-dev --optimize-autoloader"
+      frontend:
+        enabled: true
+        npm_command: "pnpm install --frozen-lockfile"
+        compile_command: "pnpm run compile"
+        cleanup_dev_deps: true
+        # the browser loads Vue and SweetAlert2 from /node_modules/<package>/dist/
+        production_command: "pnpm install --production"
+        # the build output: kept from the previous release when no frontend file changed
+        reusable_paths: ["public/dashboard/js", "public/dashboard/css"]
+
+    services_reload:
+      - "sudo systemctl reload nginx"
+
+    # The Services view proposes it (w) and installs its config, /etc/frankenphp/myapp.Caddyfile
+    services:
+      - name: "myapp"
+        exec: "/usr/local/bin/frankenphp run --config /etc/frankenphp/myapp.Caddyfile"
+        # deploys don't restart it (no dropped requests): this frees the old release's OPcache
+        reload: "curl -fsS --unix-socket /var/www/myapp/.frankenphp-opcache.sock http://localhost/"
+
+    # config:merge of versaWYS/config.compartida.json, migrations, Twig cache and
+    # app:check:deploy --production: any failure rolls the deploy back
+    post_deploy:
+      - "php versaCLI app:deploy:finish"
+
+    health_check:
+      url: "https://myapp.com/up"        # versaWYS's health route

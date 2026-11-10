@@ -58,6 +58,8 @@ environments:
         enabled: true
         npm_command: "npm ci"
         compile_command: "npm run build"
+        # the build output: kept from the previous release when no frontend file changed
+        reusable_paths: ["public/build"]
 
     services_reload:                     # PHP-FPM must reload: OPcache keeps the old release
       - "sudo systemctl reload php8.4-fpm"

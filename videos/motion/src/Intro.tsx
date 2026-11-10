@@ -433,29 +433,10 @@ export const Background: React.FC = () => {
 };
 
 export const Intro: React.FC<{ timeline: Timeline; captions: boolean }> = ({ timeline: t, captions }) => {
-  const { durationInFrames } = useVideoConfig();
   const fps = t.fps;
-  // the music drops under the voice (ducking) and fades in and out
-  const speaking = (frame: number) => {
-    const sec = frame / fps;
-    let d = 99;
-    for (const s of t.scenes)
-      for (const l of s.lines) {
-        const a = s.start + l.start;
-        const b = a + l.dur;
-        d = Math.min(d, sec < a ? a - sec : sec > b ? sec - b : 0);
-      }
-    return d;
-  };
-  const musicVolume = (frame: number) => {
-    const duck = interpolate(speaking(frame), [0, 0.5], [0.07, 0.24], { extrapolateRight: "clamp" });
-    const fade = Math.min(interpolate(frame, [0, 2 * fps], [0, 1], { extrapolateRight: "clamp" }), interpolate(frame, [durationInFrames - 3 * fps, durationInFrames], [1, 0], { extrapolateLeft: "clamp" }));
-    return duck * fade;
-  };
   return (
     <AbsoluteFill>
       <Background />
-      <Audio src={staticFile("music.m4a")} loop volume={musicVolume} />
       {t.scenes.map((s) => {
         const Comp = SCENES[s.id];
         const from = Math.round(s.start * fps);

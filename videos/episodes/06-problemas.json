@@ -1,0 +1,69 @@
+{
+  "title": "Cuando un deploy falla",
+  "subtitle": "Los errores más comunes y cómo resolverlos",
+  "start_caption": "Partimos del panel versaWYS",
+  "end_caption": "En resumen: versa ssh-test",
+  "opening": {
+    "lines": [
+      "En este episodio provocamos a propósito los errores más comunes de un deploy, y vemos cómo resolver cada uno.",
+      "Son seis casos, del más simple al más grave."
+    ]
+  },
+  "chapters": {
+    "1": {
+      "lines": [
+        "versa despliega lo que está en git, nunca lo que tienes a medio editar.",
+        "Así cada versión en el servidor corresponde a un commit, y se puede reproducir."
+      ],
+      "bullets": ["Working directory is not clean", "git commit, o git checkout para descartar"]
+    },
+    "2": {
+      "lines": [
+        "Antes de desplegar, versa se conecta por SSH. Si la IP, el puerto o la llave están mal, no llega al servidor.",
+        "versa ssh-test prueba la conexión y te dice qué encontró, sin desplegar nada."
+      ],
+      "bullets": ["Connection refused: puerto o firewall", "Authentication failed: la llave SSH", "versa ssh-test production"]
+    },
+    "3": {
+      "lines": [
+        "Dos deploys a la vez se pisarían, así que versa toma un candado en el servidor mientras despliega.",
+        "Si un deploy se corta de golpe, el candado queda tomado hasta que lo liberes."
+      ],
+      "bullets": ["Deployment lock already held", "versa exec … rmdir .versa.lock", "Ctrl+C lo libera solo"]
+    },
+    "4": {
+      "visual": "rollback",
+      "lines": [
+        "Los hooks post_deploy corren con la versión nueva ya activa. Si uno falla, versa vuelve solo a la anterior.",
+        "Y con pre_deploy_local, la misma revisión corre en tu computador antes de subir nada."
+      ]
+    },
+    "5": {
+      "lines": [
+        "Al final de cada deploy, versa pide la URL del health check. Si no responde 200, vuelve atrás.",
+        "Así una versión que no responde nunca se queda en línea."
+      ],
+      "bullets": ["health_check: /up", "3 intentos", "rollback automático"]
+    },
+    "6": {
+      "lines": [
+        "A veces el error no lo detecta nada: lo ves tú, en producción.",
+        "versa rollback vuelve a la versión anterior en un segundo, porque sigue en el servidor."
+      ],
+      "bullets": ["versa rollback production", "versa rollback production --to <versión>", "versa history production"]
+    }
+  },
+  "browser": {
+    "url": "https://versadeploy.websystem.cl/reference/TROUBLESHOOTING/",
+    "lines": [
+      "Todos estos errores, y otros, están en la guía de problemas frecuentes del sitio de versaDeploy."
+    ]
+  },
+  "outro": {
+    "next": "",
+    "lines": [
+      "En resumen: versa ssh-test para la conexión, versa history para ver qué pasó, y versa rollback para volver.",
+      "¡Gracias por ver la serie, y nos vemos!"
+    ]
+  }
+}
