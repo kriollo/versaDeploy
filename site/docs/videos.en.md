@@ -6,7 +6,7 @@ The whole series, **in Spanish** with Spanish captions (**CC** button). Each cha
 
 What it does, how a deploy works, the services it installs, the TUI and its features for teams.
 
-<video id="v-intro" controls preload="metadata" src="/media/00-intro.mp4">
+<video id="v-intro" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/00-intro.mp4">
   <track kind="captions" src="/media/00-intro.vtt" srclang="es" label="Español" default>
 </video>
 
@@ -16,7 +16,7 @@ What it does, how a deploy works, the services it installs, the TUI and its feat
 
 deploy.yml, setting up the server from the Services view, the first deploy, the production .env and the app in the browser.
 
-<video id="v-laravel" controls preload="metadata" src="/media/02-laravel.mp4">
+<video id="v-laravel" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/02-laravel.mp4">
   <track kind="captions" src="/media/02-laravel.vtt" srclang="es" label="Español" default>
 </video>
 
@@ -26,7 +26,7 @@ deploy.yml, setting up the server from the Services view, the first deploy, the 
 
 A Python API as a systemd service, configured through the server's .env, and an incremental deploy.
 
-<video id="v-fastapi" controls preload="metadata" src="/media/03-fastapi.mp4">
+<video id="v-fastapi" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/03-fastapi.mp4">
   <track kind="captions" src="/media/03-fastapi.vtt" srclang="es" label="Español" default>
 </video>
 
@@ -36,7 +36,7 @@ A Python API as a systemd service, configured through the server's .env, and an 
 
 A Node server behind nginx, runtime config from the .env, and an instant rollback.
 
-<video id="v-nuxt" controls preload="metadata" src="/media/04-nuxt.mp4">
+<video id="v-nuxt" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/04-nuxt.mp4">
   <track kind="captions" src="/media/04-nuxt.vtt" srclang="es" label="Español" default>
 </video>
 
@@ -46,7 +46,7 @@ A Node server behind nginx, runtime config from the .env, and an instant rollbac
 
 From composer create-project to the panel online: FrankenPHP instead of PHP-FPM, the versaWYS installer, app:deploy:finish, cron, Redis and maintenance mode.
 
-<video id="v-versawys" controls preload="metadata" src="/media/05-versawys.mp4">
+<video id="v-versawys" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/05-versawys.mp4">
   <track kind="captions" src="/media/05-versawys.vtt" srclang="es" label="Español" default>
 </video>
 
@@ -56,7 +56,7 @@ From composer create-project to the panel online: FrankenPHP instead of PHP-FPM,
 
 The most common errors and how to fix them: uncommitted changes, SSH, a stuck lock, a failing hook, a failing health check and a manual rollback.
 
-<video id="v-problemas" controls preload="metadata" src="/media/06-problemas.mp4">
+<video id="v-problemas" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/06-problemas.mp4">
   <track kind="captions" src="/media/06-problemas.vtt" srclang="es" label="Español" default>
 </video>
 

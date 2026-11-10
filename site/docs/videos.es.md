@@ -6,7 +6,7 @@ La serie completa, con voz y subtítulos (botón **CC** del reproductor). Cada c
 
 Esto es versaDeploy. Lleva tus aplicaciones desde tu computador a un VPS Linux, por SSH, sin instalar agentes en el servidor. En este video: cómo funciona un deploy, el rollback automático, los frameworks que soporta, cómo prepara el servidor (nginx, PHP o FrankenPHP, PostgreSQL, Redis, Node, Python, SSL, fail2ban, backups…), su interfaz en la terminal y sus funciones para equipos.
 
-<video id="v-intro" controls preload="metadata" src="/media/00-intro.mp4">
+<video id="v-intro" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/00-intro.mp4">
   <track kind="captions" src="/media/00-intro.vtt" srclang="es" label="Español" default>
 </video>
 
@@ -16,7 +16,7 @@ Esto es versaDeploy. Lleva tus aplicaciones desde tu computador a un VPS Linux, 
 
 En este episodio llevamos una app Laravel desde nuestro computador a un VPS recién creado. Son cinco pasos, y al final la veremos funcionando en el navegador.
 
-<video id="v-laravel" controls preload="metadata" src="/media/02-laravel.mp4">
+<video id="v-laravel" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/02-laravel.mp4">
   <track kind="captions" src="/media/02-laravel.vtt" srclang="es" label="Español" default>
 </video>
 
@@ -26,7 +26,7 @@ En este episodio llevamos una app Laravel desde nuestro computador a un VPS reci
 
 En este episodio desplegamos una API hecha con FastAPI, con su base de datos PostgreSQL. Veremos cómo corre como servicio, cómo se configura con el .env y cómo se actualiza.
 
-<video id="v-fastapi" controls preload="metadata" src="/media/03-fastapi.mp4">
+<video id="v-fastapi" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/03-fastapi.mp4">
   <track kind="captions" src="/media/03-fastapi.vtt" srclang="es" label="Español" default>
 </video>
 
@@ -36,7 +36,7 @@ En este episodio desplegamos una API hecha con FastAPI, con su base de datos Pos
 
 En este episodio desplegamos un sitio Nuxt con SSR: un proceso Node que corre en el servidor, detrás de nginx. Y al final probamos lo más importante: volver atrás cuando algo sale mal.
 
-<video id="v-nuxt" controls preload="metadata" src="/media/04-nuxt.mp4">
+<video id="v-nuxt" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/04-nuxt.mp4">
   <track kind="captions" src="/media/04-nuxt.vtt" srclang="es" label="Español" default>
 </video>
 
@@ -46,7 +46,7 @@ En este episodio desplegamos un sitio Nuxt con SSR: un proceso Node que corre en
 
 En este episodio desplegamos un panel hecho con versaWYS, y esta vez sin PHP-FPM: con FrankenPHP. Son seis pasos, desde una carpeta vacía hasta el panel funcionando en el navegador.
 
-<video id="v-versawys" controls preload="metadata" src="/media/05-versawys.mp4">
+<video id="v-versawys" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/05-versawys.mp4">
   <track kind="captions" src="/media/05-versawys.vtt" srclang="es" label="Español" default>
 </video>
 
@@ -56,7 +56,7 @@ En este episodio desplegamos un panel hecho con versaWYS, y esta vez sin PHP-FPM
 
 En este episodio provocamos a propósito los errores más comunes de un deploy, y vemos cómo resolver cada uno. Son seis casos, del más simple al más grave.
 
-<video id="v-problemas" controls preload="metadata" src="/media/06-problemas.mp4">
+<video id="v-problemas" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/06-problemas.mp4">
   <track kind="captions" src="/media/06-problemas.vtt" srclang="es" label="Español" default>
 </video>
 

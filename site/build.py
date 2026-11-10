@@ -7,8 +7,8 @@
 - The reference pages come from ../doc (English, the single source) into
   docs/reference/X.en.md; their Spanish version is translations/X.es.md, or the
   English page with a note while it isn't translated.
-- The videos are assets of the "media" pre-release (they don't belong in git): they
-  are copied from ../videos/out when present, else downloaded.
+- The videos are assets of the "media" pre-release (they don't belong in git): the
+  Videos page plays them from there; only their captions (.vtt) go into the site.
 """
 import os, re, shutil, subprocess, sys, urllib.request
 
@@ -54,16 +54,17 @@ def media():
     out = os.path.join(HERE, "docs", "media")
     os.makedirs(out, exist_ok=True)
     local = os.path.join(ROOT, "videos", "out")
+    # only the captions: the page plays each .mp4 straight from the release (with the
+    # videos inside, the site was too big for Pages to publish), but a <track> must be
+    # on the page's own origin
     for v in VIDEOS:
-        mp4 = v + ("-voice.mp4" if v == "00-intro" else "-final.mp4")
         srt = v + (".srt" if v == "00-intro" else "-full.srt")
-        dst_mp4, dst_vtt = os.path.join(out, v + ".mp4"), os.path.join(out, v + ".vtt")
-        if os.path.exists(os.path.join(local, mp4)):
-            shutil.copy(os.path.join(local, mp4), dst_mp4)
+        dst_vtt = os.path.join(out, v + ".vtt")
+        if os.path.exists(os.path.join(local, srt)):
             srt_text = open(os.path.join(local, srt), encoding="utf-8").read()
             open(dst_vtt, "w", encoding="utf-8").write("WEBVTT\n\n" + re.sub(r"(\d\d:\d\d:\d\d),(\d\d\d)", r"\1.\2", srt_text))
             continue
-        for f in (v + ".mp4", v + ".vtt"):
+        for f in (v + ".vtt",):
             dst = os.path.join(out, f)
             if not os.path.exists(dst):
                 try:

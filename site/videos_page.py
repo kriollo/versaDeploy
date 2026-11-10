@@ -41,7 +41,7 @@ def page(lang):
 
 {summary}
 
-<video id="v-{vid}" controls preload="metadata" src="/media/{name}.mp4">
+<video id="v-{vid}" controls preload="metadata" src="https://github.com/kriollo/versaDeploy/releases/download/media/{name}.mp4">
   <track kind="captions" src="/media/{name}.vtt" srclang="es" label="Español" default>
 </video>
 
