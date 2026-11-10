@@ -60,14 +60,18 @@ var viewLabels = []struct {
 	{"", "Switch Config"},
 }
 
+// cfg is the config the connection was opened for: one that arrives after switching to
+// another file (whose environment may share the name) is dropped.
 type msgConnected struct {
 	envName string
 	client  *versassh.Client
+	cfg     *config.Config
 }
 
 type msgConnError struct {
 	envName string
 	err     error
+	cfg     *config.Config
 }
 
 // msgSplashDone ends the startup logo screen.
@@ -209,14 +213,14 @@ func connectEnvCmd(cfg *config.Config, envName string) tea.Cmd {
 	return func() tea.Msg {
 		envCfg, err := cfg.GetEnvironment(envName)
 		if err != nil {
-			return msgConnError{envName: envName, err: err}
+			return msgConnError{envName: envName, err: err, cfg: cfg}
 		}
 		log, _ := logger.NewLogger("", false, false)
 		client, err := versassh.NewClient(&envCfg.SSH, log)
 		if err != nil {
-			return msgConnError{envName: envName, err: err}
+			return msgConnError{envName: envName, err: err, cfg: cfg}
 		}
-		return msgConnected{envName: envName, client: client}
+		return msgConnected{envName: envName, client: client, cfg: cfg}
 	}
 }
 
@@ -291,6 +295,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case msgConnected:
+		if msg.cfg != m.cfg {
+			msg.client.Close() // opened for the file the user switched away from
+			break
+		}
 		m.sshClients[msg.envName] = msg.client
 		m.connStates[msg.envName] = connConnected
 		delete(m.connErrors, msg.envName)
@@ -320,6 +328,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case msgConnError:
+		if msg.cfg != m.cfg {
+			break
+		}
 		m.connStates[msg.envName] = connError
 		m.connErrors[msg.envName] = msg.err
 		m.statusMsg = "Connection failed: " + errDisplay(msg.err)
@@ -587,6 +598,10 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 			// En modo edición de config, no procesamos Tab
 		} else {
 			m.sidebarFocused = !m.sidebarFocused
+			// nothing loaded yet (the picker at startup): focus lands on the first environment
+			if m.sidebarFocused && m.activeSideRow(m.sidebarRows()) < 0 {
+				cmds = append(cmds, m.stepSideRow(1)...)
+			}
 			return m, tea.Batch(cmds...)
 		}
 	}
@@ -616,6 +631,9 @@ func (m appModel) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 			cmds = append(cmds, m.stepSideRow(1)...)
 		case key.Matches(msg, Keys.Enter):
 			m.sidebarFocused = false
+			if m.currentView == viewConfigSelector && m.cfg != nil {
+				cmds = append(cmds, m.switchToView(viewDashboard)...)
+			}
 		}
 		return m, tea.Batch(cmds...)
 	}
@@ -1287,8 +1305,12 @@ func (m *appModel) selectSideRow(r sideRow) []tea.Cmd {
 	} else if !m.loadConfigFile(r.file, r.env) {
 		return nil
 	}
-	if m.currentView == viewConfig {
+	switch m.currentView {
+	case viewConfig:
 		return m.switchToView(viewConfig) // show the new file
+	case viewConfigSelector:
+		// picking an environment is picking its file: go to its Dashboard
+		return append(m.autoConnectCmds(), m.switchToView(viewDashboard)...)
 	}
 	return m.autoConnectCmds()
 }

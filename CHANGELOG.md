@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-11-10
+
+### Fixed
+
+- **The TUI crashed (nil pointer) on `Y` after `S` or `U` with nothing to upgrade**: the Services view opened the confirm modal before seeing there were no packages, and confirming ran an empty job. Now it only says "No pending upgrades", and a confirm without a job is never run.
+- **TUI sidebar from the startup picker** (several deploy files, no `deploy.yml`): `Tab` highlighted nothing and picking an environment left you in Switch Config. Now `Tab` lands on the first environment, picking one (keys or click) opens its Dashboard, and `Enter` leaves the sidebar. A `deploy.yml` that doesn't exist is no longer listed, and a connection still opening when you switch files is dropped instead of landing on the new file's environment of the same name.
+- **Self-signed certificates in the Services view** (`ssl_self_signed: true`): the SSL line showed `x509: certificate signed by unknown authority`. It now shows the certificate's expiry as self-signed and how to trust it on your machine; an untrusted certificate without `ssl_self_signed` points to Let's Encrypt.
+
 ## [1.19.0] - 2026-11-10
 
 ### Added

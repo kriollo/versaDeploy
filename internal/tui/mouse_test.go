@@ -149,3 +149,59 @@ func TestArrowsReachSwitchConfig(t *testing.T) {
 		t.Fatalf("→ from Config: %v", got)
 	}
 }
+
+// Startup with several deploy files and no deploy.yml (the picker): no phantom
+// deploy.yml in the sidebar; Tab lands on the first environment and opens its Dashboard,
+// ↓ moves to the next file, Enter leaves the sidebar; a click from the picker opens the
+// Dashboard too.
+func TestSidebarFromThePicker(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "id")
+	os.WriteFile(key, []byte("x"), 0o600)
+	for name, env := range map[string]string{"deploy.docker.yml": "docker", "versa_deploy_vserv.yml": "production"} {
+		os.WriteFile(filepath.Join(dir, name), []byte("project: app\nenvironments:\n  "+env+":\n    ssh: { host: 127.0.0.1, user: deploy, key_path: "+key+" }\n    remote_path: /var/www/app\n    builds: { php: { enabled: true } }\n"), 0o644)
+	}
+	t.Chdir(dir)
+	start := func() appModel {
+		m := newAppModel(nil, dir)
+		m.discoverConfigs()
+		m.useConfig("", false)
+		m.splash, m.width, m.height = false, 170, 40
+		return m
+	}
+	m := start()
+	if m.currentView != viewConfigSelector {
+		t.Fatalf("startup view %v, want the picker", m.currentView)
+	}
+	for _, r := range m.sidebarRows() {
+		if r.env == "" && filepath.Base(r.file) == "deploy.yml" {
+			t.Fatal("a deploy.yml that doesn't exist is listed")
+		}
+	}
+	press := func(k tea.KeyType) { n, _ := m.Update(tea.KeyMsg{Type: k}); m = n.(appModel) }
+	press(tea.KeyTab)
+	if m.activeEnvName() != "docker" || m.currentView != viewDashboard || !m.sidebarFocused {
+		t.Fatalf("Tab: env %q view %v focused %v", m.activeEnvName(), m.currentView, m.sidebarFocused)
+	}
+	press(tea.KeyDown)
+	if m.activeEnvName() != "production" || filepath.Base(m.config.configPath) != "versa_deploy_vserv.yml" {
+		t.Fatalf("↓: %s/%s", filepath.Base(m.config.configPath), m.activeEnvName())
+	}
+	press(tea.KeyEnter)
+	if m.sidebarFocused {
+		t.Fatal("Enter must leave the sidebar")
+	}
+
+	m = start()
+	n, _ := m.Update(click(3, sidebarLine(t, m, "production")))
+	if m = n.(appModel); m.currentView != viewDashboard || m.activeEnvName() != "production" {
+		t.Fatalf("click from the picker: view %v env %q", m.currentView, m.activeEnvName())
+	}
+	// a connection opened for the file the user left is dropped, not given to this one
+	other := m.cfg
+	m.loadConfigFile(filepath.Join(dir, "deploy.docker.yml"), "")
+	n, _ = m.Update(msgConnError{envName: "docker", err: os.ErrClosed, cfg: other})
+	if m = n.(appModel); m.connStates["docker"] == connError {
+		t.Fatal("a stale connection result changed the new file's environment")
+	}
+}

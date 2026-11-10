@@ -3,7 +3,10 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/user/versaDeploy/internal/config"
 	"github.com/user/versaDeploy/internal/provision"
 )
@@ -74,5 +77,45 @@ func TestVersionChoices(t *testing.T) {
 	}
 	if !s.cycleVersion() || s.vars.NodeMajor != provision.Versions("node")[1] {
 		t.Errorf("Enter should move to the next version, got %q", s.vars.NodeMajor)
+	}
+}
+
+// S or U with nothing to upgrade opens no confirm modal, so Y can't run a nil job (it
+// panicked the TUI: "invalid memory address" in runAdminCmd).
+func TestUpgradeWithNothingPendingNeverRunsNilJob(t *testing.T) {
+	env := config.Environment{RemotePath: "/var/www/app", SSH: config.SSHConfig{Host: "h", User: "deploy", Port: 22}}
+	env.Builds.PHP.Enabled = true
+	cfg := &config.Config{Project: "app", Environments: map[string]config.Environment{"prod": env}}
+	m := newAppModel(cfg, t.TempDir())
+	m.splash, m.currentView = false, viewServices
+	m.services.applyDetected(msgServicesDetected{envName: "prod", report: provision.ParseReport("apt=1\nsvc_nginx=active 1.24.0")}, &env, "app", t.TempDir())
+	for _, key := range []string{"S", "U"} {
+		m.handleServicesKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		if m.services.confirmTitle != "" {
+			t.Fatalf("%s with nothing pending opened %q", key, m.services.confirmTitle)
+		}
+		if cmds := m.handleServicesKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Y")}); len(cmds) != 0 || m.services.running {
+			t.Fatalf("Y after %s started a job", key)
+		}
+	}
+	// a modal left without a job (any other path) is closed, never run
+	m.services.confirmTitle, m.services.pending = "stale", nil
+	if cmds := m.handleServicesKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}); len(cmds) != 0 || m.services.confirmTitle != "" {
+		t.Fatal("y on a modal without a job must close it without running")
+	}
+}
+
+// A self-signed certificate (ssl_self_signed) shows its expiry and how to trust it;
+// an untrusted one without ssl_self_signed is an error pointing to Let's Encrypt.
+func TestSSLLineSelfSigned(t *testing.T) {
+	env := &config.Environment{}
+	env.Provision.Domain, env.Provision.SSL = "vserv.localhost", true
+	s := servicesModel{certExp: time.Now().Add(800 * 24 * time.Hour), certUntrusted: true}
+	if l := ansi.Strip(s.sslLine(env)); !strings.Contains(l, "not trusted") || !strings.Contains(l, "Let's Encrypt") {
+		t.Fatalf("untrusted cert without ssl_self_signed should point to Let's Encrypt: %q", l)
+	}
+	env.Provision.SSLSelfSigned = true
+	if l := ansi.Strip(s.sslLine(env)); !strings.Contains(l, "self-signed, valid until") || !strings.Contains(l, "fullchain.pem") {
+		t.Fatalf("ssl_self_signed: %q", l)
 	}
 }

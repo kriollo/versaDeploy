@@ -2,6 +2,8 @@ package provision
 
 import (
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"net"
 	"regexp"
 	"strconv"
@@ -319,12 +321,21 @@ func (r *Report) SecurityUpgrades() []Upgrade {
 
 // CertExpiry checks the certificate a domain serves on :443, from this machine.
 // It reports what visitors get, so it needs no access to /etc/letsencrypt.
-func CertExpiry(domain string) (time.Time, error) {
-	d := &net.Dialer{Timeout: 5 * time.Second}
-	conn, err := tls.DialWithDialer(d, "tcp", net.JoinHostPort(domain, "443"), &tls.Config{ServerName: domain})
+func CertExpiry(domain string) (exp time.Time, untrusted bool, err error) {
+	dial := func(insecure bool) (*tls.Conn, error) {
+		d := &net.Dialer{Timeout: 5 * time.Second}
+		return tls.DialWithDialer(d, "tcp", net.JoinHostPort(domain, "443"), &tls.Config{ServerName: domain, InsecureSkipVerify: insecure}) //nolint:gosec // only reads the expiry of a cert this machine doesn't trust
+	}
+	conn, err := dial(false)
+	var unknown x509.UnknownAuthorityError
+	if errors.As(err, &unknown) {
+		// self-signed (ssl_self_signed) or a private CA: still worth showing its expiry
+		untrusted = true
+		conn, err = dial(true)
+	}
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, false, err
 	}
 	defer conn.Close()
-	return conn.ConnectionState().PeerCertificates[0].NotAfter, nil
+	return conn.ConnectionState().PeerCertificates[0].NotAfter, untrusted, nil
 }

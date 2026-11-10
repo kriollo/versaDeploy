@@ -22,7 +22,8 @@ type sideRow struct {
 // ponytail: no scrolling, a directory with more rows than the screen gets clipped.
 func (m appModel) sidebarRows() []sideRow {
 	files := m.availableConfigs
-	if cur := m.config.configPath; cur != "" && !containsPath(files, cur) {
+	// the loaded file (--config, outside the directory); configPath alone is just the default
+	if cur := m.config.configPath; m.cfg != nil && cur != "" && !containsPath(files, cur) {
 		files = append([]string{cur}, files...)
 	}
 	var rows []sideRow

@@ -25,6 +25,8 @@ type msgServicesDetected struct {
 	err     error
 	certExp time.Time // certificate served on domain:443 (zero when unchecked/failed)
 	certErr error
+	// certUntrusted: the certificate isn't trusted by this machine (self-signed)
+	certUntrusted bool
 }
 type msgProvisionLine struct{ line string }
 type msgProvisionDone struct{ err error }
@@ -82,19 +84,20 @@ var svcFields = []svcField{
 }
 
 type servicesModel struct {
-	envName  string
-	report   *provision.Report
-	backends []provision.Backend
-	vars     provision.Vars
-	selected map[string]bool
-	loaded   bool
-	loading  bool
-	certExp  time.Time
-	certErr  error
-	env      *config.Environment // active environment, set on detection
-	project  string
-	err      error
-	status   string
+	envName       string
+	report        *provision.Report
+	backends      []provision.Backend
+	vars          provision.Vars
+	selected      map[string]bool
+	loaded        bool
+	loading       bool
+	certExp       time.Time
+	certErr       error
+	certUntrusted bool
+	env           *config.Environment // active environment, set on detection
+	project       string
+	err           error
+	status        string
 
 	cursor  int // 0..len(Catalog)-1 services, then fields
 	editing bool
@@ -148,7 +151,7 @@ func detectServicesCmd(client *versassh.Client, env *config.Environment, envName
 		r, err := provision.Detect(c, params)
 		msg := msgServicesDetected{envName: envName, report: r, err: err}
 		if domain != "" {
-			msg.certExp, msg.certErr = provision.CertExpiry(domain)
+			msg.certExp, msg.certUntrusted, msg.certErr = provision.CertExpiry(domain)
 		}
 		return msg
 	}
@@ -165,7 +168,7 @@ func (s *servicesModel) applyDetected(msg msgServicesDetected, env *config.Envir
 	first := s.report == nil || s.envName != msg.envName
 	s.envName = msg.envName
 	s.report = msg.report
-	s.certExp, s.certErr = msg.certExp, msg.certErr
+	s.certExp, s.certErr, s.certUntrusted = msg.certExp, msg.certErr, msg.certUntrusted
 	if first {
 		var ids []string
 		s.backends, s.vars, ids = deployer.ProvisionDefaults(env, project, repoPath, s.report)
@@ -320,6 +323,7 @@ func (s *servicesModel) askUpgrade(kind string) {
 	}
 	var ups []provision.Upgrade
 	var units []string
+	title := ""
 	switch kind {
 	case "service":
 		if s.cursor >= len(provision.Catalog) {
@@ -328,7 +332,7 @@ func (s *servicesModel) askUpgrade(kind string) {
 		svc := provision.Catalog[s.cursor]
 		ups = s.report.UpgradesFor(svc.ID)
 		units = svc.UnitNames(s.report.PHPVersion)
-		s.confirmTitle = "Upgrade " + svc.Label
+		title = "Upgrade " + svc.Label
 	case "security":
 		ups = s.report.SecurityUpgrades()
 		for _, svc := range provision.Catalog {
@@ -336,7 +340,7 @@ func (s *servicesModel) askUpgrade(kind string) {
 				units = append(units, svc.UnitNames(s.report.PHPVersion)...)
 			}
 		}
-		s.confirmTitle = "Apply security updates"
+		title = "Apply security updates"
 	case "refresh":
 		s.pending = bundleJob(provision.UpgradeBundle(nil, nil, true))
 		s.confirmTitle = "Refresh package index (apt-get update)"
@@ -344,9 +348,11 @@ func (s *servicesModel) askUpgrade(kind string) {
 		return
 	}
 	if len(ups) == 0 {
+		// no confirm modal: there would be nothing to run
 		s.status = StyleMuted.Render("No pending upgrades")
 		return
 	}
+	s.confirmTitle = title
 	s.confirmLines = nil
 	pkgs := make([]string, 0, len(ups))
 	for _, u := range ups {
@@ -682,6 +688,9 @@ func (m *appModel) handleServicesKey(msg tea.KeyMsg) []tea.Cmd {
 		case "y", "Y":
 			b := s.pending
 			s.confirmTitle, s.pending = "", nil
+			if b == nil {
+				return nil // a modal without a job (never runs a nil job)
+			}
 			s.startRun()
 			return []tea.Cmd{runAdminCmd(env.ProvisionSSH(), b, s.logCh, s.errCh)}
 		case "n", "N", "esc":
@@ -818,6 +827,14 @@ func (s servicesModel) sslLine(env *config.Environment) string {
 	}
 	days := int(time.Until(s.certExp).Hours() / 24)
 	l := fmt.Sprintf("  SSL %s: valid until %s (%d days)", env.Provision.Domain, s.certExp.Format("2006-01-02"), days)
+	switch {
+	case s.certUntrusted && env.Provision.SSLSelfSigned:
+		// expected: browsers ask to accept it, or trust it once on this machine
+		return StyleWarning.Render(fmt.Sprintf("  SSL %s: self-signed, valid until %s (%d days) — to trust it here: Files → /etc/ssl/versa/%s/ → d fullchain.pem, and import it",
+			env.Provision.Domain, s.certExp.Format("2006-01-02"), days, env.Provision.Domain))
+	case s.certUntrusted:
+		return StyleError.Render(fmt.Sprintf("  ⚠ SSL %s: not trusted (unknown authority, self-signed?) — select SSL and press I for Let's Encrypt (needs public DNS)", env.Provision.Domain))
+	}
 	if days < 14 {
 		return StyleError.Render("  ⚠" + l[1:] + " — check certbot.timer")
 	}
