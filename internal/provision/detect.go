@@ -68,6 +68,8 @@ type DetectParams struct {
 	// the php and node rows report those, not another project's version.
 	PHPVersion string
 	NodeMajor  string
+	// Packages (provision.packages): the base step is pending while one is missing
+	Packages []string
 }
 
 // detectScript avoids non-POSIX tools so it runs on old servers. sbin is added to PATH
@@ -87,7 +89,14 @@ svc() { # id "units" version present
 has apt-get && echo "apt=1"
 has dnf && echo "dnf=1"
 has yum && echo "yum=1"
-has curl && has git && has unzip && echo "svc_base=installed"
+# base: the essentials, and provision.packages ($pkgs) — one added later makes it pending
+miss=""
+for pk in $pkgs; do
+  if has dpkg-query; then dpkg-query -W -f='${Status}' "$pk" 2>/dev/null | grep -q "ok installed" || miss="$miss $pk"
+  elif has rpm; then rpm -q "$pk" >/dev/null 2>&1 || miss="$miss $pk"; fi
+done
+if [ -n "$miss" ]; then echo "svc_base=absent (missing:$miss)"
+elif has curl && has git && has unzip; then echo "svc_base=installed"; fi
 has nginx && svc nginx nginx "$(nginx -v 2>&1 | sed 's|.*/||')" 1
 if has apache2; then svc apache apache2 "$( (apache2ctl -v || apache2 -v) 2>/dev/null | sed -n 's|^Server version: Apache/\([^ ]*\).*|\1|p')" 1
 elif has httpd; then svc apache httpd "$(httpd -v 2>/dev/null | sed -n 's|^Server version: Apache/\([^ ]*\).*|\1|p')" 1; fi
@@ -157,8 +166,14 @@ func DetectScript(p DetectParams) string {
 	if !regexp.MustCompile(`^\d+$`).MatchString(nodem) {
 		nodem = ""
 	}
+	var pkgs []string
+	for _, pk := range p.Packages {
+		if pkgNameRe.MatchString(pk) {
+			pkgs = append(pkgs, pk)
+		}
+	}
 	return "proj=" + q(p.Project) + "; p=" + q(p.RemotePath) + "; user=" + q(p.DeployUser) + "; app=" + q(p.AppService) +
-		"; phpv=" + q(phpv) + "; nodem=" + q(nodem) + "\n" + detectScript
+		"; phpv=" + q(phpv) + "; nodem=" + q(nodem) + "; pkgs=" + q(strings.Join(pkgs, " ")) + "\n" + detectScript
 }
 
 // Detect probes the server in one round-trip.

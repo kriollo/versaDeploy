@@ -59,6 +59,15 @@ selinux_label() { # TYPE PATTERN PATH
 }
 
 [ "$(id -u)" = 0 ] || die "must run as root (set provision.ssh.user: root in deploy.yml)"
+# One install at a time per server (TUI and CLI, several admins): two apt/dnf runs at
+# once break each other. The next one waits for the lock, then goes on.
+if command -v flock >/dev/null 2>&1; then
+    exec 9>/run/versa-provision.lock
+    if ! flock -n 9; then
+        info "Another versa install is running on this server: waiting for it to finish (up to 10 min)..."
+        flock -w 600 9 || die "another versa install is still running after 10 minutes — try again later"
+    fi
+fi
 if command -v apt-get >/dev/null 2>&1; then
     PKG_MGR=apt
 elif command -v dnf >/dev/null 2>&1; then

@@ -627,3 +627,30 @@ func TestDetectScriptProjectVersions(t *testing.T) {
 		t.Errorf("malformed versions must be dropped: %s", s[:200])
 	}
 }
+
+// A package added to provision.packages after the install makes the base step pending
+// (preselected), naming what's missing; malformed names never reach the shell.
+func TestDetectMissingPackages(t *testing.T) {
+	s := DetectScript(DetectParams{Packages: []string{"zbar-tools", "bad name;id"}})
+	if !strings.Contains(s, "pkgs='zbar-tools'") {
+		t.Fatalf("packages not passed safely: %s", s[:200])
+	}
+	r := ParseReport("apt=1\nsvc_base=absent (missing: zbar-tools)")
+	if r.Get("base").Status != Absent {
+		t.Fatalf("base: %+v", r.Get("base"))
+	}
+	env := &config.Environment{}
+	if sel := Preselect(nil, Vars{WebServer: "nginx"}, env, r); !slices.Contains(sel, "base") {
+		t.Errorf("base not preselected with a missing package: %v", sel)
+	}
+	// the probe itself, on this machine's package manager: a package that can't exist is missing
+	if _, err := exec.LookPath("dpkg-query"); err != nil {
+		if _, err := exec.LookPath("rpm"); err != nil {
+			t.Skip("no dpkg-query or rpm here")
+		}
+	}
+	out, _ := exec.Command("sh", "-c", DetectScript(DetectParams{Packages: []string{"versa-no-such-package"}})).Output()
+	if !strings.Contains(string(out), "svc_base=absent (missing: versa-no-such-package)") {
+		t.Errorf("probe didn't report the missing package:\n%s", out)
+	}
+}

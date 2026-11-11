@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.19.2] - 2026-11-11
+
+### Fixed
+
+- **A package added to `provision.packages` after the install was never installed by default**: the base step counted as installed (curl, git, unzip), so `versa provision` said "Nothing to install". Detection now checks each package: one missing makes the base step pending, and `--dry-run` / the Services view name it (`absent (missing: zbar-tools)`).
+- **Two installs at once on one server broke each other** (the TUI and the CLI, or two admins): apt/dnf runs collided. Installs now take a server-wide lock; the second one waits for the first (up to 10 minutes).
+
 ## [1.19.1] - 2026-11-10
 
 ### Fixed

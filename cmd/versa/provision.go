@@ -107,7 +107,8 @@ config, an alternative is never installed next to another).
 		fmt.Printf("%s (%s@%s):\n", title, admin.User, admin.Host)
 		for _, id := range ids {
 			svc, _ := provision.Lookup(id)
-			fmt.Printf("  • %-34s %s\n", svc.Label, r.Get(id).Status)
+			st := r.Get(id)
+			fmt.Printf("  • %-34s %s\n", svc.Label, strings.TrimSpace(st.Status+" "+st.Version)) // e.g. absent (missing: zbar-tools)
 		}
 		for _, n := range notes {
 			fmt.Println("  ⚠ " + n)

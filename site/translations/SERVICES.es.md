@@ -224,7 +224,7 @@ El paso **Backups de la base de datos** instala `/usr/local/sbin/versa-backup-<p
 | `fail2ban_ignore` | `[]` | IPs o CIDRs que fail2ban nunca bloquea (oficina, monitoreo, CI), además de localhost y la IP del administrador |
 | `backup_keep` | `7` | Respaldos que se conservan |
 | `ssl_self_signed` | `false` | El paso SSL crea un certificado autofirmado en vez de pedirlo a Let's Encrypt |
-| `packages` | `[]` | Paquetes del sistema extra que necesita la app (OCR, herramientas de imágenes…), instalados por el paso base, nunca actualizados |
+| `packages` | `[]` | Paquetes del sistema extra que necesita la app (OCR, herramientas de imágenes…), instalados por el paso base, nunca actualizados. Uno agregado después deja el paso base pendiente (`absent (missing: zbar-tools)`): Services → `I` o `versa provision <entorno>` instala solo lo que falta |
 | `cron` | `[]` | `"<min> <hora> <día> <mes> <día_semana> <comando>"` o `"@daily <comando>"`, corre como `deploy_user` en `current/app`; escribe `%` como `\%` |
 | `deploy_user` | `ssh.user` | Usuario dueño de los releases |
 | `backends` | los detectados | Los escribe la TUI como referencia |

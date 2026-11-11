@@ -19,7 +19,7 @@ var PrepareSteps = []string{"deploy_user", "sudoers", "dirs"}
 // ProvisionDetectParams is what the detection script needs from the environment.
 func ProvisionDetectParams(env *config.Environment, project string) provision.DetectParams {
 	p := provision.DetectParams{Project: project, RemotePath: env.RemotePath, DeployUser: env.Provision.DeployUser,
-		PHPVersion: env.Provision.PHPVersion, NodeMajor: env.Provision.NodeMajor}
+		PHPVersion: env.Provision.PHPVersion, NodeMajor: env.Provision.NodeMajor, Packages: env.Provision.Packages}
 	if len(env.Services) > 0 {
 		p.AppService = env.Services[0].Name
 	}

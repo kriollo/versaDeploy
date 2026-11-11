@@ -225,7 +225,7 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 | `fail2ban_ignore` | `[]` | IPs or CIDRs fail2ban never bans (office, monitoring, CI), besides localhost and the admin's IP |
 | `backup_keep` | `7` | Dumps kept |
 | `ssl_self_signed` | `false` | SSL step makes a self-signed certificate instead of asking Let's Encrypt |
-| `packages` | `[]` | Extra system packages the app needs (OCR, image tools…), installed by the base step, never upgraded |
+| `packages` | `[]` | Extra system packages the app needs (OCR, image tools…), installed by the base step, never upgraded. One added later makes the base step pending (`absent (missing: zbar-tools)`): Services → `I` or `versa provision <env>` installs only what's missing |
 | `cron` | `[]` | `"<min> <hour> <day> <month> <weekday> <command>"` or `"@daily <command>"`, run as `deploy_user` in `current/app`; write `%` as `\%` |
 | `deploy_user` | `ssh.user` | User that owns the releases |
 | `backends` | detected | Written by the TUI for reference |
