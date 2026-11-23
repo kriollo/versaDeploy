@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The versaWYS example lost Vue and SweetAlert2 on a deploy without frontend changes**: the production build generates them in `public/vendor/*/dist`, and they weren't in `reusable_paths`.
+
 ## [1.21.0] - 2026-11-23
 
 ### Added

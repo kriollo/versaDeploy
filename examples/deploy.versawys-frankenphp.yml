@@ -86,7 +86,7 @@ environments:
         # the browser loads Vue and SweetAlert2 from /node_modules/<package>/dist/
         production_command: "pnpm install --production"
         # the build output: kept from the previous release when no frontend file changed
-        reusable_paths: ["public/dashboard/js", "public/dashboard/css"]
+        reusable_paths: ["public/dashboard/js", "public/dashboard/css", "public/vendor/vue/dist", "public/vendor/sweetalert2/dist"]
 
     services_reload:
       - "sudo systemctl reload nginx"
