@@ -685,6 +685,33 @@ func TestNginxSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestAssetCacheFollowsTheVersion(t *testing.T) {
+	v := testVars()
+	out, err := RenderVhost(v, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, block, _ := strings.Cut(out, `location ~* \.(css|js)$ {`)
+	block, _, _ = strings.Cut(block, "access_log")
+	for _, want := range []string{`set $versa_asset_cache "no-cache"`, `if ($arg_v != "")`, "max-age=31536000, immutable", "add_header Cache-Control $versa_asset_cache"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("nginx css/js: missing %q", want)
+		}
+	}
+	if strings.Contains(block, "expires") {
+		t.Error("nginx css/js: expires would send a second Cache-Control")
+	}
+
+	v.WebServer = "apache"
+	out, err = RenderVhost(v, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "ExpiresByType text/css") || !strings.Contains(out, `"expr=%{QUERY_STRING} =~ /(^|&)v=/"`) {
+		t.Error("apache css/js must revalidate unless the URL has ?v=")
+	}
+}
+
 func TestApacheHeadersRespectTheApp(t *testing.T) {
 	v := testVars()
 	v.WebServer = "apache"

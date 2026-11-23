@@ -112,8 +112,6 @@ TraceEnable Off
         ExpiresByType font/woff "access plus 1 year"
         ExpiresByType font/woff2 "access plus 1 year"
         ExpiresByType application/font-woff "access plus 1 year"
-        ExpiresByType text/css "access plus 1 year"
-        ExpiresByType application/javascript "access plus 1 year"
         ExpiresByType application/pdf "access plus 1 year"
         ExpiresByType image/svg+xml "access plus 1 year"
         ExpiresByType video/mp4 "access plus 30 days"
@@ -131,8 +129,10 @@ TraceEnable Off
         Header always set Access-Control-Allow-Origin "*"
     </FilesMatch>
 
+    # CSS/JS: con ?v= la URL cambia en cada deploy y se guarda un año; sin versión se revalida (ETag)
     <FilesMatch "\.(css|js)$">
-        Header always set Cache-Control "public, immutable, no-transform"
+        Header always set Cache-Control "no-cache"
+        Header always set Cache-Control "public, max-age=31536000, immutable, no-transform" "expr=%{QUERY_STRING} =~ /(^|&)v=/"
     </FilesMatch>
 
     <FilesMatch "\.(pdf|svg)$">

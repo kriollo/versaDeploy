@@ -102,11 +102,13 @@ server {
         log_not_found off;
     }
 
-    # Cache para CSS/JS
+    # CSS/JS: con ?v= la URL cambia en cada deploy y se guarda un año; sin versión se revalida (ETag)
     location ~* \.(css|js)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable, no-transform" always;
-        add_header Vary "Accept-Encoding" always;
+        set $versa_asset_cache "no-cache";
+        if ($arg_v != "") {
+            set $versa_asset_cache "public, max-age=31536000, immutable, no-transform";
+        }
+        add_header Cache-Control $versa_asset_cache always;
 {{- template "nginx-security" .}}
         access_log off;
     }

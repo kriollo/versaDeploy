@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Browsers kept old CSS and JS for a year after a deploy**: nginx and Apache marked every `.css` and `.js` as immutable, even without a version in the URL. Now only URLs with `?v=` are cached for a year; the rest are revalidated with their ETag. Run the web server step again (`versa provision <env> --only nginx`) to apply it.
+
 ## [1.20.0] - 2026-11-23
 
 ### Added
