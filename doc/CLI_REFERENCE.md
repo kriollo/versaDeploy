@@ -346,6 +346,24 @@ Unless `ssh.user` is `root`, the commands run with `sudo -n`: see [Permissions](
 
 ---
 
+## `versa tune`
+
+Sizes PHP and the database from the server's CPU and RAM (`provision.tuning`). Without flags it only prints the plan.
+
+```bash
+versa tune production                                # plan: [live] [reload] [restart] [others]
+versa tune production --apply                        # applies what doesn't need a restart
+versa tune production --apply --restart anima,postgresql   # restarts only what you name
+```
+
+## `versa db restore`
+
+```bash
+versa db restore production                          # list the backups
+versa db restore production app-20261123-043000.sql.gz       # into a temporary database, compares counts, drops it
+versa db restore production app-20261123-043000.sql.gz --keep
+```
+
 ## `versa provision`
 
 Installs and configures the server stack from the terminal: the same steps, checks and parameters as the TUI's [Services view](SERVICES.md) (`I`, `P`, `X`). It connects as root over `provision.ssh`, detects what the server runs and installs what the view would preselect for the app (from `provision:` and `builds`). Like the view, it is idempotent and safe on a server in use.

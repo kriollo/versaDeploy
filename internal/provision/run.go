@@ -100,6 +100,12 @@ type Vars struct {
 	// NginxWorkerConnections is server-wide, so the nginx step only ever raises it.
 	NginxWorkerConnections int
 	OnDemandTLS            *config.OnDemandTLS // customer domains on a FrankenPHP in :443
+	Timezone               string              // PHP and the backup timer
+	BackupTime             string              // "HH:MM" in Timezone
+	BackupUpload           string              // off-server copy: run as DeployUser with $BACKUP_FILE
+	HSTSPreload            bool
+	Tuning                 config.TuningConfig
+	Tune                   Tuned // Tuning resolved for this server
 }
 
 // LimitZone is the limit_req zone of the vhost: the project's own when it sets a rate,
@@ -329,6 +335,18 @@ func (v Vars) Validate(steps []string) error {
 	if err := v.validateTuning(steps); err != nil {
 		return err
 	}
+	if err := validTuning(v.Tuning); err != nil {
+		return err
+	}
+	if v.Timezone != "" && !timezoneRe.MatchString(v.Timezone) {
+		return fmt.Errorf("provision.timezone: invalid zone %q", v.Timezone)
+	}
+	if v.BackupTime != "" && !backupAtRe.MatchString(v.BackupTime) {
+		return fmt.Errorf("provision.backup_time must look like 04:30 (got %q)", v.BackupTime)
+	}
+	if strings.ContainsAny(v.BackupUpload, "\r\n") {
+		return fmt.Errorf("provision.backup_upload must be a single line")
+	}
 	// vhosts are rendered whenever a web server is set, whatever the steps
 	if v.Domain != "" && !nameRe.MatchString(v.Domain) {
 		return fmt.Errorf("invalid domain %q", v.Domain)
@@ -441,14 +459,11 @@ func Build(selected []string, v Vars) (Bundle, error) {
 		}
 	}
 	if v.FrankenPHP && slices.Contains(steps, "frankenphp") {
-		var out bytes.Buffer
-		if err := templates.ExecuteTemplate(&out, "frankenphp.Caddyfile.tmpl", struct {
-			Vars
-			DocRootPath, ResetSocket string
-		}{v, v.DocRootPath(), FrankenPHPResetSocket(v.RemotePath)}); err != nil {
+		caddy, err := renderCaddyfile(v)
+		if err != nil {
 			return nil, err
 		}
-		b["Caddyfile"] = out.Bytes()
+		b["Caddyfile"] = caddy
 		if v.OnDemandTLS != nil {
 			var tls bytes.Buffer
 			if err := templates.ExecuteTemplate(&tls, "frankenphp-tls.Caddyfile.tmpl", struct {
@@ -467,6 +482,15 @@ func Build(selected []string, v Vars) (Bundle, error) {
 		b["services-install.sh"] = []byte(v.ServicesInstall)
 	}
 	return b, nil
+}
+
+func renderCaddyfile(v Vars) ([]byte, error) {
+	var out bytes.Buffer
+	err := templates.ExecuteTemplate(&out, "frankenphp.Caddyfile.tmpl", struct {
+		Vars
+		DocRootPath, ResetSocket string
+	}{v, v.DocRootPath(), FrankenPHPResetSocket(v.RemotePath)})
+	return out.Bytes(), err
 }
 
 // CertDir holds the domain's certificate: Let's Encrypt's, or the self-signed one.
@@ -589,6 +613,13 @@ func (v Vars) env() string {
 		{"FRANKENPHP", strconv.FormatBool(v.FrankenPHP)}, {"FRANKENPHP_CLI", FrankenPHPCLI},
 		{"NGINX_RATE", v.NginxRate}, {"NGINX_ZONE", v.LimitZone()},
 		{"NGINX_WORKER_CONNECTIONS", strconv.Itoa(v.NginxWorkerConnections)},
+		{"PHP_TIMEZONE", v.PHPTimezone()}, {"UPLOAD_MAX", v.UploadMax()}, {"FPM_SOCKET", v.FPMSocket()},
+		{"BACKUP_TIME", v.BackupTime}, {"BACKUP_TZ", v.Timezone}, {"BACKUP_UPLOAD", v.BackupUpload},
+		{"TUNE_FPM_CHILDREN", strconv.Itoa(v.Tune.FPMChildren)}, {"TUNE_FPM_START", strconv.Itoa(v.Tune.FPMStart)},
+		{"TUNE_FPM_MIN", strconv.Itoa(v.Tune.FPMMinSpare)}, {"TUNE_FPM_MAX", strconv.Itoa(v.Tune.FPMMaxSpare)},
+		{"TUNE_SERVER_WIDE", strconv.FormatBool(v.Tune.ServerWide)}, {"TUNE_PG_SHARED", strconv.Itoa(v.Tune.SharedBuffersMB)},
+		{"TUNE_PG_CACHE", strconv.Itoa(v.Tune.EffectiveCacheMB)}, {"TUNE_PG_MAINT", strconv.Itoa(v.Tune.MaintenanceMB)},
+		{"TUNE_INNODB", strconv.Itoa(v.Tune.InnoDBMB)},
 	}
 	var s strings.Builder
 	for _, p := range kv {

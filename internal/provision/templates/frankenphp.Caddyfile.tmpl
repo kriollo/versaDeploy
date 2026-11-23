@@ -6,13 +6,20 @@
 	servers {
 		# the client's address comes from nginx (X-Forwarded-For)
 		trusted_proxies static 127.0.0.1/32 ::1/128
+		# right to left: nginx appends the real IP, whatever the client sent stays on the left
+		trusted_proxies_strict
 		client_ip_headers X-Forwarded-For X-Real-IP
 	}
 	frankenphp {
-		php_ini date.timezone America/Santiago
+{{- if .Tune.Active}}
+		num_threads {{.Tune.NumThreads}}
+		max_threads {{.Tune.MaxThreads}}
+		max_wait_time {{.Tune.MaxWait}}
+{{- end}}
+		php_ini date.timezone {{.PHPTimezone}}
 		php_ini memory_limit 256M
-		php_ini upload_max_filesize 200M
-		php_ini post_max_size 200M
+		php_ini upload_max_filesize {{.UploadMax}}
+		php_ini post_max_size {{.UploadMax}}
 		php_ini max_execution_time 300
 		php_ini expose_php Off
 		php_ini opcache.enable 1

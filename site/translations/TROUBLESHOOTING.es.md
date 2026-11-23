@@ -217,6 +217,22 @@ PyInstaller compila para el sistema donde corre, así que un binario hecho en Wi
 
 Revisa que esté habilitado: `chkconfig --list <nombre>` (RHEL/CentOS) o `rc-update show` (Alpine). versa lo habilita al instalarlo; corre `versa service <entorno> install` para repetirlo. Sin systemd, los procesos que se caen no se reinician solos.
 
+### `services need root setup before this deploy` { #services-need-root-setup-before-this-deploy }
+
+Un servicio es nuevo, o cambiaron su usuario, `env_file`, `stop_timeout`, límites o capacidades. El deploy se detuvo antes de subir: no cambió nada en el servidor. Ejecuta `versa service <env> setup | ssh root@SERVIDOR sh` y despliega otra vez.
+
+### Un deploy tarda minutos en reiniciar un servicio { #a-deploy-takes-minutes-to-restart-a-service }
+
+Con `graceful_stop: true` espera el trabajo en curso, hasta `stop_timeout`. Eso evita que un deploy corte procesos. Baja `stop_timeout` si prefieres un deploy más rápido.
+
+### `shared_buffers applies on the next restart` { #shared_buffers-applies-on-the-next-restart }
+
+`versa tune --apply` nunca reinicia PostgreSQL por su cuenta. Elige un momento tranquilo y ejecuta `versa tune <env> --apply --restart postgresql`.
+
+### `corrupt backup` { #corrupt-backup }
+
+`versa db restore` encontró un dump que no se puede descomprimir. Usa uno anterior. Los dumps nuevos se comprueban antes de reemplazar nada.
+
 ---
 
 ## Vista Services (preparar el servidor) { #services-view-server-setup }

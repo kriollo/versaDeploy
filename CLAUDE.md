@@ -103,6 +103,10 @@ E2E (Docker with systemd, not in CI): `go test -tags e2e -v -timeout 60m ./test/
 
 `ensure_nginx_conf` (`scripts/common.sh`, before every vhost install) writes `conf.d/versa-security-headers.conf`: `map`s that leave a header empty when the upstream sent it, so nginx never duplicates the app's. Every `location` with its own `add_header` repeats the `nginx-security` template (nginx drops inherited ones). `provision.nginx.rate` gets the project its own `limit_req` zone; `worker_connections` is server-wide and only raised. The dirs step also installs `/etc/logrotate.d/versa-<project>`.
 
+### Tuning and restore
+
+`provision.tuning` (`internal/provision/tuning.go`) is off by default: `ComputeTuning` returns the zero `Tuned` and every config renders as before. `versa tune` (`cmd/versa/ops.go`) prints the plan by effect (live/reload/restart/others); `--apply` runs `scripts/tune.sh`, restarting only what `--restart` names. A tuned PHP-FPM project gets its own pool and socket (`ensure_php_pool`), written before the vhost that points at it. `versa db restore` (`scripts/restore.sh`) only targets a temporary database, and runs the dump as the deploy user's unprivileged role: that user can edit the file, so running it as postgres or root would be privilege escalation.
+
 ### Deploy history, tags and `on_failure`
 
 `internal/deployer/history.go`: `beginAttempt` tees the deploy's log (`logger.Tee`) into a buffer; `endAttempt` (deferred right after `connectAndLock`, so it runs while the lock is held) runs the `on_failure` hooks in `current/app` after a failure and appends the attempt to `<remote_path>/history/history.jsonl` (100 entries) + `<id>.log` (last 20, 0600). No-change runs and dry runs aren't recorded. The previous attempt's status drives the "recovered" notification. `deploy_tags` (glob) is checked on the tags at the deployed commit (`git.TagsAt`), per server in multi-deploy (`PrebuiltArtifact.Tags`). `versa history [env] [id]`, TUI Operations → `t`. `install.sh` (repo root) installs a release checking its `.sha256`; `examples/github-actions.yml` uses it.

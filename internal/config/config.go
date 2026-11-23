@@ -77,6 +77,27 @@ type ServiceConfig struct {
 	IOClass      string   `yaml:"io_class,omitempty"`   // best-effort | idle
 	CPUQuota     string   `yaml:"cpu_quota,omitempty"`  // systemd only: "200%" = two cores
 	MemoryMax    string   `yaml:"memory_max,omitempty"` // systemd only: "2G"
+	// CPUWeight is the share of CPU against other services under load (systemd default 100).
+	// Unlike nice, it works between services whatever the kernel's autogroup does.
+	CPUWeight int `yaml:"cpu_weight,omitempty"`
+	// GracefulStop signals only the main process, so it can finish work in progress; its
+	// children (ffmpeg) are killed only after stop_timeout.
+	GracefulStop bool `yaml:"graceful_stop,omitempty"`
+	OpenFiles    int  `yaml:"open_files,omitempty"` // LimitNOFILE
+}
+
+// TuningConfig sizes the stack from the server's CPU and RAM (versa tune). Off by default.
+type TuningConfig struct {
+	Profile   string `yaml:"profile,omitempty"`    // off | auto | small | event
+	Share     string `yaml:"share,omitempty"`      // part of the server this project may use, default 100%
+	UploadMax string `yaml:"upload_max,omitempty"` // one limit for nginx, Apache and PHP, default 200M
+	PHP       struct {
+		MaxThreads int    `yaml:"max_threads,omitempty"`
+		MaxWait    string `yaml:"max_wait,omitempty"` // default 15s
+	} `yaml:"php,omitempty"`
+	Database struct {
+		ServerWide bool `yaml:"server_wide,omitempty"` // may change memory shared with other apps
+	} `yaml:"database,omitempty"`
 }
 
 // NginxTuning sizes nginx for traffic that shares an IP (an event's WiFi, mobile CGNAT).
@@ -127,6 +148,11 @@ type ProvisionConfig struct {
 	Cron           []string           `yaml:"cron,omitempty"`           // "<schedule> <command>", run as deploy_user in current/app
 	Nginx          NginxTuning        `yaml:"nginx,omitempty"`          // rate limit and connections
 	OnDemandTLS    *OnDemandTLS       `yaml:"on_demand_tls,omitempty"`  // customer domains on FrankenPHP
+	Timezone       string             `yaml:"timezone,omitempty"`       // PHP and the backup timer
+	BackupTime     string             `yaml:"backup_time,omitempty"`    // "HH:MM" in timezone; default: midnight + random delay
+	BackupUpload   string             `yaml:"backup_upload,omitempty"`  // command run as deploy_user with $BACKUP_FILE (off-server copy)
+	HSTSPreload    bool               `yaml:"hsts_preload,omitempty"`   // adds includeSubDomains; preload
+	Tuning         TuningConfig       `yaml:"tuning,omitempty"`
 }
 
 // ProvisionSSHConfig overrides the environment's SSH settings for the admin (root)
@@ -652,6 +678,10 @@ func (s *ServiceConfig) validateResources() error {
 		return fmt.Errorf("cpu_quota must look like 200%% (got %q)", s.CPUQuota)
 	case s.MemoryMax != "" && !memoryMaxRe.MatchString(s.MemoryMax):
 		return fmt.Errorf("memory_max must look like 2G (got %q)", s.MemoryMax)
+	case s.CPUWeight != 0 && (s.CPUWeight < 1 || s.CPUWeight > 10000):
+		return fmt.Errorf("cpu_weight must be 1-10000 (got %d)", s.CPUWeight)
+	case s.OpenFiles != 0 && (s.OpenFiles < 1024 || s.OpenFiles > 1048576):
+		return fmt.Errorf("open_files must be 1024-1048576 (got %d)", s.OpenFiles)
 	}
 	return nil
 }

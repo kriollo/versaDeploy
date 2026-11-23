@@ -20,8 +20,8 @@ TraceEnable Off
 
     Protocols h2 http/1.1
 
-    # Body size máximo: 200 MB
-    LimitRequestBody 209715200
+    # Body size máximo: {{.UploadMax}}
+    LimitRequestBody {{.UploadBytes}}
 
     # Métodos HTTP permitidos
     RewriteEngine On
@@ -46,7 +46,7 @@ TraceEnable Off
     Header always set X-XSS-Protection "1; mode=block" "expr=-z %{resp:X-XSS-Protection}"
     Header always set Referrer-Policy "no-referrer" "expr=-z %{resp:Referrer-Policy}"
 {{- if .SSL}}
-    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" "expr=-z %{resp:Strict-Transport-Security}"
+    Header always set Strict-Transport-Security "{{.HSTSValue}}" "expr=-z %{resp:Strict-Transport-Security}"
 {{- end}}
     Header always set Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self), payment=(self), usb=(), interest-cohort=()" "expr=-z %{resp:Permissions-Policy}"
     Header always unset X-Powered-By
@@ -90,7 +90,7 @@ TraceEnable Off
 
     # PHP-FPM
     <Files "index.php">
-        SetHandler "proxy:unix:/run/php/php{{.PHPVersion}}-fpm.sock|fcgi://localhost/"
+        SetHandler "proxy:unix:{{.FPMSocket}}|fcgi://localhost/"
     </Files>
 
     ProxyTimeout 300

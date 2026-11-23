@@ -3,14 +3,17 @@
 set -euo pipefail
 
 # A mirror answering 503 for a while (PPAs do) must not abort an install
-apt-get() {
-    local try
-    for try in 1 2 3; do
-        command apt-get -o Acquire::Retries=5 "$@" && return 0
-        [ "$try" = 3 ] || { echo "[WARN]  apt-get failed, retrying in 20 s"; sleep 20; }
-    done
-    return 1
-}
+# (only where apt exists: a function would make `command -v apt-get` true on RHEL)
+if command -v apt-get >/dev/null 2>&1; then
+    apt-get() {
+        local try
+        for try in 1 2 3; do
+            command apt-get -o Acquire::Retries=5 "$@" && return 0
+            [ "$try" = 3 ] || { echo "[WARN]  apt-get failed, retrying in 20 s"; sleep 20; }
+        done
+        return 1
+    }
+fi
 
 cd "$(dirname "$0")"
 # shellcheck source=/dev/null
@@ -164,7 +167,8 @@ install_vhost() {
 # install_site_config picks the SSL vhost when the certificate already exists, so
 # re-running the web server step never downgrades a site to plain HTTP.
 install_site_config() {
-    [ "$WEB_SERVER" = nginx ] && ensure_nginx_conf
+    if [ "$WEB_SERVER" = nginx ]; then ensure_nginx_conf; fi
+    ensure_php_pool
     if [ -f "$CERT_DIR/fullchain.pem" ]; then
         ensure_ssl_includes
         install_vhost vhost-ssl.conf
@@ -197,6 +201,52 @@ ROTATE_EOF
     ok "Log rotation: ${rotate} (14 days)"
 }
 
+# ensure_php_pool gives a tuned project its own PHP-FPM pool: its limits never change the
+# other apps on the same PHP version. The vhost points at it only after it answers.
+ensure_php_pool() {
+    [ "${TUNE_FPM_CHILDREN:-0}" -gt 0 ] && [ "${PROXY_PORT:-0}" = 0 ] && [ -n "${PHP_VERSION:-}" ] || return 0
+    local dir unit bin base pool tmp
+    if [ -d "/etc/php/${PHP_VERSION}/fpm/pool.d" ]; then
+        dir="/etc/php/${PHP_VERSION}/fpm/pool.d"; unit="php${PHP_VERSION}-fpm"; bin="php-fpm${PHP_VERSION}"
+    else
+        dir=/etc/php-fpm.d; unit=php-fpm; bin=php-fpm
+    fi
+    base="${dir}/www.conf"
+    [ -f "$base" ] || die "no ${base}: can't create the project's PHP-FPM pool"
+    pool="${dir}/versa-${PROJECT_NAME//[^A-Za-z0-9_-]/_}.conf"
+    tmp="$(mktemp)"
+    {
+        echo "; Generado por versaDeploy (provision.tuning)"
+        echo "[versa_${PROJECT_NAME//[^A-Za-z0-9_]/_}]"
+        # same user and socket permissions as the distro's pool
+        grep -E '^(user|group|listen\.owner|listen\.group|listen\.mode|listen\.acl_users|listen\.acl_groups)[[:space:]]*=' "$base"
+        echo "listen = ${FPM_SOCKET}"
+        echo "pm = dynamic"
+        echo "pm.max_children = ${TUNE_FPM_CHILDREN}"
+        echo "pm.start_servers = ${TUNE_FPM_START}"
+        echo "pm.min_spare_servers = ${TUNE_FPM_MIN}"
+        echo "pm.max_spare_servers = ${TUNE_FPM_MAX}"
+        echo "pm.max_requests = 1000"
+        echo "php_admin_value[upload_max_filesize] = ${UPLOAD_MAX}"
+        echo "php_admin_value[post_max_size] = ${UPLOAD_MAX}"
+    } > "$tmp"
+    if ! cmp -s "$tmp" "$pool"; then
+        local old=""; [ -f "$pool" ] && { old="$(mktemp)"; cp "$pool" "$old"; }
+        install -m 644 "$tmp" "$pool"
+        if ! "$bin" -t >/dev/null 2>&1; then
+            if [ -n "$old" ]; then cp "$old" "$pool"; else rm -f "$pool"; fi
+            rm -f "$tmp" "$old"
+            die "PHP-FPM rejected ${pool} — previous config restored"
+        fi
+        [ -z "$old" ] || rm -f "$old"
+        systemctl reload "$unit"
+        local i; for i in 1 2 3 4 5 6 7 8 9 10; do [ -S "$FPM_SOCKET" ] && break; sleep 1; done
+        [ -S "$FPM_SOCKET" ] || die "PHP-FPM didn't open ${FPM_SOCKET}"
+        ok "PHP-FPM pool: ${pool} (up to ${TUNE_FPM_CHILDREN} workers)"
+    fi
+    rm -f "$tmp"
+}
+
 # ensure_nginx_conf writes what the vhost template references, before any step installs it.
 ensure_nginx_conf() {
     # Security headers: added only when the app didn't send its own (two values of a
@@ -208,7 +258,9 @@ map $upstream_http_x_content_type_options $versa_x_content_type_options { "" "no
 map $upstream_http_x_xss_protection $versa_x_xss_protection { "" "1; mode=block"; default ""; }
 map $upstream_http_referrer_policy $versa_referrer_policy { "" "no-referrer"; default ""; }
 map $upstream_http_permissions_policy $versa_permissions_policy { "" "geolocation=(self), microphone=(self), camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self), payment=(self), usb=(), interest-cohort=()"; default ""; }
-map $upstream_http_strict_transport_security $versa_hsts { "" "max-age=31536000; includeSubDomains; preload"; default ""; }
+map $upstream_http_strict_transport_security $versa_hsts { "" "max-age=31536000"; default ""; }
+map $upstream_http_strict_transport_security $versa_hsts_preload { "" "max-age=31536000; includeSubDomains; preload"; default ""; }
+map $http_upgrade $versa_connection { default upgrade; "" ""; }
 HEADERS_EOF
     local f="/etc/nginx/conf.d/versa-rate-${PROJECT_NAME//[^A-Za-z0-9_-]/_}.conf"
     if [ -n "${NGINX_RATE:-}" ]; then

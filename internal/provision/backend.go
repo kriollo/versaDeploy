@@ -140,6 +140,14 @@ func Defaults(env *config.Environment, project string, backends []Backend, r *Re
 		NginxBurst:             p.Nginx.Burst,
 		NginxWorkerConnections: p.Nginx.WorkerConnections,
 		OnDemandTLS:            p.OnDemandTLS,
+		Timezone:               p.Timezone,
+		BackupTime:             p.BackupTime,
+		BackupUpload:           p.BackupUpload,
+		HSTSPreload:            p.HSTSPreload,
+		Tuning:                 p.Tuning,
+	}
+	if r != nil {
+		v.Tune = ComputeTuning(p.Tuning, r.CPUs, r.MemMB)
 	}
 	if v.DeployUser == "" {
 		v.DeployUser = env.SSH.User

@@ -38,6 +38,22 @@ environments:
       deploy_user: deploy
       cron:
         - "* * * * * php artisan schedule:run >> /dev/null 2>&1"   # php = frankenphp php-cli
+      # Optional: events and traffic peaks (doc/SERVICES.md, section 10)
+      # timezone: America/Santiago
+      # backup_time: "04:30"                # in timezone
+      # backup_upload: 'aws s3 cp "$BACKUP_FILE" s3://my-bucket/app/'   # off-server copy
+      # nginx:                              # traffic sharing an IP (event WiFi, mobile CGNAT)
+      #   rate: "500r/s"
+      #   burst: 2000
+      #   worker_connections: 8192
+      # tuning:                             # `versa tune` sizes the stack from CPU and RAM
+      #   profile: event                    # off (default) | auto | small | event
+      #   share: 100%                       # part of the server this project may use
+      #   upload_max: 200M
+      #   database: { server_wide: true }   # may change memory shared with other apps
+      # on_demand_tls:                      # customer domains on :443 (instead of ssl: true)
+      #   ask: "http://127.0.0.1:8000/tls/check"
+      #   public_paths: ["/web/*"]
 
     ignored_paths:
       - ".git"
@@ -83,6 +99,11 @@ environments:
     # Queue worker (QUEUE_CONNECTION=database/redis): restarted on every deploy.
     #   - name: "myapp-queue"
     #     exec: "php artisan queue:work --sleep=3 --tries=3 --max-time=3600"
+    #     nice: 10
+    #     io_class: best-effort
+    #     cpu_weight: 20                 # yields CPU to the web under load
+    #     graceful_stop: true            # finishes the job in progress on deploys
+    #     stop_timeout: 900
 
     health_check:
       url: "https://myapp.com/up"        # Laravel's health route

@@ -414,6 +414,9 @@ services:
 | `io_class`    | string  | —                        | Disk priority: `best-effort` (low) or `idle`. Needs `ionice` on the server. |
 | `cpu_quota`   | string  | —                        | CPU limit, systemd only. `200%` = two cores. |
 | `memory_max`  | string  | —                        | Memory limit, systemd only, e.g. `2G`. |
+| `cpu_weight`  | int     | systemd's `100`          | CPU share against other services under load, `1`–`10000`, systemd only. Use `20` for heavy work next to a web app: unlike `nice`, it works between services. |
+| `graceful_stop` | bool  | `false`                  | Stop signals only the main process so it can finish its work; its children are killed after `stop_timeout`. systemd only. |
+| `open_files`  | int     | system's                 | Open files limit (`LimitNOFILE`), systemd only. |
 | `reload`      | string  | —                        | Command run (as the SSH user) **instead of a restart** on deploys and rollbacks while the service is up: a graceful reload that drops no requests (e.g. `kill -HUP` for gunicorn; FrankenPHP: its `opcache_reset()` socket, proposed by the Services view). A stopped service, or a failed reload, is restarted. `versa service <env> restart` always restarts. |
 
 **Default `exec`** (when omitted):
@@ -481,6 +484,9 @@ provision:
 ```
 
 For Python, Go and Node apps the view proposes the [`services`](#services-services) entry and installs its sudoers rules, so each deploy installs and restarts the service. Every field and the safety rules are in **[SERVICES.md](SERVICES.md#9-provision-reference)**.
+
+For events and traffic peaks (`nginx`, `tuning`, `backup_time`, `backup_upload`, `on_demand_tls`), see **[SERVICES.md](SERVICES.md#10-events-and-traffic-peaks)**.
+
 
 ## Health check (`health_check`)
 

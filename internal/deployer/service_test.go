@@ -519,3 +519,17 @@ func TestInstalledCheckScript(t *testing.T) {
 		t.Fatalf("changed unit not reported: %v", got)
 	}
 }
+
+func TestServiceGracefulAndWeight(t *testing.T) {
+	env := serviceEnv("/var/www/app")
+	env.Services[0].CPUWeight, env.Services[0].GracefulStop, env.Services[0].OpenFiles = 20, true, 65536
+	files, err := renderService("shop", "production", env, env.Services[0], env.RemotePath, serverLayout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"CPUWeight=20", "KillMode=mixed", "LimitNOFILE=65536"} {
+		if !strings.Contains(files["api.service"], want) {
+			t.Errorf("unit lacks %s", want)
+		}
+	}
+}

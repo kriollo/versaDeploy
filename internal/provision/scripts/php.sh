@@ -29,6 +29,8 @@ if [ "$PKG_MGR" != apt ]; then
     pkgs=()
     # posix/pcntl (php-process) and sodium ship apart from php-common on RHEL, unlike Debian
     for p in php-fpm php-cli php-mbstring php-xml php-bcmath php-gd php-intl php-opcache php-pecl-zip php-process php-sodium; do
+        # EPEL's php-sodium is built for the default PHP: with another stream it can't install
+        if [ "$p" = php-sodium ] && [ "$(dnf_candidate php-sodium | cut -d. -f1,2)" != "$PHP_VERSION" ]; then continue; fi
         pkg_available "$p" && pkgs+=("$p")
     done
     # phpredis: Remi builds it for every stream; EPEL's only fits the default (non-module) PHP
@@ -56,8 +58,8 @@ if [ "$PKG_MGR" != apt ]; then
 
     ini=/etc/php.ini
     sed -i "s|^;*date\.timezone\s*=.*|date.timezone = ${PHP_TIMEZONE:-America/Santiago}|" "$ini"
-    sed -i "s|^upload_max_filesize\s*=.*|upload_max_filesize = 64M|" "$ini"
-    sed -i "s|^post_max_size\s*=.*|post_max_size = 64M|" "$ini"
+    sed -i "s|^upload_max_filesize\s*=.*|upload_max_filesize = ${UPLOAD_MAX:-200M}|" "$ini"
+    sed -i "s|^post_max_size\s*=.*|post_max_size = ${UPLOAD_MAX:-200M}|" "$ini"
     sed -i "s|^memory_limit\s*=.*|memory_limit = 256M|" "$ini"
     sed -i "s|^max_execution_time\s*=.*|max_execution_time = 300|" "$ini"
     sed -i "s|^expose_php\s*=.*|expose_php = Off|" "$ini"
@@ -122,8 +124,14 @@ if [ -n "$php_fresh" ] && ! apt-cache show "${php_prefix}-fpm" >/dev/null 2>&1; 
         curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg
         echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ ${OS_CODENAME} main" > /etc/apt/sources.list.d/sury-php.list
     fi
-    apt-get update -qq
-    apt-cache show "${php_prefix}-fpm" >/dev/null 2>&1 || die "PHP ${PHP_VERSION} is not available for this OS"
+    # apt-get update exits 0 when a repository answers 503: only the package tells
+    for try in 1 2 3 4; do
+        apt-get update -qq
+        apt-cache show "${php_prefix}-fpm" >/dev/null 2>&1 && break
+        [ "$try" = 4 ] && die "PHP ${PHP_VERSION} is not available for this OS"
+        warn "PHP repository not ready, retrying in 20 s"
+        sleep 20
+    done
 fi
 
 ext=(cli fpm mbstring xml bcmath curl zip gd intl opcache redis)
@@ -159,8 +167,8 @@ ok "PHP ${PHP_VERSION} installed: ${ext[*]}"
 for ini in "/etc/php/${PHP_VERSION}/fpm/php.ini" "/etc/php/${PHP_VERSION}/cli/php.ini"; do
     [ -f "$ini" ] || continue
     sed -i "s|^;*date\.timezone\s*=.*|date.timezone = ${PHP_TIMEZONE:-America/Santiago}|" "$ini"
-    sed -i "s|^upload_max_filesize\s*=.*|upload_max_filesize = 64M|" "$ini"
-    sed -i "s|^post_max_size\s*=.*|post_max_size = 64M|" "$ini"
+    sed -i "s|^upload_max_filesize\s*=.*|upload_max_filesize = ${UPLOAD_MAX:-200M}|" "$ini"
+    sed -i "s|^post_max_size\s*=.*|post_max_size = ${UPLOAD_MAX:-200M}|" "$ini"
     sed -i "s|^memory_limit\s*=.*|memory_limit = 256M|" "$ini"
     sed -i "s|^max_execution_time\s*=.*|max_execution_time = 300|" "$ini"
     sed -i "s|^expose_php\s*=.*|expose_php = Off|" "$ini"

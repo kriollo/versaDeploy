@@ -216,7 +216,7 @@ func runServerScript(cfg config.PythonBuildConfig, djangoWSGI string) string {
 	case cfg.WebFramework == "django":
 		run = fmt.Sprintf("%s manage.py runserver %s --noreload", py, bind)
 	case cfg.WebFramework == "flask":
-		run = fmt.Sprintf("FLASK_APP=%s %s -m flask run --host=%s --port=%d", cfg.EntryPoint, py, cfg.WebHost, cfg.WebPort)
+		run = fmt.Sprintf("env FLASK_APP=%s %s -m flask run --host=%s --port=%d", cfg.EntryPoint, py, cfg.WebHost, cfg.WebPort)
 	case cfg.WebFramework == "fastapi" || cfg.WebFramework == "uvicorn":
 		run = fmt.Sprintf("%s -m uvicorn %s:app --host %s --port %d", py, entry, cfg.WebHost, cfg.WebPort)
 		if workers > 0 {

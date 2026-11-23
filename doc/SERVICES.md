@@ -173,6 +173,7 @@ The scripts are written to be re-run on production servers:
 - **One vhost per domain**: if another vhost already serves the domain, the install stops and names it. Vhosts are backed up before being replaced and restored when the new one fails `nginx -t` / `apachectl configtest`. The stock default site is only removed on a web server installed in the same run.
 - **Firewall**: an active UFW keeps its policy and rules; only SSH, 80 and 443 are allowed.
 - **Fail2ban never bans normal traffic**: no jail counts 429 (nginx's rate limit), the 401/403/422 of APIs and dashboards, logins, or payment webhooks (Transbank, Mercado Pago, Flow…), so a busy dashboard or customers behind one NAT IP are never locked out. Only failed SSH logins and requests for scanner paths that don't exist on the server count. An existing fail2ban configured by hand keeps its jails.
+- **`versa tune` shows its plan first**: without `--apply` it changes nothing, it writes only the project's own files, and it restarts only the services named in `--restart`.
 - **`current/` is never created by hand**: it stays a symlink created by the first deploy.
 - **Secrets**: the DB password travels in a file inside a private (0700) temp dir that is removed after the run — never on a command line. `w` never writes `db_password` to `deploy.yml`: keep it as `${DB_PASS}`.
 
@@ -201,7 +202,10 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 
 - `B` runs a backup now and prints its size.
 - The folder belongs to the deploy user (`0700`; the remote path is setgid `www-data`, so the dumps are kept private to it): download dumps from the **Files** view.
-- Restoring is manual on purpose (it overwrites the database), e.g. `gunzip -c dump.sql.gz | sudo -u postgres psql mydb`.
+- Dumps run at low CPU and disk priority and are checked with `gzip -t` before replacing anything.
+- `provision.backup_time: "04:30"` picks the hour (in `provision.timezone`), and `provision.backup_upload` copies each dump off the server: a command run as the deploy user with `$BACKUP_FILE`, e.g. `aws s3 cp "$BACKUP_FILE" s3://bucket/app/`.
+- `versa db restore <env>` lists the dumps. `versa db restore <env> <file>` restores one into a **temporary** database, compares row counts with the live one and drops it (`--keep` leaves it). The dump's SQL runs as an unprivileged role.
+- Replacing the live database stays manual on purpose, e.g. `gunzip -c dump.sql.gz | sudo -u postgres psql mydb`.
 
 ---
 
@@ -229,6 +233,15 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 | `cron` | `[]` | `"<min> <hour> <day> <month> <weekday> <command>"` or `"@daily <command>"`, run as `deploy_user` in `current/app`; write `%` as `\%` |
 | `deploy_user` | `ssh.user` | User that owns the releases |
 | `backends` | detected | Written by the TUI for reference |
+| `timezone` | `America/Santiago` | PHP's `date.timezone` and the backup timer |
+| `backup_time` | midnight + random delay | `"HH:MM"` of the daily dump |
+| `backup_upload` | - | Command that copies each dump off the server (`$BACKUP_FILE`) |
+| `hsts_preload` | `false` | Adds `includeSubDomains; preload` to HSTS (affects every subdomain) |
+| `tuning.profile` | `off` | `auto`, `small` or `event`: sizes PHP and the database from the server's CPU and RAM (`versa tune`) |
+| `tuning.share` | `100%` | Part of the server this project may use |
+| `tuning.upload_max` | `200M` | One upload limit for nginx, Apache and PHP |
+| `tuning.php.max_threads` / `max_wait` | from the profile / `15s` | Override the PHP workers and how long a request waits for one |
+| `tuning.database.server_wide` | `false` | Allow memory settings shared with other apps on the server |
 | `nginx.rate` | shared zone, `10r/s` | Limit per client IP for this project (`500r/s`), in its own zone: other apps keep theirs |
 | `nginx.burst` | `50` | `limit_req` burst of this project |
 | `nginx.worker_connections` | distro's | Server-wide, only ever raised (also sets `worker_rlimit_nofile`) |
@@ -239,7 +252,85 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 
 ---
 
-## 10. Testing
+## 10. Events and traffic peaks
+
+For apps that get thousands of requests or uploads at once, usually from one shared IP (a venue's WiFi, mobile CGNAT). Everything here is opt-in: without these fields, a server keeps its current setup.
+
+```yaml
+provision:
+  timezone: America/Santiago
+  backup: true
+  backup_time: "04:30"
+  backup_upload: 'aws s3 cp "$BACKUP_FILE" s3://my-bucket/app/'
+  nginx:
+    rate: "500r/s"            # per IP, in this project's own zone
+    burst: 2000
+    worker_connections: 8192  # server-wide, only ever raised
+  tuning:
+    profile: event            # off (default) | auto | small | event
+    share: 100%               # part of the server this project may use
+    upload_max: 200M
+    database:
+      server_wide: true       # may change memory shared with other apps
+
+services:
+  - name: video-worker
+    exec: ./bin/worker
+    cpu_weight: 20            # yields CPU to the web service under load
+    nice: 10
+    io_class: best-effort
+    graceful_stop: true       # finishes the job in progress on deploys
+    stop_timeout: 900
+```
+
+**Sizing (`versa tune`).** It reads the server's CPU and RAM and prints a plan before changing anything:
+
+| Label | Effect |
+| :---- | :----- |
+| `[live]` | Applies now (per-role database limits) |
+| `[reload]` | No request is dropped (nginx, PHP-FPM) |
+| `[restart]` | Applied only when named: `--restart anima,postgresql` |
+| `[others]` | Affects other apps on the server (`server_wide`) |
+
+| Server | Profile | PHP workers | `shared_buffers` | `effective_cache_size` |
+| :----- | :------ | ----------: | ---------------: | ---------------------: |
+| 2 vCPU / 4 GB | `small` | 4 | 614 MB | 2 GB |
+| 4 vCPU / 8 GB | `auto` | 8 | 1.2 GB | 4 GB |
+| 4 vCPU / 8 GB | `event` | 16 | 1.2 GB | 4 GB |
+| 6 vCPU / 16 GB | `event` | 24 | 2.4 GB | 8 GB |
+
+PHP workers are `min(factor × CPU, 40 % of the project's RAM / 80 MB)`, with factor 2 (`small`, `auto`) or 4 (`event`). Check them against your app's memory use. With PHP-FPM a tuned project gets its own pool and socket, so other apps on the same PHP version keep their limits. Proxied apps also reuse connections from nginx (`upstream` with `keepalive`), and WebSockets keep working.
+
+**What every project gets, with no configuration:**
+
+- Security headers aren't duplicated: when the app sends one, the web server doesn't add its own. Static files keep them on nginx.
+- `/public/manifest.json` is served, so PWAs install. Every other `.json` stays blocked.
+- FrankenPHP reads the client IP from the right of `X-Forwarded-For`, so a client can't forge it.
+- nginx, Apache and PHP share one upload limit (`tuning.upload_max`, default 200 MB).
+- HSTS no longer forces `includeSubDomains; preload` (`hsts_preload: true` adds them).
+- Logs in `shared/` rotate daily (14 days, 100 MB cap) through `/etc/logrotate.d/versa-<project>`.
+- apt retries when a package mirror fails for a moment.
+- A deploy checks that root installed the services **before uploading anything**, so it can't leave a migrated database under the previous code.
+
+**Customer domains (white-label).** `provision.on_demand_tls` runs a second FrankenPHP on `:443`. The app decides in `ask` which domains get a certificate, and those domains reach only `public_paths`:
+
+```yaml
+provision:
+  frankenphp: true
+  on_demand_tls:
+    ask: "http://127.0.0.1:8000/tls/check"
+    public_paths: ["/web/*", "/status"]
+    # internal: true          # Caddy's CA, for hosts without public DNS
+
+services:
+  - name: app-tls
+    exec: /usr/local/bin/frankenphp run --config /etc/frankenphp/app-tls.Caddyfile --adapter caddyfile
+    capabilities: [CAP_NET_BIND_SERVICE]
+```
+
+---
+
+## 11. Testing
 
 `go test ./...` covers detection parsing, templates, bundles (`bash -n`), conflicts and the TUI view. The end-to-end test needs Docker able to run systemd containers:
 

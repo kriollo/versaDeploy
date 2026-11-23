@@ -409,6 +409,14 @@ services:
 | `environment` | map     | —                        | Variables de entorno extra, escritas en el wrapper de `.versa/` (permisos 0600 cuando el servicio corre como `ssh.user`, 0644 si no: en ese caso pon los secretos en `env_file`). |
 | `start_wait`  | int (s) | `3`                      | Segundos de espera tras (re)iniciar antes de revisar que el proceso siga corriendo.                         |
 | `stop_timeout`| int (s) | `30`                     | Segundos que un stop espera a que el proceso termine tras SIGTERM antes de matarlo (SIGKILL). Súbelo si tu app necesita más tiempo para cerrarse limpiamente. |
+| `capabilities` | lista  | `[]`                     | Capacidades de Linux que conserva un proceso sin root. Solo `CAP_NET_BIND_SERVICE` (puertos bajo 1024). systemd y OpenRC. |
+| `nice`        | int     | `0`                      | Prioridad de CPU, `0`–`19`. Más alto cede ante el servidor web; los procesos hijos la heredan. |
+| `io_class`    | string  | —                        | Prioridad de disco: `best-effort` (baja) o `idle`. Requiere `ionice` en el servidor. |
+| `cpu_quota`   | string  | —                        | Límite de CPU, solo systemd. `200%` = dos núcleos. |
+| `memory_max`  | string  | —                        | Límite de memoria, solo systemd, por ejemplo `2G`. |
+| `cpu_weight`  | int     | `100` de systemd         | Parte de CPU frente a otros servicios bajo carga, `1`–`10000`, solo systemd. Usa `20` para trabajo pesado junto a una app web: a diferencia de `nice`, funciona entre servicios. |
+| `graceful_stop` | bool  | `false`                  | El stop avisa solo al proceso principal para que termine su trabajo; los hijos mueren tras `stop_timeout`. Solo systemd. |
+| `open_files`  | int     | el del sistema           | Límite de archivos abiertos (`LimitNOFILE`), solo systemd. |
 | `reload`      | string  | —                        | Comando que corre (como el usuario SSH) **en vez de un reinicio** en deploys y rollbacks mientras el servicio está arriba: una recarga suave que no corta requests (por ejemplo `kill -HUP` para gunicorn; FrankenPHP: su socket de `opcache_reset()`, propuesto por la vista Services). Un servicio detenido, o una recarga fallida, se reinicia. `versa service <entorno> restart` siempre reinicia. |
 
 **`exec` por defecto** (cuando se omite):
@@ -476,6 +484,9 @@ provision:
 ```
 
 Para apps Python, Go y Node la vista propone la entrada de [`services`](#services-services) e instala sus reglas de sudoers, así cada deploy instala y reinicia el servicio. Todos los campos y las reglas de seguridad están en **[Servicios del servidor](SERVICES.md#9-provision-reference)**.
+
+Para eventos y picos de tráfico (`nginx`, `tuning`, `backup_time`, `backup_upload`, `on_demand_tls`), revisa **[SERVICES.md](SERVICES.md#10-events-and-traffic-peaks)**.
+
 
 ## Health check (`health_check`) { #health-check-health_check }
 

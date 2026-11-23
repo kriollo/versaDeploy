@@ -151,6 +151,15 @@ func renderService(project, envName string, env *config.Environment, svc config.
 	if svc.MemoryMax != "" {
 		fmt.Fprintf(&u, "MemoryMax=%s\n", svc.MemoryMax)
 	}
+	if svc.CPUWeight > 0 {
+		fmt.Fprintf(&u, "CPUWeight=%d\n", svc.CPUWeight)
+	}
+	if svc.GracefulStop {
+		u.WriteString("KillMode=mixed\n")
+	}
+	if svc.OpenFiles > 0 {
+		fmt.Fprintf(&u, "LimitNOFILE=%d\n", svc.OpenFiles)
+	}
 	fmt.Fprintf(&u, "ExecStart=/bin/sh \"%s\"\nRestart=always\nRestartSec=3\nTimeoutStopSec=%d\n\n[Install]\nWantedBy=multi-user.target\n", wrapper, stopTimeout(svc))
 
 	// OpenRC

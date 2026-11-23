@@ -802,3 +802,22 @@ func TestLogrotateInstalledWithDirs(t *testing.T) {
 		}
 	}
 }
+
+// The apt-get retry wrapper must not exist on RHEL: `command -v apt-get` is how scripts pick the package manager.
+func TestAptWrapperOnlyWithApt(t *testing.T) {
+	common, _ := assets.ReadFile("scripts/common.sh")
+	s := string(common)
+	head := s[:strings.Index(s, "cd \"$(dirname")]
+	script := strings.Replace(head, "set -euo pipefail", "set -eu", 1) + "\ncommand -v apt-get >/dev/null 2>&1 && echo has-apt || echo no-apt\n"
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = []string{"PATH=" + t.TempDir()}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("needs bash")
+	}
+	cmd.Path = bash
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "no-apt") {
+		t.Fatalf("%v: %s", err, out)
+	}
+}

@@ -49,6 +49,8 @@ type Report struct {
 	Sites          []Site // vhosts enabled on the server (every app it hosts)
 	BackupLast     string // newest dump in remote_path/backups, "name size"
 	ProjectSite    string // site file serving remote_path when not named after the project
+	CPUs           int    // online CPUs
+	MemMB          int    // RAM
 }
 
 // Site is one enabled vhost.
@@ -86,6 +88,8 @@ svc() { # id "units" version present
   echo "svc_$1=$s $3"
 }
 [ -f /etc/os-release ] && echo "os_id=$(. /etc/os-release; echo $ID)"
+echo "cpus=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)"
+echo "mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)"
 has apt-get && echo "apt=1"
 has dnf && echo "dnf=1"
 has yum && echo "yum=1"
@@ -245,6 +249,11 @@ func ParseReport(out string) *Report {
 			continue
 		}
 		switch k {
+		case "cpus":
+			r.CPUs, _ = strconv.Atoi(v)
+		case "mem_kb":
+			kb, _ := strconv.Atoi(v)
+			r.MemMB = kb / 1024
 		case "os_id":
 			r.OSID = v
 		case "apt":

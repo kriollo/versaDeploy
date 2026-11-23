@@ -172,6 +172,7 @@ Los scripts están hechos para volver a correrse en servidores de producción:
 - **Un vhost por dominio**: si otro vhost ya sirve el dominio, la instalación se detiene y lo nombra. Los vhosts se respaldan antes de reemplazarlos y se restauran si el nuevo falla `nginx -t` / `apachectl configtest`. El sitio por defecto solo se elimina en un web server instalado en esa misma ejecución.
 - **Firewall**: un UFW activo mantiene su política y sus reglas; solo se permiten SSH, 80 y 443.
 - **Fail2ban nunca bloquea tráfico normal**: ninguna jail cuenta los 429 (el rate limit de nginx), los 401/403/422 de APIs y paneles, los logins ni los webhooks de pago (Transbank, Mercado Pago, Flow…), así que un panel con mucho uso o clientes detrás de una misma IP (NAT) nunca quedan bloqueados. Solo cuentan los logins SSH fallidos y las requests a rutas de escáneres que no existen en el servidor. Un fail2ban configurado a mano mantiene sus jails.
+- **`versa tune` muestra primero su plan**: sin `--apply` no cambia nada, escribe solo los archivos del proyecto y reinicia solo los servicios que nombras en `--restart`.
 - **`current/` nunca se crea a mano**: sigue siendo un enlace que crea el primer deploy.
 - **Secretos**: la contraseña de la base de datos viaja en un archivo dentro de una carpeta temporal privada (0700) que se borra al terminar, nunca en una línea de comando. `w` nunca escribe `db_password` en `deploy.yml`: déjalo como `${DB_PASS}`.
 
@@ -200,7 +201,10 @@ El paso **Backups de la base de datos** instala `/usr/local/sbin/versa-backup-<p
 
 - `B` hace un backup ahora y muestra su tamaño.
 - La carpeta es del usuario de deploy (`0700`; el directorio remoto es setgid `www-data`, así los respaldos quedan privados): descárgalos desde la vista **Files**.
-- Restaurar es manual a propósito (sobrescribe la base de datos), por ejemplo `gunzip -c dump.sql.gz | sudo -u postgres psql mydb`.
+- Los dumps corren con baja prioridad de CPU y disco, y se comprueban con `gzip -t` antes de reemplazar nada.
+- `provision.backup_time: "04:30"` elige la hora (en `provision.timezone`), y `provision.backup_upload` copia cada dump fuera del servidor: un comando que corre como el usuario de deploy con `$BACKUP_FILE`, por ejemplo `aws s3 cp "$BACKUP_FILE" s3://bucket/app/`.
+- `versa db restore <env>` lista los dumps. `versa db restore <env> <archivo>` restaura uno en una base **temporal**, compara filas con la real y la borra (`--keep` la conserva). El SQL del dump corre con un rol sin privilegios.
+- Reemplazar la base real sigue siendo manual a propósito, por ejemplo `gunzip -c dump.sql.gz | sudo -u postgres psql mibase`.
 
 ---
 
@@ -228,11 +232,104 @@ El paso **Backups de la base de datos** instala `/usr/local/sbin/versa-backup-<p
 | `cron` | `[]` | `"<min> <hora> <día> <mes> <día_semana> <comando>"` o `"@daily <comando>"`, corre como `deploy_user` en `current/app`; escribe `%` como `\%` |
 | `deploy_user` | `ssh.user` | Usuario dueño de los releases |
 | `backends` | los detectados | Los escribe la TUI como referencia |
+| `timezone` | `America/Santiago` | `date.timezone` de PHP y timer de backups |
+| `backup_time` | medianoche + retraso aleatorio | `"HH:MM"` del dump diario |
+| `backup_upload` | - | Comando que copia cada dump fuera del servidor (`$BACKUP_FILE`) |
+| `hsts_preload` | `false` | Agrega `includeSubDomains; preload` a HSTS (afecta a todos los subdominios) |
+| `tuning.profile` | `off` | `auto`, `small` o `event`: dimensiona PHP y la base según CPU y RAM (`versa tune`) |
+| `tuning.share` | `100%` | Parte del servidor que puede usar este proyecto |
+| `tuning.upload_max` | `200M` | Un solo límite de subida para nginx, Apache y PHP |
+| `tuning.php.max_threads` / `max_wait` | del perfil / `15s` | Sobrescriben los workers PHP y cuánto espera una petición por uno |
+| `tuning.database.server_wide` | `false` | Permite ajustes de memoria compartidos con otras apps del servidor |
+| `nginx.rate` | zona compartida, `10r/s` | Límite por IP de este proyecto (`500r/s`), en su propia zona: las otras apps conservan el suyo |
+| `nginx.burst` | `50` | Ráfaga de `limit_req` de este proyecto |
+| `nginx.worker_connections` | el de la distro | De todo el servidor, solo sube (también ajusta `worker_rlimit_nofile`) |
+| `on_demand_tls.ask` | - | URL local que responde 200 para los dominios con derecho a certificado. Requiere `frankenphp: true`; excluye el paso SSL |
+| `on_demand_tls.public_paths` | - | Rutas a las que llegan los dominios de clientes; lo demás responde 404 (los estáticos de `/public/` se sirven) |
+| `on_demand_tls.internal` | `false` | CA interna de Caddy, para hosts sin DNS público |
 | `proxy_port` | según builds / backend | Puerto de una app Python/Go/Node detrás del web server (se le pasa a su servicio como `PORT`), o el de FrankenPHP |
 
 ---
 
-## 10. Tests { #10-testing }
+## 10. Eventos y picos de tráfico { #10-events-and-traffic-peaks }
+
+Para apps que reciben miles de peticiones o subidas a la vez, muchas veces desde una sola IP (el WiFi del lugar, CGNAT móvil). Todo esto es opcional: sin estos campos, el servidor mantiene su configuración.
+
+```yaml
+provision:
+  timezone: America/Santiago
+  backup: true
+  backup_time: "04:30"
+  backup_upload: 'aws s3 cp "$BACKUP_FILE" s3://mi-bucket/app/'
+  nginx:
+    rate: "500r/s"            # por IP, en una zona propia del proyecto
+    burst: 2000
+    worker_connections: 8192  # de todo el servidor, solo sube
+  tuning:
+    profile: event            # off (por defecto) | auto | small | event
+    share: 100%               # parte del servidor que puede usar este proyecto
+    upload_max: 200M
+    database:
+      server_wide: true       # puede cambiar memoria compartida con otras apps
+
+services:
+  - name: video-worker
+    exec: ./bin/worker
+    cpu_weight: 20            # cede CPU al servicio web bajo carga
+    nice: 10
+    io_class: best-effort
+    graceful_stop: true       # termina el trabajo en curso en los deploys
+    stop_timeout: 900
+```
+
+**Dimensionamiento (`versa tune`).** Lee la CPU y la RAM del servidor y muestra un plan antes de cambiar nada:
+
+| Etiqueta | Efecto |
+| :------- | :----- |
+| `[live]` | Aplica de inmediato (límites de la base por rol) |
+| `[reload]` | No corta peticiones (nginx, PHP-FPM) |
+| `[restart]` | Se aplica solo si lo nombras: `--restart anima,postgresql` |
+| `[others]` | Afecta a otras apps del servidor (`server_wide`) |
+
+| Servidor | Perfil | Workers PHP | `shared_buffers` | `effective_cache_size` |
+| :------- | :----- | ----------: | ---------------: | ---------------------: |
+| 2 vCPU / 4 GB | `small` | 4 | 614 MB | 2 GB |
+| 4 vCPU / 8 GB | `auto` | 8 | 1,2 GB | 4 GB |
+| 4 vCPU / 8 GB | `event` | 16 | 1,2 GB | 4 GB |
+| 6 vCPU / 16 GB | `event` | 24 | 2,4 GB | 8 GB |
+
+Los workers PHP son `min(factor × CPU, 40 % de la RAM del proyecto / 80 MB)`, con factor 2 (`small`, `auto`) o 4 (`event`). Compáralos con la memoria real de tu app. Con PHP-FPM, un proyecto ajustado tiene su propio pool y socket, así las otras apps de la misma versión de PHP conservan sus límites. Las apps detrás de proxy también reutilizan conexiones desde nginx (`upstream` con `keepalive`), y los WebSockets siguen funcionando.
+
+**Lo que recibe cada proyecto sin configurar nada:**
+
+- Las cabeceras de seguridad no se duplican: si la app envía una, el servidor web no agrega la suya. Los estáticos las conservan en nginx.
+- `/public/manifest.json` se sirve, así las PWA se pueden instalar. Los demás `.json` siguen bloqueados.
+- FrankenPHP lee la IP del cliente desde la derecha de `X-Forwarded-For`, así un cliente no puede falsificarla.
+- nginx, Apache y PHP comparten un solo límite de subida (`tuning.upload_max`, por defecto 200 MB).
+- HSTS ya no fuerza `includeSubDomains; preload` (`hsts_preload: true` los agrega).
+- Los logs de `shared/` rotan cada día (14 días, tope de 100 MB) con `/etc/logrotate.d/versa-<proyecto>`.
+- apt reintenta cuando un repositorio de paquetes falla por un momento.
+- Un deploy comprueba que root instaló los servicios **antes de subir nada**, así no deja una base migrada con el código anterior.
+
+**Dominios de clientes (white-label).** `provision.on_demand_tls` corre un segundo FrankenPHP en `:443`. La app decide en `ask` qué dominios reciben certificado, y esos dominios solo llegan a `public_paths`:
+
+```yaml
+provision:
+  frankenphp: true
+  on_demand_tls:
+    ask: "http://127.0.0.1:8000/tls/check"
+    public_paths: ["/web/*", "/status"]
+    # internal: true          # CA de Caddy, para hosts sin DNS público
+
+services:
+  - name: app-tls
+    exec: /usr/local/bin/frankenphp run --config /etc/frankenphp/app-tls.Caddyfile --adapter caddyfile
+    capabilities: [CAP_NET_BIND_SERVICE]
+```
+
+---
+
+## 11. Tests { #11-testing }
 
 `go test ./...` cubre el análisis de la detección, las plantillas, los bundles (`bash -n`), los conflictos y la vista de la TUI. El test end-to-end necesita un Docker capaz de correr contenedores con systemd:
 

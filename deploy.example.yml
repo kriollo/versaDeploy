@@ -133,6 +133,9 @@ environments:
     #     # cpu_quota: "400%"                     # systemd: four cores at most
     #     # memory_max: "4G"                      # systemd
     #     # capabilities: [CAP_NET_BIND_SERVICE]  # bind ports below 1024 without root
+    #     # cpu_weight: 20                        # systemd: CPU share against other services
+    #     # graceful_stop: true                   # finish work in progress before stopping
+    #     # open_files: 65536
 
     # PROVISION (optional): server stack for the TUI "Services" view, which detects what is
     # installed, installs the selection (Debian/Ubuntu, RHEL/Rocky/Alma 8+), applies updates, shows security
@@ -144,6 +147,15 @@ environments:
     #   domain: "myapp.com"
     #   aliases: ["www.myapp.com"]   # extra domains (vhost + certificate when they resolve here)
     #   web_server: nginx            # nginx | apache (never both: an installed one wins)
+    #   timezone: America/Santiago
+    #   backup: true
+    #   backup_time: "04:30"
+    #   backup_upload: 'aws s3 cp "$BACKUP_FILE" s3://my-bucket/app/'
+    #   tuning:                      # versa tune: sized from the server's CPU and RAM
+    #     profile: event             # off (default) | auto | small | event
+    #     share: 100%                # part of the server this project may use
+    #     upload_max: 200M
+    #     database: { server_wide: false }   # true: may change memory shared with other apps
     #   nginx:                       # traffic that shares an IP (event WiFi, mobile CGNAT)
     #     rate: "500r/s"             # per IP, in this project's own zone
     #     burst: 2000

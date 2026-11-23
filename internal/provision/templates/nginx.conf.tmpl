@@ -7,9 +7,18 @@
 # Las zonas de rate limiting están en /etc/nginx/conf.d/rate-limiting.conf.
 # ============================================================================
 
+{{- if .Upstream}}
+
+# Reused connections to the app instead of one per request
+upstream {{.Upstream}} {
+    server 127.0.0.1:{{.ProxyPort}};
+    keepalive 64;
+}
+{{- end}}
+
 server {
     server_name {{.Domain}}{{range .Aliases}} {{.}}{{end}};
-    client_max_body_size 200M;
+    client_max_body_size {{.UploadMax}};
 
     root {{.DocRootPath}};
     index index.php index.html;
@@ -27,7 +36,7 @@ server {
     tcp_nopush on;
     tcp_nodelay on;
     keepalive_timeout 65;
-    keepalive_requests 100;
+    keepalive_requests 1000;
 
     # Compresión gzip
     gzip on;
@@ -227,7 +236,7 @@ server {
         fastcgi_read_timeout 300s;
         fastcgi_send_timeout 300s;
         fastcgi_hide_header X-Powered-By;
-        fastcgi_pass unix:/run/php/php{{.PHPVersion}}-fpm.sock;
+        fastcgi_pass unix:{{.FPMSocket}};
     }
 {{- end}}
 {{end}}
@@ -261,7 +270,7 @@ server {
 {{- end}}
 
 {{define "nginx-proxy"}}
-        proxy_pass http://127.0.0.1:{{.ProxyPort}}{{if .FrankenPHP}}$request_uri{{end}};
+        proxy_pass http://{{if .Upstream}}{{.Upstream}}{{else}}127.0.0.1:{{.ProxyPort}}{{end}}{{if .FrankenPHP}}$request_uri{{end}};
         proxy_http_version 1.1;
         # $http_host keeps the port: the app builds its URLs (assets) from it, as with FPM
         proxy_set_header Host $http_host;
@@ -269,7 +278,7 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection {{if .Upstream}}$versa_connection{{else}}"upgrade"{{end}};
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
 {{- end}}
@@ -280,7 +289,7 @@ server {
     add_header X-XSS-Protection $versa_x_xss_protection always;
     add_header Referrer-Policy $versa_referrer_policy always;
 {{- if .SSL}}
-    add_header Strict-Transport-Security $versa_hsts always;
+    add_header Strict-Transport-Security {{.HSTSVar}} always;
 {{- end}}
     add_header Permissions-Policy $versa_permissions_policy always;
 {{- end}}

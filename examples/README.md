@@ -17,6 +17,10 @@ All of them keep the server's `.env` (versaWYS: `config.json`) in `shared/`: the
 
 Each example is deployed with the real framework by the end-to-end test (`test/e2e`) on Ubuntu 24.04 and AlmaLinux 9 (FrankenPHP: Ubuntu 24.04, with versaTodo too). Every option is described in [doc/DEPLOY.md](../doc/DEPLOY.md); the `provision:` block, in [doc/SERVICES.md](../doc/SERVICES.md).
 
+## Events and traffic peaks
+
+Each example has commented `# Optional:` blocks with the settings for thousands of simultaneous users: rate limits for a shared IP, `tuning` (`versa tune`), backup time and off-server copy, service resources, and customer domains on FrankenPHP. Uncomment what you need. They're explained in [SERVICES.md](../doc/SERVICES.md#10-events-and-traffic-peaks).
+
 ## CI
 
 [github-actions.yml](github-actions.yml) deploys from GitHub Actions: staging on every push to `main`, production on every `v*` tag (with `deploy_tags: "v*"` in production, versa refuses untagged commits from anywhere). It installs versa with [install.sh](../install.sh), which checks the binary's sha256. Working repo: [versadeploy-demo-ci](https://github.com/kriollo/versadeploy-demo-ci); video (Spanish): [De git push a producción](https://versadeploy.websystem.cl/videos/#github-actions).

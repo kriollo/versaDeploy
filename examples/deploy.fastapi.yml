@@ -26,6 +26,19 @@ environments:
       ssl: true
       backup: true
       deploy_user: deploy
+      # Optional: events and traffic peaks (doc/SERVICES.md, section 10)
+      # timezone: America/Santiago
+      # backup_time: "04:30"                # in timezone
+      # backup_upload: 'aws s3 cp "$BACKUP_FILE" s3://my-bucket/app/'   # off-server copy
+      # nginx:                              # traffic sharing an IP (event WiFi, mobile CGNAT)
+      #   rate: "500r/s"
+      #   burst: 2000
+      #   worker_connections: 8192
+      # tuning:                             # `versa tune` sizes the stack from CPU and RAM
+      #   profile: event                    # off (default) | auto | small | event
+      #   share: 100%                       # part of the server this project may use
+      #   upload_max: 200M
+      #   database: { server_wide: true }   # may change memory shared with other apps
 
     ignored_paths:
       - ".git"
@@ -51,6 +64,13 @@ environments:
     services:
       - name: "myapi"
         env_file: ".env"
+        # Optional: resources (doc/DEPLOY.md, Services)
+        # open_files: 65536
+        # memory_max: "2G"
+        # cpu_weight: 100                   # lower it on heavy background work
+        # nice: 0
+        # graceful_stop: true               # finish requests in progress on deploys
+        # stop_timeout: 60
 
     # post_deploy:
     #   - ".venv/bin/alembic upgrade head"

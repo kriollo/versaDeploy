@@ -4,8 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-11-23
+
+### Added
+
+- **`versa tune <env>`** and **`provision.tuning`**: sizes PHP and the database from the server's CPU and RAM with the `auto`, `small` or `event` profiles. It prints a plan first (`live`, `reload`, `restart`, `others`), `--apply` changes only the project's own files, and only the services named in `--restart` are restarted. Off by default.
+- **FrankenPHP threads** (`num_threads`, `max_threads`, `max_wait_time`), an **own PHP-FPM pool** per tuned project, per-role PostgreSQL limits, and optional server-wide memory for PostgreSQL and MariaDB (`tuning.database.server_wide`).
+- **Keepalive from nginx to proxied apps** on tuned projects, with WebSockets still working.
+- **`versa db restore <env> [file]`**: proves a backup restores into a temporary database, compares row counts with the live one and drops it. The dump's SQL runs as an unprivileged role.
+- **Backups**: `provision.backup_time`, `provision.backup_upload` (off-server copy), low CPU and disk priority, and a `gzip -t` check before a dump replaces anything.
+- **Services**: `cpu_weight`, `graceful_stop` and `open_files`. `cpu_weight` works between services where `nice` may not.
+- **`provision.timezone`**, **`provision.hsts_preload`** and **`tuning.upload_max`**, one upload limit for nginx, Apache and PHP.
+- **Examples**: every `examples/deploy.*.yml` has commented `# Optional:` blocks for traffic peaks, validated by a test.
+- **Docs**: an "Events and traffic peaks" section, with the new commands, fields and troubleshooting in English and Spanish.
+
+### Changed
+
+- **HSTS no longer forces `includeSubDomains; preload`**, which could break subdomains outside the app. `hsts_preload: true` adds them.
+- nginx `keepalive_requests` goes from 100 to 1000.
+
+### Security
+
+- **FrankenPHP took the client IP from the forgeable side of `X-Forwarded-For`**, which let a client choose its `REMOTE_ADDR`. It now reads it from the right (`trusted_proxies_strict`). Re-run the FrankenPHP step and restart the service to apply it.
+
 ### Fixed
 
+- **Flask never started with `web_framework: flask`**: the generated script ran `exec FLASK_APP=...`.
+- **PHP-FPM accepted 64 MB behind an nginx that accepted 200 MB**: uploads in between were discarded.
+- **PHP on RHEL failed to install without Redis**: EPEL's `php-sodium` conflicts with other PHP streams.
+- **A PHP repository answering 503 aborted the install**: apt and the PHP step now retry.
 - **Browsers kept old CSS and JS for a year after a deploy**: nginx and Apache marked every `.css` and `.js` as immutable, even without a version in the URL. Now only URLs with `?v=` are cached for a year; the rest are revalidated with their ETag. Run the web server step again (`versa provision <env> --only nginx`) to apply it.
 
 ## [1.20.0] - 2026-11-23
