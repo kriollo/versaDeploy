@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # Generado por versaDeploy — port no interactivo de setup-vps.sh. Corre como root.
 set -euo pipefail
+
+# A mirror answering 503 for a while (PPAs do) must not abort an install
+apt-get() {
+    local try
+    for try in 1 2 3; do
+        command apt-get -o Acquire::Retries=5 "$@" && return 0
+        [ "$try" = 3 ] || { echo "[WARN]  apt-get failed, retrying in 20 s"; sleep 20; }
+    done
+    return 1
+}
+
 cd "$(dirname "$0")"
 # shellcheck source=/dev/null
 . ./env
@@ -153,11 +164,73 @@ install_vhost() {
 # install_site_config picks the SSL vhost when the certificate already exists, so
 # re-running the web server step never downgrades a site to plain HTTP.
 install_site_config() {
+    [ "$WEB_SERVER" = nginx ] && ensure_nginx_conf
     if [ -f "$CERT_DIR/fullchain.pem" ]; then
         ensure_ssl_includes
         install_vhost vhost-ssl.conf
     else
         install_vhost vhost.conf
+    fi
+}
+
+install_logrotate() {
+    # Logs in shared/ survive every deploy: without rotation they end up filling the disk.
+    # copytruncate: apps and cron jobs keep writing to the same open file.
+    command -v logrotate >/dev/null 2>&1 || pkg_install logrotate
+    rotate="/etc/logrotate.d/versa-${PROJECT_NAME//[^A-Za-z0-9_-]/_}"
+    cat > "$rotate" <<ROTATE_EOF
+# Generado por versaDeploy — logs de ${PROJECT_NAME}
+${REMOTE_PATH}/shared/logs/*.log ${REMOTE_PATH}/shared/*/logs/*.log ${REMOTE_PATH}/shared/*/*/logs/*.log {
+    su ${DEPLOY_USER} www-data
+    daily
+    maxsize 100M
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}
+ROTATE_EOF
+    chmod 644 "$rotate"
+    logrotate -d "$rotate" >/dev/null 2>&1 || warn "logrotate rejected ${rotate}"
+    ok "Log rotation: ${rotate} (14 days)"
+}
+
+# ensure_nginx_conf writes what the vhost template references, before any step installs it.
+ensure_nginx_conf() {
+    # Security headers: added only when the app didn't send its own (two values of a
+    # header make browsers apply a mix nobody configured)
+    cat > /etc/nginx/conf.d/versa-security-headers.conf <<'HEADERS_EOF'
+# Generado por versaDeploy — cabeceras de seguridad, salvo que la app envíe las suyas
+map $upstream_http_x_frame_options $versa_x_frame_options { "" "SAMEORIGIN"; default ""; }
+map $upstream_http_x_content_type_options $versa_x_content_type_options { "" "nosniff"; default ""; }
+map $upstream_http_x_xss_protection $versa_x_xss_protection { "" "1; mode=block"; default ""; }
+map $upstream_http_referrer_policy $versa_referrer_policy { "" "no-referrer"; default ""; }
+map $upstream_http_permissions_policy $versa_permissions_policy { "" "geolocation=(self), microphone=(self), camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self), payment=(self), usb=(), interest-cohort=()"; default ""; }
+map $upstream_http_strict_transport_security $versa_hsts { "" "max-age=31536000; includeSubDomains; preload"; default ""; }
+HEADERS_EOF
+    local f="/etc/nginx/conf.d/versa-rate-${PROJECT_NAME//[^A-Za-z0-9_-]/_}.conf"
+    if [ -n "${NGINX_RATE:-}" ]; then
+        printf '# Generado por versaDeploy — limite de %s (provision.nginx)\nlimit_req_zone $binary_remote_addr zone=%s:10m rate=%s;\n' \
+            "$PROJECT_NAME" "$NGINX_ZONE" "$NGINX_RATE" > "$f"
+    else
+        rm -f "$f"
+    fi
+    if [ "${NGINX_WORKER_CONNECTIONS:-0}" -gt 0 ]; then
+        # server-wide: never lowered, another app may need it
+        local cur; cur="$(sed -n 's/^[[:space:]]*worker_connections[[:space:]]*\([0-9]*\).*/\1/p' /etc/nginx/nginx.conf | head -1)"
+        if [ "${cur:-0}" -lt "$NGINX_WORKER_CONNECTIONS" ]; then
+            sed -i "s/^\([[:space:]]*\)worker_connections[[:space:]]*[0-9]*;/\1worker_connections ${NGINX_WORKER_CONNECTIONS};/" /etc/nginx/nginx.conf
+            ok "nginx worker_connections: ${cur:-?} → ${NGINX_WORKER_CONNECTIONS}"
+        fi
+        local files=$((NGINX_WORKER_CONNECTIONS * 2)) have
+        have="$(sed -n 's/^[[:space:]]*worker_rlimit_nofile[[:space:]]*\([0-9]*\).*/\1/p' /etc/nginx/nginx.conf | head -1)"
+        if [ -z "$have" ]; then
+            sed -i "/^worker_processes/a worker_rlimit_nofile ${files};" /etc/nginx/nginx.conf
+        elif [ "$have" -lt "$files" ]; then
+            sed -i "s/^worker_rlimit_nofile[[:space:]]*[0-9]*;/worker_rlimit_nofile ${files};/" /etc/nginx/nginx.conf
+        fi
     fi
 }
 

@@ -16,6 +16,7 @@
 //
 // VERSA_E2E_REPO overrides the versaTodo path, VERSA_E2E_KEEP=1 leaves the containers,
 // VERSA_E2E_SERVERS=rocky,ubuntu runs only those servers.
+// VERSA_E2E_PORT_SHIFT=10000 moves the ports when the host already uses them.
 package e2e
 
 import (
@@ -31,6 +32,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -341,6 +343,12 @@ func get(t *testing.T, port int, host, path string) (int, string) {
 func TestProvisionAndDeploy(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
+	}
+	if shift, _ := strconv.Atoi(os.Getenv("VERSA_E2E_PORT_SHIFT")); shift != 0 {
+		for _, srv := range []*server{ubuntu, debian, rocky, alma, franken} {
+			srv.sshPort += shift
+			srv.httpPort += shift
+		}
 	}
 	todo := os.Getenv("VERSA_E2E_REPO")
 	if todo == "" {

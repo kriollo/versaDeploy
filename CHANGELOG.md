@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-11-23
+
+### Added
+
+- **`provision.nginx`** (`rate`, `burst`, `worker_connections`): sizes nginx for traffic that shares an IP, like an event's WiFi or mobile CGNAT. A `rate` gets the project its own zone, so other apps on the server keep their limits. `worker_connections` is server-wide and only ever raised.
+- **`provision.on_demand_tls`**: customer domains added at runtime (white-label) on a dedicated FrankenPHP in `:443`. The app authorizes each domain through `ask`, and customer domains reach only `public_paths`.
+- **Resources per service**: `capabilities` (only `CAP_NET_BIND_SERVICE`), `nice`, `io_class`, `cpu_quota` and `memory_max`. Children such as ffmpeg or queue workers inherit the priority, so heavy work yields to the web server.
+- **Log rotation**: the project directory step installs `/etc/logrotate.d/versa-<project>` for the logs in `shared/` (daily, 14 days, 100 MB cap).
+
+### Fixed
+
+- **A new service made the deploy fail after `post_deploy`**, rolling back the code over a database already migrated. Deploys now check that root installed the services before uploading anything.
+- **Duplicate and contradictory security headers** on nginx and Apache when the app sends its own: the app's value now wins, and the server adds only what's missing.
+- **Static files lost the security headers on nginx**: a `location` with its own `add_header` dropped the ones of the `server` block.
+- **A package mirror answering 503 for a moment aborted the install**: apt now retries each download.
+- **`/public/manifest.json` answered 404**, which broke PWA installs on nginx and Apache. Every other `.json` stays blocked.
+
 ## [1.19.2] - 2026-11-11
 
 ### Fixed

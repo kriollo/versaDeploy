@@ -111,31 +111,35 @@ var majorRe = regexp.MustCompile(`\d+`)
 func Defaults(env *config.Environment, project string, backends []Backend, r *Report) Vars {
 	p := env.Provision
 	v := Vars{
-		Project:        project,
-		Domain:         p.Domain,
-		WebServer:      p.WebServer,
-		PHPVersion:     p.PHPVersion,
-		RemotePath:     env.RemotePath,
-		DocRoot:        p.DocRoot,
-		DeployUser:     p.DeployUser,
-		Database:       p.Database,
-		DBName:         p.DBName,
-		DBUser:         p.DBUser,
-		DBPassword:     p.DBPassword,
-		AdminEmail:     p.AdminEmail,
-		SSHPort:        env.ProvisionSSH().Port,
-		ProxyPort:      p.ProxyPort,
-		NodeMajor:      p.NodeMajor,
-		PythonVersion:  p.PythonVersion,
-		Redis:          p.Redis,
-		Dragonfly:      p.Dragonfly,
-		FrankenPHP:     p.FrankenPHP,
-		Aliases:        p.Aliases,
-		BackupKeep:     p.BackupKeep,
-		SSLSelfSigned:  p.SSLSelfSigned,
-		Packages:       p.Packages,
-		Cron:           p.Cron,
-		Fail2banIgnore: p.Fail2banIgnore,
+		Project:                project,
+		Domain:                 p.Domain,
+		WebServer:              p.WebServer,
+		PHPVersion:             p.PHPVersion,
+		RemotePath:             env.RemotePath,
+		DocRoot:                p.DocRoot,
+		DeployUser:             p.DeployUser,
+		Database:               p.Database,
+		DBName:                 p.DBName,
+		DBUser:                 p.DBUser,
+		DBPassword:             p.DBPassword,
+		AdminEmail:             p.AdminEmail,
+		SSHPort:                env.ProvisionSSH().Port,
+		ProxyPort:              p.ProxyPort,
+		NodeMajor:              p.NodeMajor,
+		PythonVersion:          p.PythonVersion,
+		Redis:                  p.Redis,
+		Dragonfly:              p.Dragonfly,
+		FrankenPHP:             p.FrankenPHP,
+		Aliases:                p.Aliases,
+		BackupKeep:             p.BackupKeep,
+		SSLSelfSigned:          p.SSLSelfSigned,
+		Packages:               p.Packages,
+		Cron:                   p.Cron,
+		Fail2banIgnore:         p.Fail2banIgnore,
+		NginxRate:              p.Nginx.Rate,
+		NginxBurst:             p.Nginx.Burst,
+		NginxWorkerConnections: p.Nginx.WorkerConnections,
+		OnDemandTLS:            p.OnDemandTLS,
 	}
 	if v.DeployUser == "" {
 		v.DeployUser = env.SSH.User
@@ -300,7 +304,12 @@ func hasBackend(bs []Backend, kind string) bool {
 // build; Node runs `npm start`). The web server proxies to PORT.
 func ProposedServices(env *config.Environment, v Vars) []config.ServiceConfig {
 	if v.FrankenPHP && len(env.Services) == 0 && v.AppService != "" {
-		return []config.ServiceConfig{{Name: v.AppService, Exec: FrankenPHPExec(v.Project), Reload: FrankenPHPReload(v.RemotePath)}}
+		svcs := []config.ServiceConfig{{Name: v.AppService, Exec: FrankenPHPExec(v.Project), Reload: FrankenPHPReload(v.RemotePath)}}
+		if v.OnDemandTLS != nil {
+			svcs = append(svcs, config.ServiceConfig{Name: v.AppService + "-tls", Exec: FrankenPHPTLSExec(v.Project),
+				Capabilities: []string{"CAP_NET_BIND_SERVICE"}})
+		}
+		return svcs
 	}
 	if len(env.Services) > 0 || v.Backend == "" || v.Backend == "php" || v.AppService == "" {
 		return env.Services

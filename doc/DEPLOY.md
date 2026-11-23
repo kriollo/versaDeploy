@@ -409,6 +409,11 @@ services:
 | `environment` | map     | —                        | Extra environment variables, written to the wrapper in `.versa/` (mode 0600 when the service runs as `ssh.user`, 0644 otherwise: put secrets in `env_file` then). |
 | `start_wait`  | int (s) | `3`                      | Seconds to wait after (re)starting before checking the process is still running.                            |
 | `stop_timeout`| int (s) | `30`                     | Seconds a stop waits for the process to exit after SIGTERM before killing it (SIGKILL). Raise it if your app needs longer to shut down cleanly. |
+| `capabilities` | list   | `[]`                     | Linux capabilities kept by a non-root process. Only `CAP_NET_BIND_SERVICE` (ports below 1024). systemd and OpenRC. |
+| `nice`        | int     | `0`                      | CPU priority, `0`–`19`. Higher yields to the web server; child processes inherit it. |
+| `io_class`    | string  | —                        | Disk priority: `best-effort` (low) or `idle`. Needs `ionice` on the server. |
+| `cpu_quota`   | string  | —                        | CPU limit, systemd only. `200%` = two cores. |
+| `memory_max`  | string  | —                        | Memory limit, systemd only, e.g. `2G`. |
 | `reload`      | string  | —                        | Command run (as the SSH user) **instead of a restart** on deploys and rollbacks while the service is up: a graceful reload that drops no requests (e.g. `kill -HUP` for gunicorn; FrankenPHP: its `opcache_reset()` socket, proposed by the Services view). A stopped service, or a failed reload, is restarted. `versa service <env> restart` always restarts. |
 
 **Default `exec`** (when omitted):

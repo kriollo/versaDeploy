@@ -61,3 +61,11 @@ install -m 644 Caddyfile "/etc/frankenphp/${PROJECT_NAME}.Caddyfile"
 "$bin" validate --config "/etc/frankenphp/${PROJECT_NAME}.Caddyfile" >/dev/null 2>&1 \
     || die "invalid /etc/frankenphp/${PROJECT_NAME}.Caddyfile: $("$bin" validate --config "/etc/frankenphp/${PROJECT_NAME}.Caddyfile" 2>&1 | tail -1)"
 ok "Config: /etc/frankenphp/${PROJECT_NAME}.Caddyfile (127.0.0.1:${PROXY_PORT}) — the deploy starts the service"
+
+if [ -f Caddyfile-tls ]; then
+    tls="/etc/frankenphp/${PROJECT_NAME}-tls.Caddyfile"
+    install -m 644 Caddyfile-tls "$tls"
+    "$bin" validate --config "$tls" --adapter caddyfile >/dev/null 2>&1 \
+        || die "invalid ${tls}: $("$bin" validate --config "$tls" --adapter caddyfile 2>&1 | tail -1)"
+    ok "On-demand TLS config: ${tls} — add its service with capabilities: [CAP_NET_BIND_SERVICE]"
+fi

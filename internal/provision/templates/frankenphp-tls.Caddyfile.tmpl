@@ -1,0 +1,39 @@
+# Generado por versaDeploy — {{.Project}}: HTTPS bajo demanda para dominios de clientes
+# La app decide en "ask" qué dominios pueden pedir certificado.
+{
+	admin off
+	auto_https disable_redirects
+{{- if .OnDemandTLS.Internal}}
+	skip_install_trust
+{{- end}}
+	on_demand_tls {
+		ask {{.OnDemandTLS.Ask}}
+	}
+}
+
+https:// {
+	tls{{if .OnDemandTLS.Internal}} internal{{end}} {
+		on_demand
+	}
+	root * {{.DocRootPath}}
+
+	@static {
+		path_regexp static ^/(public/.+|sw\.js|node_modules/.+\.(js|mjs|css))$
+		file
+	}
+	handle @static {
+		file_server {
+			hide .*
+		}
+	}
+
+	@public path{{range .OnDemandTLS.PublicPaths}} {{.}}{{end}}
+	handle @public {
+		reverse_proxy 127.0.0.1:{{.ProxyPort}} {
+			header_up X-Forwarded-Proto https
+		}
+	}
+	handle {
+		respond 404
+	}
+}

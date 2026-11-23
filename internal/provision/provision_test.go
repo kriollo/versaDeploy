@@ -654,3 +654,124 @@ func TestDetectMissingPackages(t *testing.T) {
 		t.Errorf("probe didn't report the missing package:\n%s", out)
 	}
 }
+
+// A header the app sends isn't repeated, and a location with its own add_header (static
+// files) keeps the security headers nginx would otherwise drop.
+func TestNginxSecurityHeaders(t *testing.T) {
+	for _, proxy := range []int{0, 8000} {
+		v := testVars()
+		v.ProxyPort = proxy
+		out, err := RenderVhost(v, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, `add_header X-Frame-Options "`) {
+			t.Errorf("proxy %d: fixed header would duplicate the app's", proxy)
+		}
+		if proxy == 0 {
+			for _, block := range strings.Split(out, "location ")[1:] {
+				body, _, _ := strings.Cut(block, "}")
+				if strings.Contains(body, "add_header Cache-Control") && !strings.Contains(body, "$versa_x_content_type_options") {
+					t.Errorf("static location loses the security headers: %s", body)
+				}
+			}
+			if !strings.Contains(out, `^/public/(.+/)?manifest\.json$`) {
+				t.Error("the PWA manifest must stay public")
+			}
+			if strings.Index(out, "manifest") > strings.Index(out, "yaml|md") {
+				t.Error("the manifest location must come before the rule that blocks .json")
+			}
+		}
+	}
+}
+
+func TestApacheHeadersRespectTheApp(t *testing.T) {
+	v := testVars()
+	v.WebServer = "apache"
+	out, err := RenderVhost(v, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range []string{"X-Frame-Options", "X-Content-Type-Options", "Referrer-Policy", "Permissions-Policy", "Strict-Transport-Security"} {
+		if !strings.Contains(out, `"expr=-z %{resp:`+h+`}"`) {
+			t.Errorf("%s would duplicate the app's header", h)
+		}
+	}
+	if !strings.Contains(out, `!^/public/(.+/)?manifest\.json$`) {
+		t.Error("the PWA manifest must stay public")
+	}
+}
+
+func TestNginxTuning(t *testing.T) {
+	v := testVars()
+	if v.LimitZone() != "general" || v.LimitBurst() != 50 {
+		t.Fatalf("defaults changed: %s %d", v.LimitZone(), v.LimitBurst())
+	}
+	v.Project, v.NginxRate, v.NginxBurst, v.NginxWorkerConnections = "my.app", "500r/s", 2000, 8192
+	out, err := RenderVhost(v, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "limit_req zone=versa_my_app burst=2000 nodelay;") {
+		t.Errorf("project zone missing:\n%s", out)
+	}
+	if err := v.Validate([]string{"nginx"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []func(*Vars){
+		func(x *Vars) { x.NginxRate = "500; include /etc/passwd" },
+		func(x *Vars) { x.NginxWorkerConnections = 10 },
+		func(x *Vars) { x.WebServer = "apache" },
+	} {
+		w := v
+		bad(&w)
+		if w.Validate([]string{"dirs"}) == nil {
+			t.Errorf("accepted %+v", w.NginxRate)
+		}
+	}
+}
+
+func TestOnDemandTLS(t *testing.T) {
+	v := testVars()
+	v.FrankenPHP, v.ProxyPort, v.AppService, v.DocRoot = true, 8000, "app", "current/app"
+	v.OnDemandTLS = &config.OnDemandTLS{Ask: "http://127.0.0.1:8000/tls/dominio", PublicPaths: []string{"/web/*", "/estado"}, Internal: true}
+	b, err := Build([]string{"frankenphp", "nginx"}, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tls := string(b["Caddyfile-tls"])
+	for _, want := range []string{"ask http://127.0.0.1:8000/tls/dominio", "tls internal {", "on_demand", "path /web/* /estado", "reverse_proxy 127.0.0.1:8000", "respond 404"} {
+		if !strings.Contains(tls, want) {
+			t.Errorf("missing %q:\n%s", want, tls)
+		}
+	}
+	for _, bad := range []func(*config.OnDemandTLS){
+		func(o *config.OnDemandTLS) { o.Ask = "https://example.com/check" },
+		func(o *config.OnDemandTLS) { o.PublicPaths = nil },
+		func(o *config.OnDemandTLS) { o.PublicPaths = []string{"/x {\n}"} },
+	} {
+		o := *v.OnDemandTLS
+		bad(&o)
+		w := v
+		w.OnDemandTLS = &o
+		if w.Validate([]string{"frankenphp"}) == nil {
+			t.Errorf("accepted %+v", o)
+		}
+	}
+	if v.Validate([]string{"frankenphp", "ssl"}) == nil {
+		t.Error("on-demand TLS and the SSL step both want 443")
+	}
+}
+
+func TestLogrotateInstalledWithDirs(t *testing.T) {
+	b, err := Build([]string{"dirs"}, testVars())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b["run.sh"])
+	for _, want := range []string{"install_logrotate\n", "shared/*/logs/*.log", "copytruncate", "su ${DEPLOY_USER} www-data"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/user/versaDeploy/internal/config"
 	versassh "github.com/user/versaDeploy/internal/ssh"
 )
 
@@ -30,6 +31,16 @@ func FrankenPHPConfig(project string) string { return "/etc/frankenphp/" + proje
 // FrankenPHPExec is the command line of the FrankenPHP service (deploy.yml services).
 func FrankenPHPExec(project string) string {
 	return "/usr/local/bin/frankenphp run --config " + FrankenPHPConfig(project)
+}
+
+// FrankenPHPTLSConfig is the config of the project's on-demand TLS server.
+func FrankenPHPTLSConfig(project string) string {
+	return "/etc/frankenphp/" + project + "-tls.Caddyfile"
+}
+
+// FrankenPHPTLSExec is the command line of the on-demand TLS service.
+func FrankenPHPTLSExec(project string) string {
+	return "/usr/local/bin/frankenphp run --config " + FrankenPHPTLSConfig(project) + " --adapter caddyfile"
 }
 
 // FrankenPHPResetSocket is the project's owner-only socket that runs opcache_reset().
@@ -84,7 +95,31 @@ type Vars struct {
 	Fail2banIgnore  []string // IPs/CIDRs fail2ban never bans (besides localhost and the admin)
 	Packages        []string // extra system packages (base step)
 	Cron            []string // "<schedule> <command>" lines (cron step)
+	NginxRate       string   // this project's limit per IP ("500r/s"); "" = the shared zone
+	NginxBurst      int      // limit_req burst (0 = 50)
+	// NginxWorkerConnections is server-wide, so the nginx step only ever raises it.
+	NginxWorkerConnections int
+	OnDemandTLS            *config.OnDemandTLS // customer domains on a FrankenPHP in :443
 }
+
+// LimitZone is the limit_req zone of the vhost: the project's own when it sets a rate,
+// so one app's event doesn't change the limits of the others on the server.
+func (v Vars) LimitZone() string {
+	if v.NginxRate == "" {
+		return "general"
+	}
+	return "versa_" + nginxIdent.ReplaceAllString(v.Project, "_")
+}
+
+// LimitBurst is the limit_req burst of the vhost.
+func (v Vars) LimitBurst() int {
+	if v.NginxBurst > 0 {
+		return v.NginxBurst
+	}
+	return 50
+}
+
+var nginxIdent = regexp.MustCompile(`[^A-Za-z0-9_]`)
 
 // ProjectBinDir holds the project's own `php`, `node`, `npm`… (its versions, next to
 // other projects' on the same server): versa puts it
@@ -291,6 +326,9 @@ func (v Vars) Validate(steps []string) error {
 			return fmt.Errorf("provision.cron %q: %w", l, err)
 		}
 	}
+	if err := v.validateTuning(steps); err != nil {
+		return err
+	}
 	// vhosts are rendered whenever a web server is set, whatever the steps
 	if v.Domain != "" && !nameRe.MatchString(v.Domain) {
 		return fmt.Errorf("invalid domain %q", v.Domain)
@@ -304,6 +342,47 @@ func (v Vars) Validate(steps []string) error {
 	}
 	if s := v.SSHPort; s == 0 {
 		return fmt.Errorf("ssh port unknown")
+	}
+	return nil
+}
+
+var (
+	nginxRateRe  = regexp.MustCompile(`^[1-9][0-9]*r/[sm]$`)
+	tlsAskRe     = regexp.MustCompile(`^https?://(127\.0\.0\.1|localhost)(:[0-9]+)?/[A-Za-z0-9._~/-]*$`)
+	publicPathRe = regexp.MustCompile(`^/[A-Za-z0-9._/*-]*$`)
+)
+
+// validateTuning checks provision.nginx and on_demand_tls: they reach root-installed configs.
+func (v Vars) validateTuning(steps []string) error {
+	tuned := v.NginxRate != "" || v.NginxBurst != 0 || v.NginxWorkerConnections != 0
+	switch {
+	case tuned && v.WebServer != "nginx":
+		return fmt.Errorf("provision.nginx needs web_server: nginx")
+	case v.NginxRate != "" && !nginxRateRe.MatchString(v.NginxRate):
+		return fmt.Errorf(`provision.nginx.rate must look like 500r/s (got %q)`, v.NginxRate)
+	case v.NginxBurst < 0 || v.NginxBurst > 1_000_000:
+		return fmt.Errorf("provision.nginx.burst out of range (got %d)", v.NginxBurst)
+	case v.NginxWorkerConnections != 0 && (v.NginxWorkerConnections < 512 || v.NginxWorkerConnections > 1_048_576):
+		return fmt.Errorf("provision.nginx.worker_connections must be 512-1048576 (got %d)", v.NginxWorkerConnections)
+	}
+	t := v.OnDemandTLS
+	if t == nil {
+		return nil
+	}
+	switch {
+	case !v.FrankenPHP || v.ProxyPort == 0:
+		return fmt.Errorf("on_demand_tls needs frankenphp: true")
+	case slices.Contains(steps, "ssl"):
+		return fmt.Errorf("on_demand_tls and the SSL step both use port 443: pick one")
+	case !tlsAskRe.MatchString(t.Ask):
+		return fmt.Errorf("on_demand_tls.ask must be a local URL, e.g. http://127.0.0.1:8000/tls/check (got %q)", t.Ask)
+	case len(t.PublicPaths) == 0:
+		return fmt.Errorf("on_demand_tls.public_paths is required: customer domains reach only those paths")
+	}
+	for _, p := range t.PublicPaths {
+		if !publicPathRe.MatchString(p) {
+			return fmt.Errorf("on_demand_tls.public_paths: invalid path %q", p)
+		}
 	}
 	return nil
 }
@@ -341,6 +420,9 @@ func Build(selected []string, v Vars) (Bundle, error) {
 		fmt.Fprintf(&script, "\nsection %s\nstep_%s() {\n", versassh.ShellQuote(svc.Label), id)
 		script.Write(body)
 		fmt.Fprintf(&script, "\n}\nstep_%s\n", id)
+		if id == "dirs" {
+			script.WriteString("install_logrotate\n")
+		}
 	}
 	script.WriteString("\nsection 'Done'\nok 'Provisioning finished'\n")
 	b["run.sh"] = script.Bytes()
@@ -367,6 +449,16 @@ func Build(selected []string, v Vars) (Bundle, error) {
 			return nil, err
 		}
 		b["Caddyfile"] = out.Bytes()
+		if v.OnDemandTLS != nil {
+			var tls bytes.Buffer
+			if err := templates.ExecuteTemplate(&tls, "frankenphp-tls.Caddyfile.tmpl", struct {
+				Vars
+				DocRootPath string
+			}{v, v.DocRootPath()}); err != nil {
+				return nil, err
+			}
+			b["Caddyfile-tls"] = tls.Bytes()
+		}
 	}
 	if v.ServicesSudoers != "" {
 		b["services-sudoers.sh"] = []byte(v.ServicesSudoers)
@@ -495,6 +587,8 @@ func (v Vars) env() string {
 		{"CRON_PATH", CronFile(v.Project)}, {"CRON_FILE", v.cronTab()},
 		{"FAIL2BAN_IGNORE", strings.Join(v.Fail2banIgnore, " ")},
 		{"FRANKENPHP", strconv.FormatBool(v.FrankenPHP)}, {"FRANKENPHP_CLI", FrankenPHPCLI},
+		{"NGINX_RATE", v.NginxRate}, {"NGINX_ZONE", v.LimitZone()},
+		{"NGINX_WORKER_CONNECTIONS", strconv.Itoa(v.NginxWorkerConnections)},
 	}
 	var s strings.Builder
 	for _, p := range kv {

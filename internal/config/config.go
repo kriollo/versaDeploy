@@ -70,6 +70,28 @@ type ServiceConfig struct {
 	// Reload is run (as the deploy user) instead of a restart on deploys and rollbacks
 	// while the service is up, e.g. FrankenPHP's graceful reload; on failure it restarts
 	Reload string `yaml:"reload"`
+	// Capabilities the process keeps as a non-root user. Only CAP_NET_BIND_SERVICE
+	// (ports below 1024): anything broader would hand root to whoever edits deploy.yml.
+	Capabilities []string `yaml:"capabilities,omitempty"`
+	Nice         int      `yaml:"nice,omitempty"`       // CPU priority, 0-19 (higher yields to the web server)
+	IOClass      string   `yaml:"io_class,omitempty"`   // best-effort | idle
+	CPUQuota     string   `yaml:"cpu_quota,omitempty"`  // systemd only: "200%" = two cores
+	MemoryMax    string   `yaml:"memory_max,omitempty"` // systemd only: "2G"
+}
+
+// NginxTuning sizes nginx for traffic that shares an IP (an event's WiFi, mobile CGNAT).
+type NginxTuning struct {
+	Rate              string `yaml:"rate,omitempty"`               // per client IP, e.g. "500r/s": this project's own zone
+	Burst             int    `yaml:"burst,omitempty"`              // default 50
+	WorkerConnections int    `yaml:"worker_connections,omitempty"` // server-wide: only ever raised
+}
+
+// OnDemandTLS serves customer domains added at runtime (white-label) from a dedicated
+// FrankenPHP on :443. Its service needs capabilities: [CAP_NET_BIND_SERVICE].
+type OnDemandTLS struct {
+	Ask         string   `yaml:"ask"`                // local URL answering 200 for allowed domains
+	PublicPaths []string `yaml:"public_paths"`       // paths proxied to the app; the rest answers 404
+	Internal    bool     `yaml:"internal,omitempty"` // Caddy's internal CA (hosts without public DNS)
 }
 
 // ProvisionConfig is the desired server stack for an environment. Only the Services
@@ -103,6 +125,8 @@ type ProvisionConfig struct {
 	BackupKeep     int                `yaml:"backup_keep,omitempty"`    // dumps kept (default 7)
 	Packages       []string           `yaml:"packages,omitempty"`       // extra system packages, installed by the base step
 	Cron           []string           `yaml:"cron,omitempty"`           // "<schedule> <command>", run as deploy_user in current/app
+	Nginx          NginxTuning        `yaml:"nginx,omitempty"`          // rate limit and connections
+	OnDemandTLS    *OnDemandTLS       `yaml:"on_demand_tls,omitempty"`  // customer domains on FrankenPHP
 }
 
 // ProvisionSSHConfig overrides the environment's SSH settings for the admin (root)
@@ -589,6 +613,9 @@ func (e *Environment) validateServices(envName string) error {
 				return fmt.Errorf("environment %s: service %s: working_dir and env_file must be relative paths (got %q)", envName, s.Name, p)
 			}
 		}
+		if err := s.validateResources(); err != nil {
+			return fmt.Errorf("environment %s: service %s: %w", envName, s.Name, err)
+		}
 		if s.StartWait <= 0 {
 			s.StartWait = 3
 		}
@@ -600,6 +627,31 @@ func (e *Environment) validateServices(envName string) error {
 				return fmt.Errorf("environment %s: service %s: %w", envName, s.Name, err)
 			}
 		}
+	}
+	return nil
+}
+
+var (
+	cpuQuotaRe  = regexp.MustCompile(`^[1-9][0-9]*%$`)
+	memoryMaxRe = regexp.MustCompile(`^[1-9][0-9]*[KMGT]?$`)
+)
+
+// validateResources checks the limits: they end up in a unit file root installs.
+func (s *ServiceConfig) validateResources() error {
+	for _, c := range s.Capabilities {
+		if c != "CAP_NET_BIND_SERVICE" {
+			return fmt.Errorf("capability %q is not allowed (only CAP_NET_BIND_SERVICE)", c)
+		}
+	}
+	switch {
+	case s.Nice < 0 || s.Nice > 19:
+		return fmt.Errorf("nice must be 0-19 (got %d)", s.Nice)
+	case s.IOClass != "" && s.IOClass != "best-effort" && s.IOClass != "idle":
+		return fmt.Errorf("io_class must be best-effort or idle (got %q)", s.IOClass)
+	case s.CPUQuota != "" && !cpuQuotaRe.MatchString(s.CPUQuota):
+		return fmt.Errorf("cpu_quota must look like 200%% (got %q)", s.CPUQuota)
+	case s.MemoryMax != "" && !memoryMaxRe.MatchString(s.MemoryMax):
+		return fmt.Errorf("memory_max must look like 2G (got %q)", s.MemoryMax)
 	}
 	return nil
 }

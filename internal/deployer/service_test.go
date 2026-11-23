@@ -459,3 +459,63 @@ func TestServiceReload(t *testing.T) {
 		t.Fatalf("failed reload: %v\n%s\n%s", err, out, log())
 	}
 }
+
+func TestServiceResources(t *testing.T) {
+	env := serviceEnv("/var/www/app")
+	env.Services[0].Capabilities = []string{"CAP_NET_BIND_SERVICE"}
+	env.Services[0].Nice, env.Services[0].IOClass = 10, "best-effort"
+	env.Services[0].CPUQuota, env.Services[0].MemoryMax = "400%", "2G"
+	files, err := renderService("shop", "production", env, env.Services[0], env.RemotePath, serverLayout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"AmbientCapabilities=CAP_NET_BIND_SERVICE", "CPUQuota=400%", "MemoryMax=2G"} {
+		if !strings.Contains(files["api.service"], want) {
+			t.Errorf("unit lacks %s", want)
+		}
+	}
+	if !strings.Contains(files["api.sh"], "ION='ionice -c 2 -n 7'") || !strings.Contains(files["api.sh"], "exec nice -n 10 $ION /var/www/app/current/bin/go/api") {
+		t.Errorf("wrapper:\n%s", files["api.sh"])
+	}
+	if !strings.Contains(files["api.openrc"], `capabilities="^cap_net_bind_service"`) {
+		t.Error("openrc lacks the capability")
+	}
+	if out, err := exec.Command("sh", "-n", "-c", files["api.sh"]).CombinedOutput(); err != nil {
+		t.Fatalf("wrapper syntax: %s", out)
+	}
+}
+
+// A service root hasn't installed stops the deploy before it changes anything.
+func TestInstalledCheckScript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	dir := t.TempDir()
+	l := svcLayout{etc: dir, run: dir, log: dir}
+	os.MkdirAll(filepath.Join(dir, "systemd", "system"), 0o755)
+	env := serviceEnv("/var/www/app")
+	run := func() string {
+		s, err := installedCheckScript(env, "shop", "production", l, "I=systemd\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command("sh", "-c", s).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		return string(out)
+	}
+	if got := parseNeedsSetup(run()); len(got) != 1 || got[0] != "api" {
+		t.Fatalf("missing unit: %v", got)
+	}
+	files, _ := renderService("shop", "production", env, env.Services[0], env.RemotePath, l)
+	unit := filepath.Join(dir, "systemd", "system", "api.service")
+	os.WriteFile(unit, []byte(files["api.service"]), 0o644)
+	if got := parseNeedsSetup(run()); len(got) != 0 {
+		t.Fatalf("installed unit reported: %v", got)
+	}
+	env.Services[0].MemoryMax = "1G"
+	if got := parseNeedsSetup(run()); len(got) != 1 {
+		t.Fatalf("changed unit not reported: %v", got)
+	}
+}

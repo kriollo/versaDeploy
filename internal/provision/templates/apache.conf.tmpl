@@ -36,17 +36,19 @@ TraceEnable Off
     # y archivos de desarrollo. Solo archivos reales: una ruta del router que termine
     # igual sigue llegando a index.php
     RewriteCond %{DOCUMENT_ROOT}%{REQUEST_URI} -f
+    # (el manifiesto de la PWA es público, aunque el resto de los .json no)
+    RewriteCond %{REQUEST_URI} !^/public/(.+/)?manifest\.json$ [NC]
     RewriteRule (^/?versaCLI$|\.(bak|config|dist|fla|inc|ini|log|psd|sh|sql|json|lock|swp|xml|twig|yml|yaml|md|jade|scss|sqlite3|rst|conf|ts|toml|neon)$) - [R=404,L,NC]
 
     # Headers de seguridad
-    Header always set X-Frame-Options "SAMEORIGIN"
-    Header always set X-Content-Type-Options "nosniff"
-    Header always set X-XSS-Protection "1; mode=block"
-    Header always set Referrer-Policy "no-referrer"
+    Header always set X-Frame-Options "SAMEORIGIN" "expr=-z %{resp:X-Frame-Options}"
+    Header always set X-Content-Type-Options "nosniff" "expr=-z %{resp:X-Content-Type-Options}"
+    Header always set X-XSS-Protection "1; mode=block" "expr=-z %{resp:X-XSS-Protection}"
+    Header always set Referrer-Policy "no-referrer" "expr=-z %{resp:Referrer-Policy}"
 {{- if .SSL}}
-    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" "expr=-z %{resp:Strict-Transport-Security}"
 {{- end}}
-    Header always set Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self), payment=(self), usb=(), interest-cohort=()"
+    Header always set Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self), payment=(self), usb=(), interest-cohort=()" "expr=-z %{resp:Permissions-Policy}"
     Header always unset X-Powered-By
 {{if .ProxyPort}}
     # Aplicación ({{.Backend}}) detrás de reverse proxy

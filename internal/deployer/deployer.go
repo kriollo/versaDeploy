@@ -323,6 +323,9 @@ func (d *Deployer) ship(c *ssh.Client, a *PrebuiltArtifact, previousLock *state.
 	if err := checkTimeout(); err != nil {
 		return err
 	}
+	if err := d.checkServicesInstalled(c); err != nil {
+		return err
+	}
 	d.log.Info("Uploading artifact to remote server...")
 	releasesDir := d.remote("releases")
 	finalDir := d.remote("releases", a.ReleaseVersion)

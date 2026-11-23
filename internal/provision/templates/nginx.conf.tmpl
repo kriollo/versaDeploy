@@ -50,15 +50,8 @@ server {
         application/x-javascript
         image/svg+xml;
 
-    # Headers de seguridad
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "no-referrer" always;
-{{- if .SSL}}
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
-{{- end}}
-    add_header Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self), payment=(self), usb=(), interest-cohort=()" always;
+    # Headers de seguridad (si la app envía el suyo, nginx no lo repite)
+{{- template "nginx-security" .}}
 
     # Bloqueo de métodos HTTP peligrosos
     if ($request_method !~ ^(GET|POST|PUT|DELETE|OPTIONS|HEAD|PATCH)$) {
@@ -80,7 +73,7 @@ server {
 {{if and .ProxyPort (not .FrankenPHP)}}
     # Aplicación ({{.Backend}}) detrás de reverse proxy
     location / {
-        limit_req zone=general burst=50 nodelay;
+        limit_req zone={{.LimitZone}} burst={{.LimitBurst}} nodelay;
 {{- template "nginx-proxy" .}}
     }
     # The app's static files (Next /_next/static, Nuxt /_nuxt, images, fonts) aren't
@@ -94,6 +87,7 @@ server {
         expires 1y;
         add_header Cache-Control "public, immutable, no-transform" always;
         add_header Vary "Accept-Encoding" always;
+{{- template "nginx-security" .}}
         access_log off;
         log_not_found off;
     }
@@ -103,6 +97,7 @@ server {
         expires 1y;
         add_header Cache-Control "public, immutable" always;
         add_header Access-Control-Allow-Origin "*" always;
+{{- template "nginx-security" .}}
         access_log off;
         log_not_found off;
     }
@@ -112,6 +107,7 @@ server {
         expires 1y;
         add_header Cache-Control "public, immutable, no-transform" always;
         add_header Vary "Accept-Encoding" always;
+{{- template "nginx-security" .}}
         access_log off;
     }
 
@@ -119,6 +115,7 @@ server {
     location ~* \.(pdf|svg)$ {
         expires 1y;
         add_header Cache-Control "public, no-transform" always;
+{{- template "nginx-security" .}}
         access_log off;
     }
 
@@ -126,6 +123,7 @@ server {
     location ~* \.(mp4|webm|ogg|avi|mov|flv|wmv)$ {
         expires 30d;
         add_header Cache-Control "public, no-transform" always;
+{{- template "nginx-security" .}}
         access_log off;
     }
 
@@ -133,6 +131,7 @@ server {
     location ~* \.(mp3|wav|ogg|m4a|aac|flac)$ {
         expires 30d;
         add_header Cache-Control "public, no-transform" always;
+{{- template "nginx-security" .}}
         access_log off;
     }
 
@@ -150,6 +149,12 @@ server {
     location ~ ^/(vendor|node_modules)/ {
         deny all;
         return 404;
+    }
+
+    # El manifiesto de la PWA es público, aunque el resto de los .json no
+    location ~* ^/public/(.+/)?manifest\.json$ {
+        default_type application/manifest+json;
+        try_files $uri =404;
     }
 
     # Lo mismo que bloquea el .htaccess de versaWYS: la CLI y archivos de desarrollo. Solo
@@ -190,6 +195,7 @@ server {
     # Evitar indexación de carpeta store
     location /dashboard/store/ {
         add_header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet" always;
+{{- template "nginx-security" .}}
     }
 
     # Ruta principal
@@ -203,7 +209,7 @@ server {
     }
 
     location = /index.php {
-        limit_req zone=general burst=50 nodelay;
+        limit_req zone={{.LimitZone}} burst={{.LimitBurst}} nodelay;
 {{- if .FrankenPHP}}
         # FrankenPHP ({{.AppService}} service) runs index.php for every request it gets
 {{- template "nginx-proxy" .}}
@@ -264,4 +270,15 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
+{{- end}}
+
+{{define "nginx-security"}}
+    add_header X-Frame-Options $versa_x_frame_options always;
+    add_header X-Content-Type-Options $versa_x_content_type_options always;
+    add_header X-XSS-Protection $versa_x_xss_protection always;
+    add_header Referrer-Policy $versa_referrer_policy always;
+{{- if .SSL}}
+    add_header Strict-Transport-Security $versa_hsts always;
+{{- end}}
+    add_header Permissions-Policy $versa_permissions_policy always;
 {{- end}}

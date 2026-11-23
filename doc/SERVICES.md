@@ -229,6 +229,12 @@ The **DB backups** step installs `/usr/local/sbin/versa-backup-<project>` and a 
 | `cron` | `[]` | `"<min> <hour> <day> <month> <weekday> <command>"` or `"@daily <command>"`, run as `deploy_user` in `current/app`; write `%` as `\%` |
 | `deploy_user` | `ssh.user` | User that owns the releases |
 | `backends` | detected | Written by the TUI for reference |
+| `nginx.rate` | shared zone, `10r/s` | Limit per client IP for this project (`500r/s`), in its own zone: other apps keep theirs |
+| `nginx.burst` | `50` | `limit_req` burst of this project |
+| `nginx.worker_connections` | distro's | Server-wide, only ever raised (also sets `worker_rlimit_nofile`) |
+| `on_demand_tls.ask` | - | Local URL that answers 200 for the domains allowed a certificate. Needs `frankenphp: true`; excludes the SSL step |
+| `on_demand_tls.public_paths` | - | Paths customer domains can reach; anything else answers 404 (static files under `/public/` are served) |
+| `on_demand_tls.internal` | `false` | Caddy's internal CA, for hosts without public DNS |
 | `proxy_port` | builds / per backend | Port of a Python/Go/Node app behind the web server (passed to its service as `PORT`), or FrankenPHP's |
 
 ---

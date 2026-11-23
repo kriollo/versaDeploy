@@ -823,3 +823,21 @@ func TestUnsetBareVars(t *testing.T) {
 		t.Errorf("unsetBareVars = %v, want [f]", got)
 	}
 }
+
+func TestServiceResourceValidation(t *testing.T) {
+	for _, c := range []struct {
+		s  ServiceConfig
+		ok bool
+	}{
+		{ServiceConfig{Capabilities: []string{"CAP_NET_BIND_SERVICE"}, Nice: 19, IOClass: "idle", CPUQuota: "150%", MemoryMax: "512M"}, true},
+		{ServiceConfig{Capabilities: []string{"CAP_SYS_ADMIN"}}, false},
+		{ServiceConfig{Nice: -5}, false},
+		{ServiceConfig{IOClass: "realtime"}, false},
+		{ServiceConfig{CPUQuota: "2\nExecStartPre=/bin/x"}, false},
+		{ServiceConfig{MemoryMax: "2G\nUser=root"}, false},
+	} {
+		if err := c.s.validateResources(); (err == nil) != c.ok {
+			t.Errorf("%+v: %v", c.s, err)
+		}
+	}
+}
